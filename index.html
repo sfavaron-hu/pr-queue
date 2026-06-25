@@ -682,7 +682,15 @@ async function enrichPR(pr, botRe, onProgress) {
   const number = pr.number;
 
   const isBot = u => u.type === 'Bot' || botRe.test(u.login);
-  if (pr.user.login === state.config.exclude || isBot(pr.user)) { onProgress(); return null; }
+  if (pr.user.login === state.config.exclude) { onProgress(); return null; }
+  if (isBot(pr.user)) {
+    onProgress();
+    return { id: pr.id, number, owner, repo, title: pr.title,
+      author: pr.user.login, authorAvatar: pr.user.avatar_url,
+      url: pr.html_url, createdAt: new Date(pr.created_at),
+      ci: 'unknown', humanReviews: 0, humanComments: 0, draft: false,
+      conflicts: false, ready: false, botPR: true };
+  }
 
   try {
     const [prDetails, reviews, comments] = await Promise.all([
@@ -782,18 +790,19 @@ function renderList() {
     return true;
   });
 
-  const ready  = visible.filter(p => p.ready && !state.ignored.has(p.id));
-  const others = visible
-    .filter(p => !p.ready || state.ignored.has(p.id))
+  const botPRs  = state.prs.filter(p => p.botPR);
+  const ready   = visible.filter(p => p.ready && !state.ignored.has(p.id) && !p.botPR);
+  const others  = visible
+    .filter(p => (!p.ready || state.ignored.has(p.id)) && !p.botPR)
     .sort((a, b) => {
       const aSkippedReady = a.ready && state.ignored.has(a.id) ? 0 : 1;
       const bSkippedReady = b.ready && state.ignored.has(b.id) ? 0 : 1;
       return aSkippedReady - bSkippedReady;
     });
 
-  el.empty.classList.toggle('hidden', visible.length > 0);
+  el.empty.classList.toggle('hidden', visible.length > 0 || botPRs.length > 0);
 
-  if (visible.length === 0) { el.prList.innerHTML = ''; return; }
+  if (visible.length === 0 && botPRs.length === 0) { el.prList.innerHTML = ''; return; }
 
   let html = '';
   if (ready.length > 0) {
@@ -803,6 +812,10 @@ function renderList() {
   if (!state.readyOnly && others.length > 0) {
     html += `<div class="section-label">Has activity <span class="count-badge">${others.length}</span></div>`;
     html += others.map(renderCard).join('');
+  }
+  if (botPRs.length > 0) {
+    html += `<div class="section-label">Bots <span class="count-badge">${botPRs.length}</span></div>`;
+    html += botPRs.map(renderCard).join('');
   }
 
   el.prList.innerHTML = html;
