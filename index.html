@@ -309,6 +309,7 @@ html, body {
 }
 .pr-card:hover { border-color: var(--border-hover); background: var(--surface-hover); }
 .pr-card.is-ignored { opacity: 0.35; }
+.pr-card.is-stale   { opacity: 0.45; pointer-events: none; }
 
 .pr-top {
   display: flex;
@@ -681,7 +682,7 @@ async function enrichPR(pr, botRe, onProgress) {
   const [owner, repo] = pr.repository_url.replace(`${API}/repos/`, '').split('/');
   const number = pr.number;
 
-  const isBot = u => u.type === 'Bot' || botRe.test(u.login);
+  const isBot = u => u.type === 'Bot' || u.login.endsWith('[bot]') || botRe.test(u.login);
   if (pr.user.login === state.config.exclude) { onProgress(); return null; }
   if (isBot(pr.user)) {
     onProgress();
@@ -842,11 +843,11 @@ async function loadPRs() {
   el.progressBar.classList.remove('hidden');
   el.progressFill.style.width = '0%';
   el.errorMsg.classList.add('hidden');
-  el.prList.innerHTML = '';
   el.empty.classList.add('hidden');
-  el.toolbar.classList.add('hidden');
   el.refreshBtn.disabled = true;
   el.statusDot.className = 'header-dot';
+  // Mark existing cards stale instead of wiping them
+  el.prList.querySelectorAll('.pr-card').forEach(c => c.classList.add('is-stale'));
 
   try {
     const { org, label } = state.config;
@@ -889,6 +890,7 @@ async function loadPRs() {
     setTimeout(() => el.progressBar.classList.add('hidden'), 500);
     el.toolbar.classList.remove('hidden');
     el.statusDot.className = 'header-dot live';
+    el.prList.querySelectorAll('.pr-card').forEach(c => c.classList.remove('is-stale'));
     renderList();
 
   } catch (err) {
