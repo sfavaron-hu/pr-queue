@@ -706,15 +706,15 @@ async function enrichPR(pr, botRe, onProgress) {
     const isHuman = u => !isBot(u) && u.login !== pr.user.login;
     const humanReviews  = (reviews  || []).filter(r => isHuman(r.user)).length;
     const humanComments = (comments || []).filter(c => isHuman(c.user)).length;
-
-    const ready = ci === 'green' && humanReviews === 0 && humanComments === 0 && !prDetails.draft;
+    const humanActivity = humanReviews + humanComments;
 
     onProgress();
     return { id: pr.id, number, owner, repo, title: pr.title,
       author: pr.user.login, authorAvatar: pr.user.avatar_url,
       url: pr.html_url, createdAt: new Date(pr.created_at),
-      ci, humanReviews, humanComments, draft: prDetails.draft,
-      conflicts: prDetails.mergeable_state === 'dirty', ready };
+      ci, humanActivity, draft: prDetails.draft,
+      conflicts: prDetails.mergeable_state === 'dirty',
+      ready: ci === 'green' && humanActivity === 0 && !prDetails.draft };
   } catch {
     onProgress();
     return null;
@@ -754,8 +754,9 @@ function ciBadge(ci) {
 
 function renderCard(pr) {
   const ignored = state.ignored.has(pr.id);
-  const reviewBadge  = pr.humanReviews  > 0 ? `<span class="badge badge-blue">👁 ${pr.humanReviews}</span>`  : '';
-  const commentBadge = pr.humanComments > 0 ? `<span class="badge badge-gray">💬 ${pr.humanComments}</span>` : '';
+  const activityBadge = pr.humanActivity > 0
+    ? `<span class="badge badge-blue" title="Reviews y comentarios de personas (no bots, no autor) · ${pr.humanActivity} en total">👁 ${pr.humanActivity}</span>`
+    : '';
   const draftBadge     = pr.draft     ? `<span class="badge badge-amber">Draft</span>`     : '';
   const conflictBadge  = pr.conflicts ? `<span class="badge badge-red">⚡ Conflicts</span>` : '';
 
@@ -765,7 +766,7 @@ function renderCard(pr) {
         <span class="pr-repo">${esc(pr.repo)}</span>
         <span class="pr-number">#${pr.number}</span>
         <div class="pr-badges">
-          ${draftBadge}${conflictBadge}${ciBadge(pr.ci)}${reviewBadge}${commentBadge}
+          ${draftBadge}${conflictBadge}${ciBadge(pr.ci)}${activityBadge}
         </div>
       </div>
       <div class="pr-title">
