@@ -930,6 +930,10 @@ el.configToggle.addEventListener('click', () => {
   if (configOpen) writeConfigFields();
 });
 
+[el.cfgOrg, el.cfgLabel, el.cfgExclude, el.cfgBots].forEach(input => {
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') el.configSave.click(); });
+});
+
 el.configSave.addEventListener('click', () => {
   readConfigFields();
   configOpen = false;
