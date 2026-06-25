@@ -83,58 +83,25 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 28px 24px;
+  padding: 20px;
   margin-bottom: 20px;
-  text-align: center;
 }
 
-.auth-device {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-}
-
-.device-code-wrap {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.device-code {
-  font-family: var(--mono);
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 20px;
-  user-select: all;
-}
-
-.device-instructions {
-  font-size: 13px;
+.auth-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--muted);
-  line-height: 1.6;
-}
-.device-instructions a { color: var(--accent); text-decoration: none; }
-.device-instructions a:hover { text-decoration: underline; }
-
-.auth-waiting {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 8px;
 }
 
-.auth-idle p {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
+.auth-row { display: flex; gap: 8px; }
+
+.auth-hint { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.auth-hint a { color: var(--accent); text-decoration: none; }
+.auth-hint a:hover { text-decoration: underline; }
 
 /* shared input used in config */
 .input {
@@ -495,24 +462,16 @@ html, body {
 
   <!-- Auth -->
   <div id="auth-section" class="auth-section">
-    <div id="auth-idle">
-      <button class="btn btn-primary" id="signin-btn">Sign in with GitHub</button>
-      <p>Authorizes read access to HumandDev repos · token stored locally</p>
+    <span class="auth-label">GitHub Token</span>
+    <div class="auth-row">
+      <input type="password" id="token-input" class="input" placeholder="ghp_…" autocomplete="off" />
+      <button class="btn btn-primary" id="save-token-btn">Connect</button>
     </div>
-    <div id="auth-device" class="auth-device hidden">
-      <div class="device-instructions">
-        Open <a href="https://github.com/login/device" target="_blank" rel="noopener">github.com/login/device</a> and enter:
-      </div>
-      <div class="device-code-wrap">
-        <div class="device-code" id="user-code">····-····</div>
-        <button class="btn btn-ghost btn-sm" id="copy-code-btn">Copy</button>
-      </div>
-      <div class="auth-waiting">
-        <div class="spinner"></div>
-        Waiting for authorization…
-      </div>
-      <button class="text-btn" id="cancel-auth-btn">Cancel</button>
-    </div>
+    <p class="auth-hint">
+      Needs <code style="font-family:var(--mono);background:var(--bg);padding:1px 5px;border-radius:3px;font-size:11px;">repo</code> scope ·
+      <a href="https://github.com/settings/tokens/new?scopes=repo&description=PR+Review+Queue" target="_blank" rel="noopener">Crear token →</a> ·
+      se guarda en localStorage
+    </p>
   </div>
 
   <!-- Config -->
@@ -580,9 +539,7 @@ html, body {
 </div>
 
 <script>
-const CLIENT_ID = 'Ov23liVc9PpD88LBXjKi';
-const SCOPE     = 'repo';
-const API       = 'https://api.github.com';
+const API = 'https://api.github.com';
 
 const STORAGE = {
   token:   'prq_token',
@@ -610,13 +567,9 @@ let state = {
 const $ = id => document.getElementById(id);
 
 const el = {
-  authSection:   $('auth-section'),
-  authIdle:      $('auth-idle'),
-  authDevice:    $('auth-device'),
-  signinBtn:     $('signin-btn'),
-  userCode:      $('user-code'),
-  copyCodeBtn:   $('copy-code-btn'),
-  cancelAuthBtn: $('cancel-auth-btn'),
+  authSection:  $('auth-section'),
+  tokenInput:   $('token-input'),
+  saveTokenBtn: $('save-token-btn'),
   configSection: $('config-section'),
   configToggle:  $('config-toggle-btn'),
   configSave:    $('config-save-btn'),
@@ -690,76 +643,6 @@ function readURL() {
   if (p.has('label'))   state.config.label   = p.get('label');
   if (p.has('exclude')) state.config.exclude = p.get('exclude');
   if (p.has('bots'))    state.config.bots    = p.get('bots');
-}
-
-// ── Device Flow ──────────────────────────────────────────────
-
-async function ghPost(path, params) {
-  const res = await fetch(`https://github.com/login${path}`, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(params).toString(),
-  });
-  if (!res.ok) throw new Error(`GitHub auth ${res.status}`);
-  return res.json();
-}
-
-async function startDeviceFlow() {
-  el.signinBtn.disabled = true;
-  el.errorMsg.classList.add('hidden');
-  let data;
-  try {
-    data = await ghPost('/device/code', { client_id: CLIENT_ID, scope: SCOPE });
-  } catch (err) {
-    el.signinBtn.disabled = false;
-    showError(`Could not start auth: ${err.message}`);
-    return;
-  }
-  const { device_code, user_code, expires_in, interval } = data;
-  el.userCode.textContent = user_code;
-  el.authIdle.classList.add('hidden');
-  el.authDevice.classList.remove('hidden');
-
-  const pollMs    = (interval || 5) * 1000;
-  const expiresAt = Date.now() + (expires_in || 900) * 1000;
-  let cancelled   = false;
-  let pollTimer;
-
-  el.cancelAuthBtn.onclick = () => { cancelled = true; clearTimeout(pollTimer); resetAuth(); };
-  el.copyCodeBtn.onclick   = () => {
-    navigator.clipboard.writeText(user_code).then(() => {
-      el.copyCodeBtn.textContent = 'Copied!';
-      setTimeout(() => { el.copyCodeBtn.textContent = 'Copy'; }, 1500);
-    });
-  };
-
-  const poll = async () => {
-    if (cancelled) return;
-    if (Date.now() > expiresAt) { showError('Authorization timed out. Try again.'); resetAuth(); return; }
-    let result;
-    try { result = await ghPost('/oauth/access_token', {
-      client_id: CLIENT_ID, device_code, grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-    }); } catch { pollTimer = setTimeout(poll, pollMs); return; }
-
-    if (result.error === 'authorization_pending') { pollTimer = setTimeout(poll, pollMs); return; }
-    if (result.error === 'slow_down')             { pollTimer = setTimeout(poll, pollMs + 5000); return; }
-    if (result.access_token) {
-      state.token = result.access_token;
-      localStorage.setItem(STORAGE.token, state.token);
-      el.authSection.classList.add('hidden');
-      loadPRs();
-      return;
-    }
-    showError(`Auth failed: ${result.error_description || result.error || 'unknown'}`);
-    resetAuth();
-  };
-  pollTimer = setTimeout(poll, pollMs);
-}
-
-function resetAuth() {
-  el.authDevice.classList.add('hidden');
-  el.authIdle.classList.remove('hidden');
-  el.signinBtn.disabled = false;
 }
 
 // ── GitHub API ───────────────────────────────────────────────
@@ -1016,7 +899,15 @@ async function loadPRs() {
 
 // ── Events ───────────────────────────────────────────────────
 
-el.signinBtn.addEventListener('click', startDeviceFlow);
+el.saveTokenBtn.addEventListener('click', () => {
+  const val = el.tokenInput.value.trim();
+  if (!val) return;
+  state.token = val;
+  localStorage.setItem(STORAGE.token, val);
+  el.authSection.classList.add('hidden');
+  loadPRs();
+});
+el.tokenInput.addEventListener('keydown', e => { if (e.key === 'Enter') el.saveTokenBtn.click(); });
 
 let configOpen = false;
 el.configToggle.addEventListener('click', () => {
@@ -1044,7 +935,7 @@ el.configClear.addEventListener('click', () => {
   configOpen = false;
   el.configToggle.textContent = 'Config';
   el.statusDot.className = 'header-dot';
-  resetAuth();
+  el.tokenInput.value = '';
 });
 
 el.refreshBtn.addEventListener('click', () => loadPRs());
