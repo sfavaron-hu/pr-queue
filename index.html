@@ -703,9 +703,9 @@ async function enrichPR(pr, botRe, onProgress) {
     const sha = prDetails.head.sha;
     const ci  = await getCIStatus(owner, repo, sha);
 
-    const REVIEW_STATES = ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'];
-    const humanReviews  = (reviews  || []).filter(r => !isBot(r.user) && REVIEW_STATES.includes(r.state)).length;
-    const humanComments = (comments || []).filter(c => !isBot(c.user)).length;
+    const isHuman = u => !isBot(u) && u.login !== pr.user.login;
+    const humanReviews  = (reviews  || []).filter(r => isHuman(r.user)).length;
+    const humanComments = (comments || []).filter(c => isHuman(c.user)).length;
 
     const ready = ci === 'green' && humanReviews === 0 && humanComments === 0 && !prDetails.draft;
 
