@@ -1,0 +1,1072 @@
+<title>PR Queue · HumandDev</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:            #0B0E14;
+  --surface:       #131720;
+  --surface-hover: #181F2E;
+  --border:        #1E2838;
+  --border-hover:  #2A3B50;
+  --text:          #C9D4E0;
+  --muted:         #4F6070;
+  --green:         #34D399;
+  --amber:         #FBBF24;
+  --red:           #F87171;
+  --accent:        #60A5FA;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', ui-monospace, monospace;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 16px 80px;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 12px;
+}
+
+.header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.header-dot.live { background: var(--green); animation: pulse 2s ease infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-meta {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Auth section ── */
+.auth-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px 24px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.auth-device {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.device-code-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.device-code {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 20px;
+  user-select: all;
+}
+
+.device-instructions {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.device-instructions a { color: var(--accent); text-decoration: none; }
+.device-instructions a:hover { text-decoration: underline; }
+
+.auth-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.auth-idle p {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* shared input used in config */
+.input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+.input:focus { border-color: var(--accent); }
+
+.hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.hint code {
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+/* ── Config section ── */
+.config-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.config-field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 6px;
+}
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  text-decoration: none;
+  white-space: nowrap;
+  font-family: var(--font);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #0B0E14;
+}
+.btn-primary:hover { opacity: 0.85; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+.btn-ghost:hover { color: var(--text); border-color: var(--border-hover); }
+.btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+.text-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--font);
+  transition: color 0.15s;
+}
+.text-btn:hover { color: var(--text); }
+
+/* ── Toolbar ── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.toolbar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-label:hover { color: var(--text); }
+
+.toggle-label input[type=checkbox] {
+  width: 28px;
+  height: 16px;
+  appearance: none;
+  background: var(--border);
+  border-radius: 8px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle-label input[type=checkbox]:checked { background: var(--accent); }
+.toggle-label input[type=checkbox]::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.18s;
+}
+.toggle-label input[type=checkbox]:checked::after { transform: translateX(12px); }
+
+/* ── Progress ── */
+.progress-bar {
+  height: 2px;
+  background: var(--border);
+  border-radius: 1px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: width 0.25s ease;
+}
+
+/* ── Section label ── */
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 8px;
+  margin-top: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.section-label:first-child { margin-top: 0; }
+
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--border);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.count-badge.ready { background: rgba(52,211,153,0.14); color: var(--green); }
+
+/* ── PR Card ── */
+.pr-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 6px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pr-card:hover { border-color: var(--border-hover); background: var(--surface-hover); }
+.pr-card.is-ignored { opacity: 0.35; }
+
+.pr-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.pr-repo {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(96,165,250,0.08);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(96,165,250,0.15);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pr-number {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.pr-badges {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge-green { background: rgba(52,211,153,0.12); color: var(--green); }
+.badge-amber { background: rgba(251,191,36,0.12);  color: var(--amber); }
+.badge-red   { background: rgba(248,113,113,0.12); color: var(--red); }
+.badge-gray  { background: rgba(79,96,112,0.18);   color: var(--muted); }
+.badge-blue  { background: rgba(96,165,250,0.12);  color: var(--accent); }
+
+.pr-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 10px;
+  line-height: 1.4;
+  text-wrap: balance;
+}
+.pr-title a { color: inherit; text-decoration: none; }
+.pr-title a:hover { color: var(--accent); }
+
+.pr-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.pr-author {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pr-author img {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pr-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+/* ── Loading / empty / error ── */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.error-msg {
+  background: rgba(248,113,113,0.07);
+  border: 1px solid rgba(248,113,113,0.2);
+  border-radius: 8px;
+  padding: 14px 16px;
+  color: var(--red);
+  font-size: 13px;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.hidden { display: none !important; }
+</style>
+
+<div class="app">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>
+      <span class="header-dot" id="status-dot"></span>
+      PR Review Queue
+    </h1>
+    <div class="header-right">
+      <span class="header-meta" id="last-updated"></span>
+      <button class="text-btn" id="config-toggle-btn">Config</button>
+    </div>
+  </div>
+
+  <!-- Auth -->
+  <div id="auth-section" class="auth-section">
+    <div id="auth-idle">
+      <button class="btn btn-primary" id="signin-btn">Sign in with GitHub</button>
+      <p>Authorizes read access to HumandDev repos · token stored locally</p>
+    </div>
+    <div id="auth-device" class="auth-device hidden">
+      <div class="device-instructions">
+        Open <a href="https://github.com/login/device" target="_blank" rel="noopener">github.com/login/device</a> and enter:
+      </div>
+      <div class="device-code-wrap">
+        <div class="device-code" id="user-code">····-····</div>
+        <button class="btn btn-ghost btn-sm" id="copy-code-btn">Copy</button>
+      </div>
+      <div class="auth-waiting">
+        <div class="spinner"></div>
+        Waiting for authorization…
+      </div>
+      <button class="text-btn" id="cancel-auth-btn">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div id="config-section" class="config-section hidden">
+    <div class="config-field">
+      <label>Org</label>
+      <input type="text" id="cfg-org" class="input" value="HumandDev" />
+    </div>
+    <div class="config-field">
+      <label>Label</label>
+      <input type="text" id="cfg-label" class="input" value="comm" />
+    </div>
+    <div class="config-field">
+      <label>Exclude author</label>
+      <input type="text" id="cfg-exclude" class="input" value="sfavaron-hu" />
+    </div>
+    <div class="config-field">
+      <label>Bot pattern (regex)</label>
+      <input type="text" id="cfg-bots" class="input" value="hu-agent|hu-reviewer" />
+    </div>
+    <div class="config-field" style="grid-column:span 2; display:flex; justify-content:flex-end; gap:8px;">
+      <button class="btn btn-ghost btn-sm" id="config-clear-token-btn">Sign out</button>
+      <button class="btn btn-primary btn-sm" id="config-save-btn">Save & refresh</button>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div id="toolbar" class="toolbar hidden">
+    <label class="toggle-label">
+      <input type="checkbox" id="ready-only-toggle" />
+      Ready to review only
+    </label>
+    <label class="toggle-label">
+      <input type="checkbox" id="show-ignored-toggle" checked />
+      Show skipped
+    </label>
+    <div class="toolbar-right">
+      <button class="btn btn-ghost btn-sm" id="refresh-btn">↺ Refresh</button>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-bar hidden" id="progress-bar">
+    <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+  </div>
+
+  <!-- Error -->
+  <div id="error-msg" class="error-msg hidden"></div>
+
+  <!-- Loading -->
+  <div id="loading" class="loading hidden">
+    <div class="spinner"></div>
+    <span id="loading-text">Loading PRs…</span>
+  </div>
+
+  <!-- PR list -->
+  <div id="pr-list"></div>
+
+  <!-- Empty -->
+  <div id="empty" class="empty hidden">
+    No PRs match the current filters.<br>
+    <span style="font-size:11px;">Try unchecking "Ready to review only" to see all open PRs.</span>
+  </div>
+
+</div>
+
+<script>
+const CLIENT_ID = 'Ov23liVc9PpD88LBXjKi';
+const SCOPE     = 'repo';
+const API       = 'https://api.github.com';
+
+const STORAGE = {
+  token:   'prq_token',
+  ignored: 'prq_ignored',
+  config:  'prq_config',
+};
+
+let state = {
+  token:   localStorage.getItem(STORAGE.token) || '',
+  ignored: new Set(JSON.parse(localStorage.getItem(STORAGE.ignored) || '[]')),
+  config: {
+    org:     'HumandDev',
+    label:   'comm',
+    exclude: 'sfavaron-hu',
+    bots:    'hu-agent|hu-reviewer',
+    ...JSON.parse(localStorage.getItem(STORAGE.config) || '{}'),
+  },
+  prs:         [],
+  loading:     false,
+  readyOnly:   false,
+  showIgnored: true,
+  lastUpdated: null,
+};
+
+const $ = id => document.getElementById(id);
+
+const el = {
+  authSection:   $('auth-section'),
+  authIdle:      $('auth-idle'),
+  authDevice:    $('auth-device'),
+  signinBtn:     $('signin-btn'),
+  userCode:      $('user-code'),
+  copyCodeBtn:   $('copy-code-btn'),
+  cancelAuthBtn: $('cancel-auth-btn'),
+  configSection: $('config-section'),
+  configToggle:  $('config-toggle-btn'),
+  configSave:    $('config-save-btn'),
+  configClear:   $('config-clear-token-btn'),
+  cfgOrg:        $('cfg-org'),
+  cfgLabel:      $('cfg-label'),
+  cfgExclude:    $('cfg-exclude'),
+  cfgBots:       $('cfg-bots'),
+  toolbar:       $('toolbar'),
+  progressBar:   $('progress-bar'),
+  progressFill:  $('progress-fill'),
+  errorMsg:      $('error-msg'),
+  loading:       $('loading'),
+  loadingText:   $('loading-text'),
+  prList:        $('pr-list'),
+  empty:         $('empty'),
+  lastUpdated:   $('last-updated'),
+  readyOnly:     $('ready-only-toggle'),
+  showIgnored:   $('show-ignored-toggle'),
+  refreshBtn:    $('refresh-btn'),
+  statusDot:     $('status-dot'),
+};
+
+// ── Persistence ──────────────────────────────────────────────
+
+function saveIgnored() {
+  localStorage.setItem(STORAGE.ignored, JSON.stringify([...state.ignored]));
+}
+
+function saveConfig() {
+  localStorage.setItem(STORAGE.config, JSON.stringify(state.config));
+}
+
+function readConfigFields() {
+  state.config = {
+    org:     el.cfgOrg.value.trim()   || 'HumandDev',
+    label:   el.cfgLabel.value.trim() || 'comm',
+    exclude: el.cfgExclude.value.trim(),
+    bots:    el.cfgBots.value.trim()  || 'hu-agent|hu-reviewer',
+  };
+  saveConfig();
+  updateURL();
+}
+
+function writeConfigFields() {
+  el.cfgOrg.value     = state.config.org;
+  el.cfgLabel.value   = state.config.label;
+  el.cfgExclude.value = state.config.exclude;
+  el.cfgBots.value    = state.config.bots;
+}
+
+// ── URL state ────────────────────────────────────────────────
+
+function updateURL() {
+  const p = new URLSearchParams();
+  if (state.readyOnly)            p.set('ready',   '1');
+  if (state.showIgnored)          p.set('skipped', '1');
+  if (state.config.org     !== 'HumandDev')         p.set('org',     state.config.org);
+  if (state.config.label   !== 'comm')               p.set('label',   state.config.label);
+  if (state.config.exclude !== 'sfavaron-hu')        p.set('exclude', state.config.exclude);
+  if (state.config.bots    !== 'hu-agent|hu-reviewer') p.set('bots',  state.config.bots);
+  const qs = p.toString();
+  history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
+}
+
+function readURL() {
+  const p = new URLSearchParams(location.search);
+  if (p.has('ready'))   state.readyOnly   = p.get('ready')   === '1';
+  if (p.has('skipped')) state.showIgnored = p.get('skipped') === '1';
+  if (p.has('org'))     state.config.org     = p.get('org');
+  if (p.has('label'))   state.config.label   = p.get('label');
+  if (p.has('exclude')) state.config.exclude = p.get('exclude');
+  if (p.has('bots'))    state.config.bots    = p.get('bots');
+}
+
+// ── Device Flow ──────────────────────────────────────────────
+
+async function ghPost(path, params) {
+  const res = await fetch(`https://github.com/login${path}`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params).toString(),
+  });
+  if (!res.ok) throw new Error(`GitHub auth ${res.status}`);
+  return res.json();
+}
+
+async function startDeviceFlow() {
+  el.signinBtn.disabled = true;
+  el.errorMsg.classList.add('hidden');
+  let data;
+  try {
+    data = await ghPost('/device/code', { client_id: CLIENT_ID, scope: SCOPE });
+  } catch (err) {
+    el.signinBtn.disabled = false;
+    showError(`Could not start auth: ${err.message}`);
+    return;
+  }
+  const { device_code, user_code, expires_in, interval } = data;
+  el.userCode.textContent = user_code;
+  el.authIdle.classList.add('hidden');
+  el.authDevice.classList.remove('hidden');
+
+  const pollMs    = (interval || 5) * 1000;
+  const expiresAt = Date.now() + (expires_in || 900) * 1000;
+  let cancelled   = false;
+  let pollTimer;
+
+  el.cancelAuthBtn.onclick = () => { cancelled = true; clearTimeout(pollTimer); resetAuth(); };
+  el.copyCodeBtn.onclick   = () => {
+    navigator.clipboard.writeText(user_code).then(() => {
+      el.copyCodeBtn.textContent = 'Copied!';
+      setTimeout(() => { el.copyCodeBtn.textContent = 'Copy'; }, 1500);
+    });
+  };
+
+  const poll = async () => {
+    if (cancelled) return;
+    if (Date.now() > expiresAt) { showError('Authorization timed out. Try again.'); resetAuth(); return; }
+    let result;
+    try { result = await ghPost('/oauth/access_token', {
+      client_id: CLIENT_ID, device_code, grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    }); } catch { pollTimer = setTimeout(poll, pollMs); return; }
+
+    if (result.error === 'authorization_pending') { pollTimer = setTimeout(poll, pollMs); return; }
+    if (result.error === 'slow_down')             { pollTimer = setTimeout(poll, pollMs + 5000); return; }
+    if (result.access_token) {
+      state.token = result.access_token;
+      localStorage.setItem(STORAGE.token, state.token);
+      el.authSection.classList.add('hidden');
+      loadPRs();
+      return;
+    }
+    showError(`Auth failed: ${result.error_description || result.error || 'unknown'}`);
+    resetAuth();
+  };
+  pollTimer = setTimeout(poll, pollMs);
+}
+
+function resetAuth() {
+  el.authDevice.classList.add('hidden');
+  el.authIdle.classList.remove('hidden');
+  el.signinBtn.disabled = false;
+}
+
+// ── GitHub API ───────────────────────────────────────────────
+
+async function apiFetch(url) {
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    let msg = '';
+    try { msg = JSON.parse(body).message; } catch { msg = body; }
+    throw new Error(`GitHub ${res.status}: ${msg || res.statusText}`);
+  }
+  return res.json();
+}
+
+async function getCIStatus(owner, repo, sha) {
+  try {
+    const data = await apiFetch(`${API}/repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=100`);
+    const runs = (data.check_runs || []).filter(r => r.app?.slug !== 'dependabot');
+    if (runs.length === 0) return 'unknown';
+    if (runs.some(r => r.status !== 'completed')) return 'pending';
+    const bad = runs.filter(r => !['success', 'skipped', 'neutral'].includes(r.conclusion));
+    return bad.length === 0 ? 'green' : 'failed';
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function enrichPR(pr, botRe, onProgress) {
+  const [owner, repo] = pr.repository_url.replace(`${API}/repos/`, '').split('/');
+  const number = pr.number;
+
+  const isBot = u => u.type === 'Bot' || botRe.test(u.login);
+  if (pr.user.login === state.config.exclude || isBot(pr.user)) { onProgress(); return null; }
+
+  try {
+    const [prDetails, reviews, comments] = await Promise.all([
+      apiFetch(`${API}/repos/${owner}/${repo}/pulls/${number}`),
+      apiFetch(`${API}/repos/${owner}/${repo}/pulls/${number}/reviews`),
+      apiFetch(`${API}/repos/${owner}/${repo}/issues/${number}/comments`),
+    ]);
+
+    const sha = prDetails.head.sha;
+    const ci  = await getCIStatus(owner, repo, sha);
+
+    const humanReviews  = (reviews  || []).filter(r => !isBot(r.user)).length;
+    const humanComments = (comments || []).filter(c => !isBot(c.user)).length;
+
+    const ready = ci === 'green' && humanReviews === 0 && humanComments === 0 && !prDetails.draft;
+
+    onProgress();
+    return { id: pr.id, number, owner, repo, title: pr.title,
+      author: pr.user.login, authorAvatar: pr.user.avatar_url,
+      url: pr.html_url, createdAt: new Date(pr.created_at),
+      ci, humanReviews, humanComments, draft: prDetails.draft,
+      conflicts: prDetails.mergeable_state === 'dirty', ready };
+  } catch {
+    onProgress();
+    return null;
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+
+function timeAgo(date) {
+  const m = Math.floor((Date.now() - date) / 60000);
+  if (m < 60)   return `${m}m ago`;
+  if (m < 1440) return `${Math.floor(m/60)}h ago`;
+  return `${Math.floor(m/1440)}d ago`;
+}
+
+function esc(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function showError(msg) {
+  el.errorMsg.textContent = msg;
+  el.errorMsg.classList.remove('hidden');
+}
+
+function ciBadge(ci) {
+  const map = {
+    green:   ['badge-green', '✓ CI'],
+    pending: ['badge-amber', '◐ CI'],
+    failed:  ['badge-red',   '✗ CI'],
+    unknown: ['badge-gray',  '— CI'],
+  };
+  const [cls, lbl] = map[ci] || map.unknown;
+  return `<span class="badge ${cls}">${lbl}</span>`;
+}
+
+// ── Render ───────────────────────────────────────────────────
+
+function renderCard(pr) {
+  const ignored = state.ignored.has(pr.id);
+  const reviewBadge  = pr.humanReviews  > 0 ? `<span class="badge badge-blue">👁 ${pr.humanReviews}</span>`  : '';
+  const commentBadge = pr.humanComments > 0 ? `<span class="badge badge-gray">💬 ${pr.humanComments}</span>` : '';
+  const draftBadge     = pr.draft     ? `<span class="badge badge-amber">Draft</span>`     : '';
+  const conflictBadge  = pr.conflicts ? `<span class="badge badge-red">⚡ Conflicts</span>` : '';
+
+  return `
+    <div class="pr-card${ignored ? ' is-ignored' : ''}" data-id="${pr.id}">
+      <div class="pr-top">
+        <span class="pr-repo">${esc(pr.repo)}</span>
+        <span class="pr-number">#${pr.number}</span>
+        <div class="pr-badges">
+          ${draftBadge}${conflictBadge}${ciBadge(pr.ci)}${reviewBadge}${commentBadge}
+        </div>
+      </div>
+      <div class="pr-title">
+        <a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a>
+      </div>
+      <div class="pr-meta">
+        <div class="pr-author">
+          <img src="${esc(pr.authorAvatar)}" alt="${esc(pr.author)}" loading="lazy" />
+          <span>${esc(pr.author)}</span>
+        </div>
+        <span>${timeAgo(pr.createdAt)}</span>
+        <div class="pr-actions">
+          <a href="${esc(pr.url)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Open →</a>
+          <button class="btn btn-ghost btn-sm ignore-btn" data-id="${pr.id}">${ignored ? 'Restore' : 'Skip'}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderList() {
+  const visible = state.prs.filter(pr => {
+    if (!state.showIgnored && state.ignored.has(pr.id)) return false;
+    if (state.readyOnly && !pr.ready) return false;
+    return true;
+  });
+
+  const ready  = visible.filter(p => p.ready && !state.ignored.has(p.id));
+  const others = visible
+    .filter(p => !p.ready || state.ignored.has(p.id))
+    .sort((a, b) => {
+      const aSkippedReady = a.ready && state.ignored.has(a.id) ? 0 : 1;
+      const bSkippedReady = b.ready && state.ignored.has(b.id) ? 0 : 1;
+      return aSkippedReady - bSkippedReady;
+    });
+
+  el.empty.classList.toggle('hidden', visible.length > 0);
+
+  if (visible.length === 0) { el.prList.innerHTML = ''; return; }
+
+  let html = '';
+  if (ready.length > 0) {
+    html += `<div class="section-label">Ready to review <span class="count-badge ready">${ready.length}</span></div>`;
+    html += ready.map(renderCard).join('');
+  }
+  if (!state.readyOnly && others.length > 0) {
+    html += `<div class="section-label">Has activity <span class="count-badge">${others.length}</span></div>`;
+    html += others.map(renderCard).join('');
+  }
+
+  el.prList.innerHTML = html;
+
+  el.prList.querySelectorAll('.ignore-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = Number(btn.dataset.id);
+      if (state.ignored.has(id)) state.ignored.delete(id);
+      else state.ignored.add(id);
+      saveIgnored();
+      renderList();
+    });
+  });
+}
+
+// ── Load PRs ─────────────────────────────────────────────────
+
+async function loadPRs() {
+  if (!state.token || state.loading) return;
+  state.loading = true;
+
+  el.loading.classList.remove('hidden');
+  el.loadingText.textContent = 'Fetching PR list…';
+  el.progressBar.classList.remove('hidden');
+  el.progressFill.style.width = '0%';
+  el.errorMsg.classList.add('hidden');
+  el.prList.innerHTML = '';
+  el.empty.classList.add('hidden');
+  el.toolbar.classList.add('hidden');
+  el.refreshBtn.disabled = true;
+  el.statusDot.className = 'header-dot';
+
+  try {
+    const { org, label } = state.config;
+    const botRe = new RegExp(state.config.bots, 'i');
+
+    const data = await apiFetch(
+      `${API}/search/issues?q=is:pr+is:open+label:${encodeURIComponent(label)}+org:${encodeURIComponent(org)}&per_page=100&sort=created&order=desc`
+    );
+
+    const items = data.items || [];
+    el.progressFill.style.width = '8%';
+
+    if (items.length === 0) {
+      state.prs = [];
+      el.loading.classList.add('hidden');
+      renderList();
+      el.toolbar.classList.remove('hidden');
+      el.statusDot.className = 'header-dot live';
+      return;
+    }
+
+    let done = 0;
+    const onProgress = () => {
+      done++;
+      el.loadingText.textContent = `Checking PR ${done} of ${items.length}…`;
+      el.progressFill.style.width = `${8 + Math.round((done / items.length) * 87)}%`;
+    };
+
+    const results = [];
+    for (let i = 0; i < items.length; i += 4) {
+      const batch = items.slice(i, i + 4);
+      const out = await Promise.all(batch.map(pr => enrichPR(pr, botRe, onProgress)));
+      results.push(...out);
+    }
+
+    state.prs = results.filter(Boolean);
+    state.lastUpdated = Date.now();
+    el.lastUpdated.textContent = 'Updated just now';
+    el.progressFill.style.width = '100%';
+    setTimeout(() => el.progressBar.classList.add('hidden'), 500);
+    el.toolbar.classList.remove('hidden');
+    el.statusDot.className = 'header-dot live';
+    renderList();
+
+  } catch (err) {
+    // Token might be expired — if 401 reset to auth
+    if (err.message.includes('401')) {
+      state.token = '';
+      localStorage.removeItem(STORAGE.token);
+      el.authSection.classList.remove('hidden');
+      showError('Session expired. Please sign in again.');
+    } else {
+      showError(err.message);
+    }
+    el.progressBar.classList.add('hidden');
+    el.statusDot.className = 'header-dot';
+  } finally {
+    state.loading = false;
+    el.loading.classList.add('hidden');
+    el.refreshBtn.disabled = false;
+  }
+}
+
+// ── Events ───────────────────────────────────────────────────
+
+el.signinBtn.addEventListener('click', startDeviceFlow);
+
+let configOpen = false;
+el.configToggle.addEventListener('click', () => {
+  configOpen = !configOpen;
+  el.configSection.classList.toggle('hidden', !configOpen);
+  el.configToggle.textContent = configOpen ? 'Done' : 'Config';
+  if (configOpen) writeConfigFields();
+});
+
+el.configSave.addEventListener('click', () => {
+  readConfigFields();
+  configOpen = false;
+  el.configSection.classList.add('hidden');
+  el.configToggle.textContent = 'Config';
+  if (state.token) loadPRs();
+});
+
+el.configClear.addEventListener('click', () => {
+  state.token = '';
+  localStorage.removeItem(STORAGE.token);
+  el.authSection.classList.remove('hidden');
+  el.configSection.classList.add('hidden');
+  el.toolbar.classList.add('hidden');
+  el.prList.innerHTML = '';
+  configOpen = false;
+  el.configToggle.textContent = 'Config';
+  el.statusDot.className = 'header-dot';
+  resetAuth();
+});
+
+el.refreshBtn.addEventListener('click', () => loadPRs());
+el.readyOnly.addEventListener('change',   () => { state.readyOnly   = el.readyOnly.checked;   updateURL(); renderList(); });
+el.showIgnored.addEventListener('change', () => { state.showIgnored = el.showIgnored.checked; updateURL(); renderList(); });
+
+setInterval(() => {
+  if (state.lastUpdated) el.lastUpdated.textContent = `Updated ${timeAgo(state.lastUpdated)}`;
+}, 30000);
+
+setInterval(() => {
+  if (state.token && !state.loading) loadPRs();
+}, 5 * 60 * 1000);
+
+// ── Init ─────────────────────────────────────────────────────
+
+readURL();
+el.readyOnly.checked   = state.readyOnly;
+el.showIgnored.checked = state.showIgnored;
+
+if (state.token) {
+  el.authSection.classList.add('hidden');
+  loadPRs();
+}
+</script>
