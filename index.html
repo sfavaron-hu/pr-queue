@@ -444,6 +444,60 @@ html, body {
   line-height: 1.5;
 }
 
+/* ── Layout ── */
+.main-layout {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 680px) { .main-layout { grid-template-columns: 1fr; } }
+
+/* ── Own PRs panel ── */
+.own-column-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.own-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 5px;
+  transition: border-color 0.15s;
+  font-size: 12px;
+}
+.own-card:hover { border-color: var(--border-hover); }
+
+.own-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.own-card-top .pr-repo { font-size: 10px; }
+.own-card-top .pr-number { font-size: 10px; }
+
+.own-card-title {
+  line-height: 1.35;
+  margin-bottom: 6px;
+  color: var(--text);
+  font-weight: 500;
+}
+.own-card-title a { color: inherit; text-decoration: none; font-size: 12px; }
+.own-card-title a:hover { color: var(--accent); }
+
+.own-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+.own-badges .badge { font-size: 10px; padding: 1px 6px; }
+
 .hidden { display: none !important; }
 </style>
 
@@ -499,6 +553,9 @@ html, body {
     </div>
   </div>
 
+  <div class="main-layout">
+  <div class="tribe-column">
+
   <!-- Toolbar -->
   <div id="toolbar" class="toolbar hidden">
     <label class="toggle-label">
@@ -537,6 +594,22 @@ html, body {
     <span style="font-size:11px;">Try unchecking "Ready to review only" to see all open PRs.</span>
   </div>
 
+  </div><!-- /tribe-column -->
+
+  <!-- Own PRs -->
+  <div class="own-column" id="own-column" style="display:none">
+    <div class="own-column-header">
+      Mis PRs <span class="count-badge" id="own-count"></span>
+    </div>
+    <div id="own-loading" class="loading hidden" style="padding:20px;font-size:12px;">
+      <div class="spinner"></div>
+    </div>
+    <div id="own-pr-list"></div>
+    <div id="own-empty" class="empty hidden" style="padding:20px;font-size:12px;">Sin PRs abiertos.</div>
+  </div>
+
+  </div><!-- /main-layout -->
+
 </div>
 
 <script>
@@ -559,6 +632,8 @@ let state = {
     ...JSON.parse(localStorage.getItem(STORAGE.config) || '{}'),
   },
   prs:         [],
+  ownPRs:      [],
+  ownActivity: JSON.parse(localStorage.getItem('prq_own_activity') || '{}'),
   loading:     false,
   readyOnly:   false,
   showIgnored: true,
@@ -592,6 +667,11 @@ const el = {
   showIgnored:   $('show-ignored-toggle'),
   refreshBtn:    $('refresh-btn'),
   statusDot:     $('status-dot'),
+  ownColumn:     $('own-column'),
+  ownLoading:    $('own-loading'),
+  ownPrList:     $('own-pr-list'),
+  ownEmpty:      $('own-empty'),
+  ownCount:      $('own-count'),
 };
 
 // ── Persistence ──────────────────────────────────────────────
@@ -704,15 +784,17 @@ async function enrichPR(pr, botRe, onProgress) {
     const ci  = await getCIStatus(owner, repo, sha);
 
     const isHuman = u => !isBot(u) && u.login !== pr.user.login;
-    const humanReviews  = (reviews  || []).filter(r => isHuman(r.user)).length;
-    const humanComments = (comments || []).filter(c => isHuman(c.user)).length;
-    const humanActivity = humanReviews + humanComments;
+    const humanRevs     = (reviews  || []).filter(r => isHuman(r.user));
+    const humanComments = (comments || []).filter(c => isHuman(c.user));
+    const humanActivity = humanRevs.length + humanComments.length;
+    const approved      = humanRevs.some(r => r.state === 'APPROVED');
+    const changesReq    = humanRevs.some(r => r.state === 'CHANGES_REQUESTED');
 
     onProgress();
     return { id: pr.id, number, owner, repo, title: pr.title,
       author: pr.user.login, authorAvatar: pr.user.avatar_url,
       url: pr.html_url, createdAt: new Date(pr.created_at),
-      ci, humanActivity, draft: prDetails.draft,
+      ci, humanActivity, approved, changesReq, draft: prDetails.draft,
       conflicts: prDetails.mergeable_state === 'dirty',
       ready: ci === 'green' && humanActivity === 0 && !prDetails.draft };
   } catch {
@@ -757,6 +839,8 @@ function renderCard(pr) {
   const activityBadge = pr.humanActivity > 0
     ? `<span class="badge badge-blue" title="Reviews y comentarios de personas (no bots, no autor) · ${pr.humanActivity} en total">👁 ${pr.humanActivity}</span>`
     : '';
+  const approvalBadge = pr.changesReq ? `<span class="badge badge-red">✗ Cambios</span>`
+    : pr.approved ? `<span class="badge badge-green">✓ Aprobado</span>` : '';
   const draftBadge     = pr.draft     ? `<span class="badge badge-amber">Draft</span>`     : '';
   const conflictBadge  = pr.conflicts ? `<span class="badge badge-red">⚡ Conflicts</span>` : '';
 
@@ -766,7 +850,7 @@ function renderCard(pr) {
         <span class="pr-repo">${esc(pr.repo)}</span>
         <span class="pr-number">#${pr.number}</span>
         <div class="pr-badges">
-          ${draftBadge}${conflictBadge}${ciBadge(pr.ci)}${activityBadge}
+          ${draftBadge}${conflictBadge}${ciBadge(pr.ci)}${activityBadge}${approvalBadge}
         </div>
       </div>
       <div class="pr-title">
@@ -832,6 +916,120 @@ function renderList() {
       renderList();
     });
   });
+}
+
+// ── Own PRs ──────────────────────────────────────────────────
+
+function saveOwnActivity() {
+  localStorage.setItem('prq_own_activity', JSON.stringify(state.ownActivity));
+}
+
+async function enrichOwnPR(pr) {
+  const [owner, repo] = pr.repository_url.replace(`${API}/repos/`, '').split('/');
+  const number = pr.number;
+  const botRe  = new RegExp(state.config.bots, 'i');
+  const isBot  = u => u.type === 'Bot' || u.login.endsWith('[bot]') || botRe.test(u.login);
+  const isOther = u => !isBot(u) && u.login !== pr.user.login;
+
+  try {
+    const [prDetails, reviews, comments] = await Promise.all([
+      apiFetch(`${API}/repos/${owner}/${repo}/pulls/${number}`),
+      apiFetch(`${API}/repos/${owner}/${repo}/pulls/${number}/reviews`),
+      apiFetch(`${API}/repos/${owner}/${repo}/issues/${number}/comments`),
+    ]);
+
+    const humanRevs     = (reviews  || []).filter(r => isOther(r.user));
+    const humanComments = (comments || []).filter(c => isOther(c.user));
+
+    const stored        = state.ownActivity[pr.id] || { commentIds: [], reviewIds: [] };
+    const seenComments  = new Set(stored.commentIds);
+    const seenReviews   = new Set(stored.reviewIds);
+
+    const newComments   = humanComments.filter(c => !seenComments.has(c.id)).length;
+    const newApprovals  = humanRevs.filter(r => r.state === 'APPROVED'           && !seenReviews.has(r.id)).length;
+    const newChanges    = humanRevs.filter(r => r.state === 'CHANGES_REQUESTED'  && !seenReviews.has(r.id)).length;
+
+    const sha = prDetails.head.sha;
+    const ci  = await getCIStatus(owner, repo, sha);
+
+    return { id: pr.id, number, owner, repo, title: pr.title, url: pr.html_url,
+      ci, conflicts: prDetails.mergeable_state === 'dirty', draft: prDetails.draft,
+      newComments, newApprovals, newChanges,
+      allCommentIds: humanComments.map(c => c.id),
+      allReviewIds:  humanRevs.map(r => r.id) };
+  } catch { return null; }
+}
+
+function renderOwnCard(pr) {
+  const newBadges = [
+    pr.newApprovals > 0 ? `<span class="badge badge-green">✓ ${pr.newApprovals > 1 ? pr.newApprovals + ' ' : ''}Aprobado</span>` : '',
+    pr.newChanges   > 0 ? `<span class="badge badge-red">✗ Cambios</span>` : '',
+    pr.newComments  > 0 ? `<span class="badge badge-blue">💬 ${pr.newComments} nuevo${pr.newComments > 1 ? 's' : ''}</span>` : '',
+  ].join('');
+  const ciB = pr.ci === 'failed' ? `<span class="badge badge-red" style="font-size:10px">✗ CI</span>`
+    : pr.ci === 'pending' ? `<span class="badge badge-amber" style="font-size:10px">◐ CI</span>` : '';
+  const confB = pr.conflicts ? `<span class="badge badge-red" style="font-size:10px">⚡</span>` : '';
+
+  return `
+    <div class="own-card">
+      <div class="own-card-top">
+        <span class="pr-repo">${esc(pr.repo)}</span>
+        <span class="pr-number">#${pr.number}</span>
+        ${ciB}${confB}
+      </div>
+      <div class="own-card-title">
+        <a href="${esc(pr.url)}" target="_blank" rel="noopener"
+           class="own-pr-link"
+           data-id="${pr.id}"
+           data-cids="${pr.allCommentIds.join(',')}"
+           data-rids="${pr.allReviewIds.join(',')}">${esc(pr.title)}</a>
+      </div>
+      ${newBadges ? `<div class="own-badges">${newBadges}</div>` : ''}
+    </div>`;
+}
+
+function renderOwnPRs() {
+  const prs = state.ownPRs;
+  el.ownEmpty.classList.toggle('hidden', prs.length > 0);
+  el.ownCount.textContent = prs.length || '';
+  el.ownPrList.innerHTML  = prs.map(renderOwnCard).join('');
+
+  el.ownPrList.querySelectorAll('.own-pr-link').forEach(link => {
+    link.addEventListener('click', () => {
+      const id       = Number(link.dataset.id);
+      const cids     = link.dataset.cids ? link.dataset.cids.split(',').map(Number).filter(Boolean) : [];
+      const rids     = link.dataset.rids ? link.dataset.rids.split(',').map(Number).filter(Boolean) : [];
+      state.ownActivity[id] = { commentIds: cids, reviewIds: rids };
+      saveOwnActivity();
+      setTimeout(() => renderOwnPRs(), 150);
+    });
+  });
+}
+
+async function loadOwnPRs() {
+  if (!state.token) return;
+  const { org, label, exclude } = state.config;
+  if (!exclude) return;
+
+  el.ownColumn.style.display = '';
+  el.ownLoading.classList.remove('hidden');
+
+  try {
+    const data = await apiFetch(
+      `${API}/search/issues?q=is:pr+is:open+label:${encodeURIComponent(label)}+org:${encodeURIComponent(org)}+author:${encodeURIComponent(exclude)}&per_page=50&sort=created&order=desc`
+    );
+    const items = data.items || [];
+    const results = [];
+    for (let i = 0; i < items.length; i += 4) {
+      const batch = items.slice(i, i + 4);
+      const out   = await Promise.all(batch.map(enrichOwnPR));
+      results.push(...out);
+    }
+    state.ownPRs = results.filter(Boolean);
+    renderOwnPRs();
+  } catch { /* silent */ } finally {
+    el.ownLoading.classList.add('hidden');
+  }
 }
 
 // ── Load PRs ─────────────────────────────────────────────────
@@ -959,7 +1157,7 @@ el.configClear.addEventListener('click', () => {
   el.tokenInput.value = '';
 });
 
-el.refreshBtn.addEventListener('click', () => loadPRs());
+el.refreshBtn.addEventListener('click', () => { loadPRs(); loadOwnPRs(); });
 el.readyOnly.addEventListener('change',   () => { state.readyOnly   = el.readyOnly.checked;   updateURL(); renderList(); });
 el.showIgnored.addEventListener('change', () => { state.showIgnored = el.showIgnored.checked; updateURL(); renderList(); });
 
@@ -968,7 +1166,7 @@ setInterval(() => {
 }, 30000);
 
 setInterval(() => {
-  if (state.token && !state.loading) loadPRs();
+  if (state.token && !state.loading) { loadPRs(); loadOwnPRs(); }
 }, 5 * 60 * 1000);
 
 // ── Init ─────────────────────────────────────────────────────
@@ -980,5 +1178,6 @@ el.showIgnored.checked = state.showIgnored;
 if (state.token) {
   el.authSection.classList.add('hidden');
   loadPRs();
+  loadOwnPRs();
 }
 </script>
