@@ -955,13 +955,13 @@ async function enrichOwnPR(pr) {
 
 function renderOwnCard(pr) {
   const newBadges = [
-    pr.newApprovals > 0 ? `<span class="badge badge-green">✓ ${pr.newApprovals > 1 ? pr.newApprovals + ' ' : ''}Aprobado</span>` : '',
-    pr.newChanges   > 0 ? `<span class="badge badge-red">✗ Cambios</span>` : '',
-    pr.newComments  > 0 ? `<span class="badge badge-blue">💬 ${pr.newComments} nuevo${pr.newComments > 1 ? 's' : ''}</span>` : '',
+    pr.newApprovals > 0 ? `<span class="badge badge-green" title="${pr.newApprovals} approve${pr.newApprovals > 1 ? 's' : ''} nuevo${pr.newApprovals > 1 ? 's' : ''} desde la última vez que abriste el PR">✓ ${pr.newApprovals > 1 ? pr.newApprovals + ' ' : ''}Aprobado</span>` : '',
+    pr.newChanges   > 0 ? `<span class="badge badge-red" title="Alguien pidió cambios desde la última vez que abriste el PR">✗ Cambios</span>` : '',
+    pr.newComments  > 0 ? `<span class="badge badge-blue" title="${pr.newComments} comentario${pr.newComments > 1 ? 's' : ''} nuevo${pr.newComments > 1 ? 's' : ''} desde la última vez que abriste el PR">💬 ${pr.newComments} nuevo${pr.newComments > 1 ? 's' : ''}</span>` : '',
   ].join('');
-  const ciB = pr.ci === 'failed' ? `<span class="badge badge-red" style="font-size:10px">✗ CI</span>`
-    : pr.ci === 'pending' ? `<span class="badge badge-amber" style="font-size:10px">◐ CI</span>` : '';
-  const confB = pr.conflicts ? `<span class="badge badge-red" style="font-size:10px">⚡</span>` : '';
+  const ciB = pr.ci === 'failed' ? `<span class="badge badge-red" style="font-size:10px" title="Uno o más checks fallaron">✗ CI</span>`
+    : pr.ci === 'pending' ? `<span class="badge badge-amber" style="font-size:10px" title="Checks corriendo">◐ CI</span>` : '';
+  const confB = pr.conflicts ? `<span class="badge badge-red" style="font-size:10px" title="Tiene conflictos de merge con la rama base">⚡</span>` : '';
 
   return `
     <div class="own-card">
