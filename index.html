@@ -512,6 +512,7 @@ html, body {
     <div class="header-right">
       <span class="header-meta" id="last-updated"></span>
       <span class="header-meta hidden" id="logged-user" style="color:var(--muted)"></span>
+      <button class="text-btn hidden" id="signout-btn" style="color:var(--muted)">Sign out</button>
       <button class="text-btn" id="config-toggle-btn">Config</button>
     </div>
   </div>
@@ -544,8 +545,7 @@ html, body {
       <label>Bot pattern (regex)</label>
       <input type="text" id="cfg-bots" class="input" value="hu-agent|hu-reviewer" />
     </div>
-    <div class="config-field" style="grid-column:span 2; display:flex; justify-content:flex-end; gap:8px;">
-      <button class="btn btn-ghost btn-sm" id="config-clear-token-btn">Sign out</button>
+    <div class="config-field" style="grid-column:span 2; display:flex; justify-content:flex-end;">
       <button class="btn btn-primary btn-sm" id="config-save-btn">Save & refresh</button>
     </div>
   </div>
@@ -664,6 +664,7 @@ const el = {
   refreshBtn:    $('refresh-btn'),
   statusDot:     $('status-dot'),
   loggedUser:    $('logged-user'),
+  signoutBtn:    $('signout-btn'),
   ownColumn:     $('own-column'),
   ownLoading:    $('own-loading'),
   ownPrList:     $('own-pr-list'),
@@ -1116,6 +1117,7 @@ async function connectToken(val) {
     localStorage.setItem('prq_me', state.me);
     el.loggedUser.textContent = '@' + state.me;
     el.loggedUser.classList.remove('hidden');
+    el.signoutBtn.classList.remove('hidden');
   } catch { state.me = ''; }
   el.authSection.classList.add('hidden');
   loadPRs();
@@ -1148,20 +1150,22 @@ el.configSave.addEventListener('click', () => {
   if (state.token) loadPRs();
 });
 
-el.configClear.addEventListener('click', () => {
-  state.token = '';
+el.signoutBtn.addEventListener('click', () => {
+  state.token = ''; state.me = '';
   localStorage.removeItem(STORAGE.token);
+  localStorage.removeItem('prq_me');
   el.authSection.classList.remove('hidden');
   el.configSection.classList.add('hidden');
   el.toolbar.classList.add('hidden');
   el.prList.innerHTML = '';
+  el.ownPrList.innerHTML = '';
+  el.ownColumn.style.display = 'none';
   configOpen = false;
   el.configToggle.textContent = 'Config';
   el.statusDot.className = 'header-dot';
   el.tokenInput.value = '';
-  state.me = '';
-  localStorage.removeItem('prq_me');
   el.loggedUser.classList.add('hidden');
+  el.signoutBtn.classList.add('hidden');
 });
 
 el.refreshBtn.addEventListener('click', () => { loadPRs(); loadOwnPRs(); });
@@ -1172,9 +1176,19 @@ setInterval(() => {
   if (state.lastUpdated) el.lastUpdated.textContent = `Updated ${timeAgo(state.lastUpdated)}`;
 }, 30000);
 
+// Refresh every 1 min while tab is visible
 setInterval(() => {
-  if (state.token && !state.loading) { loadPRs(); loadOwnPRs(); }
-}, 5 * 60 * 1000);
+  if (state.token && !state.loading && !document.hidden) { loadPRs(); loadOwnPRs(); }
+}, 60 * 1000);
+
+// Refresh on tab focus if it's been more than 1 min since last update
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && state.token && !state.loading) {
+    if (!state.lastUpdated || Date.now() - state.lastUpdated > 60 * 1000) {
+      loadPRs(); loadOwnPRs();
+    }
+  }
+});
 
 // ── Init ─────────────────────────────────────────────────────
 
@@ -1187,6 +1201,7 @@ if (state.token) {
   if (state.me) {
     el.loggedUser.textContent = '@' + state.me;
     el.loggedUser.classList.remove('hidden');
+    el.signoutBtn.classList.remove('hidden');
   }
   loadPRs();
   loadOwnPRs();
