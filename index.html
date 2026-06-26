@@ -511,6 +511,7 @@ html, body {
     </h1>
     <div class="header-right">
       <span class="header-meta" id="last-updated"></span>
+      <span class="header-meta hidden" id="logged-user" style="color:var(--muted)"></span>
       <button class="text-btn" id="config-toggle-btn">Config</button>
     </div>
   </div>
@@ -538,10 +539,6 @@ html, body {
     <div class="config-field">
       <label>Label</label>
       <input type="text" id="cfg-label" class="input" value="comm" />
-    </div>
-    <div class="config-field">
-      <label>Exclude author</label>
-      <input type="text" id="cfg-exclude" class="input" value="sfavaron-hu" />
     </div>
     <div class="config-field">
       <label>Bot pattern (regex)</label>
@@ -625,12 +622,12 @@ let state = {
   token:   localStorage.getItem(STORAGE.token) || '',
   ignored: new Set(JSON.parse(localStorage.getItem(STORAGE.ignored) || '[]')),
   config: {
-    org:     'HumandDev',
-    label:   'comm',
-    exclude: 'sfavaron-hu',
-    bots:    'hu-agent|hu-reviewer',
+    org:   'HumandDev',
+    label: 'comm',
+    bots:  'hu-agent|hu-reviewer',
     ...JSON.parse(localStorage.getItem(STORAGE.config) || '{}'),
   },
+  me:          localStorage.getItem('prq_me') || '',
   prs:         [],
   ownPRs:      [],
   ownActivity: JSON.parse(localStorage.getItem('prq_own_activity') || '{}'),
@@ -650,10 +647,9 @@ const el = {
   configToggle:  $('config-toggle-btn'),
   configSave:    $('config-save-btn'),
   configClear:   $('config-clear-token-btn'),
-  cfgOrg:        $('cfg-org'),
-  cfgLabel:      $('cfg-label'),
-  cfgExclude:    $('cfg-exclude'),
-  cfgBots:       $('cfg-bots'),
+  cfgOrg:   $('cfg-org'),
+  cfgLabel: $('cfg-label'),
+  cfgBots:  $('cfg-bots'),
   toolbar:       $('toolbar'),
   progressBar:   $('progress-bar'),
   progressFill:  $('progress-fill'),
@@ -667,6 +663,7 @@ const el = {
   showIgnored:   $('show-ignored-toggle'),
   refreshBtn:    $('refresh-btn'),
   statusDot:     $('status-dot'),
+  loggedUser:    $('logged-user'),
   ownColumn:     $('own-column'),
   ownLoading:    $('own-loading'),
   ownPrList:     $('own-pr-list'),
@@ -686,20 +683,18 @@ function saveConfig() {
 
 function readConfigFields() {
   state.config = {
-    org:     el.cfgOrg.value.trim()   || 'HumandDev',
-    label:   el.cfgLabel.value.trim() || 'comm',
-    exclude: el.cfgExclude.value.trim(),
-    bots:    el.cfgBots.value.trim()  || 'hu-agent|hu-reviewer',
+    org:   el.cfgOrg.value.trim()   || 'HumandDev',
+    label: el.cfgLabel.value.trim() || 'comm',
+    bots:  el.cfgBots.value.trim()  || 'hu-agent|hu-reviewer',
   };
   saveConfig();
   updateURL();
 }
 
 function writeConfigFields() {
-  el.cfgOrg.value     = state.config.org;
-  el.cfgLabel.value   = state.config.label;
-  el.cfgExclude.value = state.config.exclude;
-  el.cfgBots.value    = state.config.bots;
+  el.cfgOrg.value   = state.config.org;
+  el.cfgLabel.value = state.config.label;
+  el.cfgBots.value  = state.config.bots;
 }
 
 // ── URL state ────────────────────────────────────────────────
@@ -708,10 +703,9 @@ function updateURL() {
   const p = new URLSearchParams();
   if (state.readyOnly)            p.set('ready',   '1');
   if (state.showIgnored)          p.set('skipped', '1');
-  if (state.config.org     !== 'HumandDev')         p.set('org',     state.config.org);
-  if (state.config.label   !== 'comm')               p.set('label',   state.config.label);
-  if (state.config.exclude !== 'sfavaron-hu')        p.set('exclude', state.config.exclude);
-  if (state.config.bots    !== 'hu-agent|hu-reviewer') p.set('bots',  state.config.bots);
+  if (state.config.org   !== 'HumandDev')             p.set('org',   state.config.org);
+  if (state.config.label !== 'comm')                  p.set('label', state.config.label);
+  if (state.config.bots  !== 'hu-agent|hu-reviewer')  p.set('bots',  state.config.bots);
   const qs = p.toString();
   history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
 }
@@ -720,10 +714,9 @@ function readURL() {
   const p = new URLSearchParams(location.search);
   if (p.has('ready'))   state.readyOnly   = p.get('ready')   === '1';
   if (p.has('skipped')) state.showIgnored = p.get('skipped') === '1';
-  if (p.has('org'))     state.config.org     = p.get('org');
-  if (p.has('label'))   state.config.label   = p.get('label');
-  if (p.has('exclude')) state.config.exclude = p.get('exclude');
-  if (p.has('bots'))    state.config.bots    = p.get('bots');
+  if (p.has('org'))   state.config.org   = p.get('org');
+  if (p.has('label')) state.config.label = p.get('label');
+  if (p.has('bots'))  state.config.bots  = p.get('bots');
 }
 
 // ── GitHub API ───────────────────────────────────────────────
@@ -763,7 +756,7 @@ async function enrichPR(pr, botRe, onProgress) {
   const number = pr.number;
 
   const isBot = u => u.type === 'Bot' || u.login.endsWith('[bot]') || botRe.test(u.login);
-  if (pr.user.login === state.config.exclude) { onProgress(); return null; }
+  if (pr.user.login === state.me) { onProgress(); return null; }
   if (isBot(pr.user)) {
     onProgress();
     return { id: pr.id, number, owner, repo, title: pr.title,
@@ -1114,13 +1107,24 @@ async function loadPRs() {
 
 // ── Events ───────────────────────────────────────────────────
 
-el.saveTokenBtn.addEventListener('click', () => {
-  const val = el.tokenInput.value.trim();
-  if (!val) return;
+async function connectToken(val) {
   state.token = val;
   localStorage.setItem(STORAGE.token, val);
+  try {
+    const user = await apiFetch(`${API}/user`);
+    state.me = user.login;
+    localStorage.setItem('prq_me', state.me);
+    el.loggedUser.textContent = '@' + state.me;
+    el.loggedUser.classList.remove('hidden');
+  } catch { state.me = ''; }
   el.authSection.classList.add('hidden');
   loadPRs();
+  loadOwnPRs();
+}
+
+el.saveTokenBtn.addEventListener('click', () => {
+  const val = el.tokenInput.value.trim();
+  if (val) connectToken(val);
 });
 el.tokenInput.addEventListener('keydown', e => { if (e.key === 'Enter') el.saveTokenBtn.click(); });
 
@@ -1155,6 +1159,9 @@ el.configClear.addEventListener('click', () => {
   el.configToggle.textContent = 'Config';
   el.statusDot.className = 'header-dot';
   el.tokenInput.value = '';
+  state.me = '';
+  localStorage.removeItem('prq_me');
+  el.loggedUser.classList.add('hidden');
 });
 
 el.refreshBtn.addEventListener('click', () => { loadPRs(); loadOwnPRs(); });
@@ -1177,6 +1184,10 @@ el.showIgnored.checked = state.showIgnored;
 
 if (state.token) {
   el.authSection.classList.add('hidden');
+  if (state.me) {
+    el.loggedUser.textContent = '@' + state.me;
+    el.loggedUser.classList.remove('hidden');
+  }
   loadPRs();
   loadOwnPRs();
 }
