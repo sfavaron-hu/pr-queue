@@ -255,7 +255,7 @@ html, body {
 /* ── Progress ── */
 .progress-bar {
   height: 2px;
-  background: var(--border);
+  background: transparent;
   border-radius: 1px;
   margin-bottom: 16px;
   overflow: hidden;
@@ -414,6 +414,16 @@ html, body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes cardIn {
+  0%   { opacity: 0; max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+  40%  { max-height: 160px; margin-bottom: 6px; padding-top: 14px; padding-bottom: 14px; opacity: 0; }
+  100% { opacity: 1; max-height: 160px; margin-bottom: 6px; padding-top: 14px; padding-bottom: 14px; }
+}
+.pr-card.is-new {
+  animation: cardIn 0.8s ease both;
+  overflow: hidden;
+}
 
 .spinner {
   width: 16px;
@@ -604,7 +614,7 @@ html, body {
   </div>
 
   <!-- Progress -->
-  <div class="progress-bar hidden" id="progress-bar">
+  <div class="progress-bar" id="progress-bar">
     <div class="progress-fill" id="progress-fill" style="width:0%"></div>
   </div>
 
@@ -622,8 +632,7 @@ html, body {
 
   <!-- Empty -->
   <div id="empty" class="empty hidden">
-    No PRs match the current filters.<br>
-    <span style="font-size:11px;">Try unchecking "Ready to review only" to see all open PRs.</span>
+    No hay PRs con label <code id="empty-label" style="font-family:var(--mono);font-size:11px;background:var(--surface);padding:1px 5px;border-radius:3px;"></code> abiertos en este momento.
   </div>
 
   </div><!-- /tribe-column -->
@@ -664,6 +673,8 @@ let state = {
   },
   me:          localStorage.getItem('prq_me') || '',
   prs:         [],
+  renderedIds:   new Set(),
+  cardTimers:    [],
   ownPRs:      [],
   mergedPRs:   [],
   ownActivity: JSON.parse(localStorage.getItem('prq_own_activity') || '{}'),
@@ -826,7 +837,9 @@ async function enrichPR(pr, botRe, onProgress) {
       url: pr.html_url, createdAt: new Date(pr.created_at),
       ci, humanActivity, activityBy, approved, changesReq, draft: prDetails.draft,
       conflicts: prDetails.mergeable_state === 'dirty',
-      ready: ci === 'green' && humanActivity === 0 && !prDetails.draft };
+      dontMerge: pr.labels.some(l => l.name.includes("don't merge") || l.name.includes("dont merge") || l.name.includes("🚧")),
+      ready: ci === 'green' && humanActivity === 0 && !prDetails.draft
+        && !pr.labels.some(l => l.name.includes("don't merge") || l.name.includes("dont merge") || l.name.includes("🚧")) };
   } catch {
     onProgress();
     return null;
@@ -864,23 +877,26 @@ function ciBadge(ci) {
 
 // ── Render ───────────────────────────────────────────────────
 
-function renderCard(pr) {
+function renderCard(pr, isNew = false, delay = 0) {
   const ignored = state.ignored.has(pr.id);
   const activityBadge = pr.humanActivity > 0
     ? `<span class="badge badge-blue" data-tip="${pr.humanActivity} comentario${pr.humanActivity > 1 ? 's' : ''} de ${pr.activityBy.join(', ')}">👁 ${pr.humanActivity}</span>`
     : '';
   const approvalBadge = pr.changesReq ? `<span class="badge badge-red" data-tip="Alguien pidió cambios">✗ Cambios</span>`
     : pr.approved ? `<span class="badge badge-green" data-tip="Tiene al menos un approve">✓ Aprobado</span>` : '';
-  const draftBadge     = pr.draft     ? `<span class="badge badge-amber" data-tip="PR en borrador, no listo para review">Draft</span>` : '';
-  const conflictBadge  = pr.conflicts ? `<span class="badge badge-red">⚡ Conflicts</span>` : '';
+  const draftBadge     = pr.draft      ? `<span class="badge badge-amber" data-tip="PR en borrador, no listo para review">Draft</span>` : '';
+  const conflictBadge  = pr.conflicts  ? `<span class="badge badge-red">⚡ Conflicts</span>` : '';
+  const dontMergeBadge = pr.dontMerge  ? `<span class="badge badge-amber">🚧 Don't merge</span>` : '';
 
+  const newCls   = isNew ? ' is-new' : '';
+  const newStyle = isNew && delay ? ` style="animation-delay:${delay}ms"` : '';
   return `
-    <div class="pr-card${ignored ? ' is-ignored' : ''}" data-id="${pr.id}">
+    <div class="pr-card${ignored ? ' is-ignored' : ''}${newCls}" data-id="${pr.id}"${newStyle}>
       <div class="pr-top">
         <span class="pr-repo">${esc(pr.repo)}</span>
         <span class="pr-number">#${pr.number}</span>
         <div class="pr-badges">
-          ${draftBadge}${conflictBadge}${ciBadge(pr.ci)}${activityBadge}${approvalBadge}
+          ${draftBadge}${dontMergeBadge}${conflictBadge}${ciBadge(pr.ci)}${activityBadge}${approvalBadge}
         </div>
       </div>
       <div class="pr-title">
@@ -901,6 +917,8 @@ function renderCard(pr) {
 }
 
 function renderList() {
+  state.cardTimers.forEach(clearTimeout);
+  state.cardTimers = [];
   const visible = state.prs.filter(pr => {
     if (!state.showIgnored && state.ignored.has(pr.id)) return false;
     if (state.readyOnly && !pr.ready) return false;
@@ -918,22 +936,50 @@ function renderList() {
     });
 
   el.empty.classList.toggle('hidden', visible.length > 0 || botPRs.length > 0);
+  const emptyLabel = document.getElementById('empty-label');
+  if (emptyLabel) emptyLabel.textContent = state.config.label;
 
   if (visible.length === 0 && botPRs.length === 0) { el.prList.innerHTML = ''; return; }
 
+  let newIdx = 0;
+  const rc = pr => {
+    const isNew = !state.renderedIds.has(pr.id);
+    return renderCard(pr, isNew, isNew ? newIdx++ * 500 : 0);
+  };
+
   let html = '';
-  if (ready.length > 0) {
-    html += `<div class="section-label">Ready to review <span class="count-badge ready">${ready.length}</span></div>`;
-    html += ready.map(renderCard).join('');
-  }
+  html += `<div class="section-label">Ready to review ${ready.length > 0 ? `<span class="count-badge ready">${ready.length}</span>` : ''}</div>`;
+  html += ready.length > 0
+    ? ready.map(rc).join('')
+    : `<div style="padding:20px 0;text-align:center;font-size:12px;color:var(--muted);">Ningún PR listo para review 🎉</div>`;
   if (!state.readyOnly && others.length > 0) {
     html += `<div class="section-label">Has activity <span class="count-badge">${others.length}</span></div>`;
-    html += others.map(renderCard).join('');
+    html += others.map(rc).join('');
   }
   if (botPRs.length > 0) {
     html += `<div class="section-label">Bots <span class="count-badge">${botPRs.length}</span></div>`;
-    html += botPRs.map(renderCard).join('');
+    html += botPRs.map(rc).join('');
   }
+
+  // Mark all as rendered after this paint
+  [...ready, ...others, ...botPRs].forEach(p => state.renderedIds.add(p.id));
+
+  // Extract new cards from DOM and re-insert with real timeouts
+  const newCards = [...el.prList.querySelectorAll('.pr-card.is-new')];
+  newCards.forEach(card => {
+    const delay  = parseFloat(card.style.animationDelay) || 0;
+    const parent = card.parentNode;
+    const next   = card.nextSibling;
+    parent.removeChild(card);
+    card.style.removeProperty('animation-delay');
+    state.cardTimers.push(setTimeout(() => {
+      if (next && next.parentNode === parent) parent.insertBefore(card, next);
+      else parent.appendChild(card);
+      card.style.animation = 'none';
+      card.offsetHeight;
+      card.style.animation = '';
+    }, delay));
+  });
 
   el.prList.innerHTML = html;
 
@@ -1036,7 +1082,8 @@ function renderOwnCard(pr) {
 function renderOwnPRs() {
   const prs = state.ownPRs;
   el.ownEmpty.classList.toggle('hidden', prs.length > 0 || state.mergedPRs.length > 0);
-  el.ownCount.textContent = prs.length || '';
+  el.ownCount.textContent = prs.length > 0 ? prs.length : '';
+  el.ownCount.style.display = prs.length > 0 ? '' : 'none';
 
   let html = prs.map(renderOwnCard).join('');
 
@@ -1077,7 +1124,7 @@ async function loadOwnPRs() {
   if (!state.me) return;
 
   el.ownColumn.style.display = '';
-  el.ownLoading.classList.remove('hidden');
+  if (state.ownPRs.length === 0) el.ownLoading.classList.remove('hidden');
 
   try {
     const [openData, mergedData] = await Promise.all([
@@ -1114,16 +1161,18 @@ async function loadPRs() {
   if (!state.token || state.loading) return;
   state.loading = true;
 
-  el.loading.classList.remove('hidden');
-  el.loadingText.textContent = 'Fetching PR list…';
-  el.progressBar.classList.remove('hidden');
+  const hasExisting = state.prs.length > 0;
+  if (!hasExisting) state.renderedIds = new Set();
+  
   el.progressFill.style.width = '0%';
+  if (!hasExisting) {
+    el.loading.classList.remove('hidden');
+    el.loadingText.textContent = 'Fetching PR list…';
+  }
   el.errorMsg.classList.add('hidden');
   el.empty.classList.add('hidden');
   el.refreshBtn.disabled = true;
   el.statusDot.className = 'header-dot';
-  // Mark existing cards stale instead of wiping them
-  el.prList.querySelectorAll('.pr-card').forEach(c => c.classList.add('is-stale'));
 
   try {
     const { org, label } = state.config;
@@ -1148,25 +1197,30 @@ async function loadPRs() {
     let done = 0;
     const onProgress = () => {
       done++;
-      el.loadingText.textContent = `Checking PR ${done} of ${items.length}…`;
+      if (!hasExisting) el.loadingText.textContent = `Checking PR ${done} of ${items.length}…`;
       el.progressFill.style.width = `${8 + Math.round((done / items.length) * 87)}%`;
     };
 
-    const results = [];
+    const newSearchIds = new Set(items.map(i => i.id));
+
     for (let i = 0; i < items.length; i += 4) {
       const batch = items.slice(i, i + 4);
-      const out = await Promise.all(batch.map(pr => enrichPR(pr, botRe, onProgress)));
-      results.push(...out);
+      const out   = await Promise.all(batch.map(pr => enrichPR(pr, botRe, onProgress)));
+      for (const pr of out.filter(Boolean)) {
+        const idx = state.prs.findIndex(p => p.id === pr.id);
+        if (idx >= 0) state.prs[idx] = pr;
+        else state.prs.push(pr);
+      }
     }
 
-    state.prs = results.filter(Boolean);
+    // Remove PRs that are no longer in the search results
+    state.prs = state.prs.filter(p => newSearchIds.has(p.id));
     state.lastUpdated = Date.now();
     el.lastUpdated.textContent = 'Updated just now';
     el.progressFill.style.width = '100%';
-    setTimeout(() => el.progressBar.classList.add('hidden'), 500);
+    setTimeout(() => { el.progressFill.style.width = '0%'; }, 500);
     el.toolbar.classList.remove('hidden');
     el.statusDot.className = 'header-dot live';
-    el.prList.querySelectorAll('.pr-card').forEach(c => c.classList.remove('is-stale'));
     renderList();
 
   } catch (err) {
@@ -1179,7 +1233,7 @@ async function loadPRs() {
     } else {
       showError(err.message);
     }
-    el.progressBar.classList.add('hidden');
+    el.progressFill.style.width = '0%';
     el.statusDot.className = 'header-dot';
   } finally {
     state.loading = false;
@@ -1261,12 +1315,12 @@ setInterval(() => {
 // Refresh every 1 min while tab is visible
 setInterval(() => {
   if (state.token && !state.loading && !document.hidden) { loadPRs(); loadOwnPRs(); }
-}, 60 * 1000);
+}, 3 * 60 * 1000);
 
 // Refresh on tab focus if it's been more than 1 min since last update
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state.token && !state.loading) {
-    if (!state.lastUpdated || Date.now() - state.lastUpdated > 60 * 1000) {
+    if (!state.lastUpdated || Date.now() - state.lastUpdated > 3 * 60 * 1000) {
       loadPRs(); loadOwnPRs();
     }
   }
