@@ -646,7 +646,6 @@ const el = {
   configSection: $('config-section'),
   configToggle:  $('config-toggle-btn'),
   configSave:    $('config-save-btn'),
-  configClear:   $('config-clear-token-btn'),
   cfgOrg:   $('cfg-org'),
   cfgLabel: $('cfg-label'),
   cfgBots:  $('cfg-bots'),
@@ -1138,7 +1137,7 @@ el.configToggle.addEventListener('click', () => {
   if (configOpen) writeConfigFields();
 });
 
-[el.cfgOrg, el.cfgLabel, el.cfgExclude, el.cfgBots].forEach(input => {
+[el.cfgOrg, el.cfgLabel, el.cfgBots].forEach(input => {
   input.addEventListener('keydown', e => { if (e.key === 'Enter') el.configSave.click(); });
 });
 
