@@ -823,13 +823,13 @@ function showError(msg) {
 
 function ciBadge(ci) {
   const map = {
-    green:   ['badge-green', '✓ CI'],
-    pending: ['badge-amber', '◐ CI'],
-    failed:  ['badge-red',   '✗ CI'],
-    unknown: ['badge-gray',  '— CI'],
+    green:   ['badge-green', '✓ CI', 'Todos los checks pasaron'],
+    pending: ['badge-amber', '◐ CI', 'Checks corriendo'],
+    failed:  ['badge-red',   '✗ CI', 'Uno o más checks fallaron'],
+    unknown: ['badge-gray',  '— CI', 'Sin checks configurados'],
   };
-  const [cls, lbl] = map[ci] || map.unknown;
-  return `<span class="badge ${cls}">${lbl}</span>`;
+  const [cls, lbl, tip] = map[ci] || map.unknown;
+  return `<span class="badge ${cls}" title="${tip}">${lbl}</span>`;
 }
 
 // ── Render ───────────────────────────────────────────────────
@@ -839,10 +839,10 @@ function renderCard(pr) {
   const activityBadge = pr.humanActivity > 0
     ? `<span class="badge badge-blue" title="Reviews y comentarios de personas (no bots, no autor) · ${pr.humanActivity} en total">👁 ${pr.humanActivity}</span>`
     : '';
-  const approvalBadge = pr.changesReq ? `<span class="badge badge-red">✗ Cambios</span>`
-    : pr.approved ? `<span class="badge badge-green">✓ Aprobado</span>` : '';
-  const draftBadge     = pr.draft     ? `<span class="badge badge-amber">Draft</span>`     : '';
-  const conflictBadge  = pr.conflicts ? `<span class="badge badge-red">⚡ Conflicts</span>` : '';
+  const approvalBadge = pr.changesReq ? `<span class="badge badge-red" title="Alguien pidió cambios">✗ Cambios</span>`
+    : pr.approved ? `<span class="badge badge-green" title="Tiene al menos un approve">✓ Aprobado</span>` : '';
+  const draftBadge     = pr.draft     ? `<span class="badge badge-amber" title="PR en borrador, no listo para review">Draft</span>`     : '';
+  const conflictBadge  = pr.conflicts ? `<span class="badge badge-red" title="Tiene conflictos de merge con la rama base">⚡ Conflicts</span>` : '';
 
   return `
     <div class="pr-card${ignored ? ' is-ignored' : ''}" data-id="${pr.id}">
