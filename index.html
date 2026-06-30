@@ -298,6 +298,27 @@ html, body {
 }
 .count-badge.ready { background: rgba(52,211,153,0.14); color: var(--green); }
 
+/* ── Quick wins ── */
+.quick-wins-section {
+  border: 1px solid rgba(251,191,36,0.2);
+  border-radius: 8px;
+  padding: 12px 14px 6px;
+  margin-bottom: 8px;
+  background: rgba(251,191,36,0.025);
+}
+.quick-wins-section .section-label {
+  color: rgba(251,191,36,0.6);
+  margin-top: 0;
+}
+.quick-wins-section .pr-card {
+  background: transparent;
+  border-color: rgba(251,191,36,0.08);
+}
+.quick-wins-section .pr-card:hover {
+  background: rgba(251,191,36,0.04);
+  border-color: rgba(251,191,36,0.18);
+}
+
 /* ── PR Card ── */
 .pr-card {
   background: var(--surface);
@@ -555,6 +576,7 @@ html, body {
       PR Review Queue
     </h1>
     <div class="header-right">
+      <span class="header-meta" id="week-score" style="display:none;cursor:default;transition:transform 0.15s;"></span>
       <span class="header-meta" id="last-updated"></span>
       <span class="header-meta hidden" id="logged-user" style="color:var(--muted)"></span>
       <button class="text-btn hidden" id="signout-btn" style="color:var(--muted)">Sign out</button>
@@ -837,6 +859,7 @@ async function enrichPR(pr, botRe, onProgress) {
       url: pr.html_url, createdAt: new Date(pr.created_at),
       ci, humanActivity, activityBy, approved, changesReq, draft: prDetails.draft,
       conflicts: prDetails.mergeable_state === 'dirty',
+      lines: (prDetails.additions || 0) + (prDetails.deletions || 0),
       dontMerge: pr.labels.some(l => l.name.includes("don't merge") || l.name.includes("dont merge") || l.name.includes("🚧")),
       ready: ci === 'green' && humanActivity === 0 && !prDetails.draft
         && !pr.labels.some(l => l.name.includes("don't merge") || l.name.includes("dont merge") || l.name.includes("🚧")) };
@@ -875,6 +898,85 @@ function ciBadge(ci) {
   return `<span class="badge ${cls}">${lbl}</span>`;
 }
 
+// ── Helpers ──────────────────────────────────────────────────
+
+function lineCountHTML(n) {
+  if (n == null || n === 0) return '';
+  let color, weight, extra = '';
+  if      (n <= 10)  { color = '#ffd700'; weight = 700; extra = ' ✦'; }
+  else if (n <= 20)  { color = '#f0c040'; weight = 600; }
+  else if (n <= 50)  { color = '#9fcf6f'; weight = 500; }
+  else if (n <= 150) { color = '#3fb950'; weight = 400; }
+  else if (n <= 400) { color = '#6e7681'; weight = 400; }
+  else               { color = '#3d4451'; weight = 400; }
+  return `<span class="badge" style="color:${color};font-weight:${weight};background:transparent;padding:2px 4px;">${n} líneas${extra}</span>`;
+}
+
+function sizeBadgeHTML(n) {
+  if (n == null || n === 0) return '';
+  let label, bg, clr;
+  if      (n <= 20)  { label = 'XS'; bg = 'rgba(251,191,36,0.14)';  clr = '#FBBF24'; }
+  else if (n <= 80)  { label = 'S';  bg = 'rgba(52,211,153,0.12)';  clr = '#34D399'; }
+  else if (n <= 250) { label = 'M';  bg = 'rgba(96,165,250,0.12)';  clr = '#60A5FA'; }
+  else if (n <= 500) { label = 'L';  bg = 'rgba(167,139,250,0.12)'; clr = '#A78BFA'; }
+  else               { label = 'XL'; bg = 'rgba(79,96,112,0.18)';   clr = '#6e7681'; }
+  return `<span class="badge" style="background:${bg};color:${clr};font-weight:600;">${label}</span>`;
+}
+
+// ── Score ─────────────────────────────────────────────────────
+
+function weekStart() {
+  const d = new Date();
+  const diff = d.getDate() - d.getDay() + (d.getDay() === 0 ? -6 : 1);
+  return new Date(d.getFullYear(), d.getMonth(), diff).toISOString().split('T')[0];
+}
+
+function loadScore() {
+  const saved = JSON.parse(localStorage.getItem('prq_score') || '{}');
+  if (saved.week !== weekStart()) return { week: weekStart(), pts: 0, xs: 0, s: 0, m: 0, l: 0, xl: 0 };
+  return saved;
+}
+
+function saveScore(score) {
+  localStorage.setItem('prq_score', JSON.stringify(score));
+}
+
+function ptsForLines(n) {
+  if (n <= 20)  return 1;
+  if (n <= 80)  return 2;
+  if (n <= 250) return 3.5;
+  if (n <= 500) return 5.5;
+  return 8;
+}
+
+function sizeKey(n) {
+  if (n <= 20)  return 'xs';
+  if (n <= 80)  return 's';
+  if (n <= 250) return 'm';
+  if (n <= 500) return 'l';
+  return 'xl';
+}
+
+function renderScore() {
+  const score = loadScore();
+  const el = document.getElementById('week-score');
+  if (!el) return;
+  const parts = ['xs','s','m','l','xl'].filter(k => score[k] > 0).map(k => `${k.toUpperCase()}×${score[k]}`);
+  el.style.display = score.pts > 0 ? '' : 'none';
+  el.title = parts.join(' · ');
+  el.textContent = `🏆 ${score.pts % 1 === 0 ? score.pts : score.pts.toFixed(1)} pts`;
+}
+
+function awardPoints(lines) {
+  const score = loadScore();
+  score.pts += ptsForLines(lines);
+  score[sizeKey(lines)] = (score[sizeKey(lines)] || 0) + 1;
+  saveScore(score);
+  renderScore();
+  const el = document.getElementById('week-score');
+  if (el) { el.style.transform = 'scale(1.2)'; setTimeout(() => el.style.transform = '', 200); }
+}
+
 // ── Render ───────────────────────────────────────────────────
 
 function renderCard(pr, isNew = false, delay = 0) {
@@ -892,24 +994,31 @@ function renderCard(pr, isNew = false, delay = 0) {
   const newStyle = isNew && delay ? ` style="animation-delay:${delay}ms"` : '';
   return `
     <div class="pr-card${ignored ? ' is-ignored' : ''}${newCls}" data-id="${pr.id}"${newStyle}>
-      <div class="pr-top">
-        <span class="pr-repo">${esc(pr.repo)}</span>
-        <span class="pr-number">#${pr.number}</span>
-        <div class="pr-badges">
-          ${draftBadge}${dontMergeBadge}${conflictBadge}${ciBadge(pr.ci)}${activityBadge}${approvalBadge}
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px;">
+        <div class="pr-title" style="margin:0;flex:1;">
+          <a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
+          ${sizeBadgeHTML(pr.lines)}${lineCountHTML(pr.lines)}
         </div>
       </div>
-      <div class="pr-title">
-        <a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="pr-repo">${esc(pr.repo)}</span>
+          <span class="pr-number">#${pr.number}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end;">
+          ${ciBadge(pr.ci)}${activityBadge}${approvalBadge}${conflictBadge}${dontMergeBadge}${draftBadge}<span class="badge badge-gray">${timeAgo(pr.createdAt)}</span>
+        </div>
       </div>
       <div class="pr-meta">
         <div class="pr-author">
           <img src="${esc(pr.authorAvatar)}" alt="${esc(pr.author)}" loading="lazy" />
           <span>${esc(pr.author)}</span>
         </div>
-        <span>${timeAgo(pr.createdAt)}</span>
         <div class="pr-actions">
           <a href="${esc(pr.url)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Open →</a>
+          ${pr.ready && !ignored ? `<button class="btn btn-ghost btn-sm done-btn" data-id="${pr.id}" data-lines="${pr.lines || 0}" style="color:var(--green);border-color:rgba(52,211,153,0.3)">✓ Done</button>` : ''}
           <button class="btn btn-ghost btn-sm ignore-btn" data-id="${pr.id}">${ignored ? 'Restore' : 'Skip'}</button>
         </div>
       </div>
@@ -947,11 +1056,22 @@ function renderList() {
     return renderCard(pr, isNew, isNew ? newIdx++ * 500 : 0);
   };
 
+  const quickWins    = ready.filter(p => (p.lines || 0) > 0 && (p.lines || 0) <= 20);
+  const regularReady = ready.filter(p => (p.lines || 0) === 0 || (p.lines || 0) > 20);
+
   let html = '';
-  html += `<div class="section-label">Ready to review ${ready.length > 0 ? `<span class="count-badge ready">${ready.length}</span>` : ''}</div>`;
-  html += ready.length > 0
-    ? ready.map(rc).join('')
-    : `<div style="padding:20px 0;text-align:center;font-size:12px;color:var(--muted);">Ningún PR listo para review 🎉</div>`;
+  if (quickWins.length > 0) {
+    html += `<div class="quick-wins-section">`;
+    html += `<div class="section-label">⚡ quick wins <span class="count-badge ready">${quickWins.length}</span></div>`;
+    html += quickWins.map(rc).join('');
+    html += `</div>`;
+  }
+  html += `<div class="section-label">Ready to review ${regularReady.length > 0 ? `<span class="count-badge ready">${regularReady.length}</span>` : ''}</div>`;
+  html += regularReady.length > 0
+    ? regularReady.map(rc).join('')
+    : quickWins.length > 0
+      ? `<div style="padding:16px 0;text-align:center;font-size:12px;color:var(--muted);">No hay más PRs listos para review.</div>`
+      : `<div style="padding:20px 0;text-align:center;font-size:12px;color:var(--muted);">Ningún PR listo para review 🎉</div>`;
   if (!state.readyOnly && others.length > 0) {
     html += `<div class="section-label">Has activity <span class="count-badge">${others.length}</span></div>`;
     html += others.map(rc).join('');
@@ -989,6 +1109,16 @@ function renderList() {
       if (state.ignored.has(id)) state.ignored.delete(id);
       else state.ignored.add(id);
       saveIgnored();
+      renderList();
+    });
+  });
+
+  el.prList.querySelectorAll('.done-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id    = Number(btn.dataset.id);
+      const lines = Number(btn.dataset.lines);
+      awardPoints(lines);
+      state.prs = state.prs.filter(p => p.id !== id);
       renderList();
     });
   });
@@ -1360,11 +1490,13 @@ function moveTip(e) {
   tip.style.top  = y + 'px';
 }
 
+
 // ── Init ─────────────────────────────────────────────────────
 
 readURL();
 el.readyOnly.checked   = state.readyOnly;
 el.showIgnored.checked = state.showIgnored;
+renderScore();
 
 if (state.token) {
   el.authSection.classList.add('hidden');
