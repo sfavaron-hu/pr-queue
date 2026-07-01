@@ -1,3 +1,31 @@
+// ── Tribe picker ─────────────────────────────────────────────
+
+function syncTribePicker() {
+  const current = el.cfgLabel.value;
+  document.querySelectorAll('.tribe-chip').forEach(chip => {
+    chip.classList.toggle('selected', chip.dataset.label === current);
+  });
+}
+
+function buildTribePicker() {
+  const picker = document.getElementById('tribe-picker');
+  if (!picker) return;
+  TRIBES.forEach(({ label, color }) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tribe-chip';
+    btn.dataset.label = label;
+    btn.style.setProperty('--tc', color);
+    btn.innerHTML = `<span class="tribe-chip-dot"></span>${label}`;
+    btn.addEventListener('click', () => {
+      el.cfgLabel.value = label;
+      syncTribePicker();
+    });
+    picker.appendChild(btn);
+  });
+  syncTribePicker();
+}
+
 // ── Events ───────────────────────────────────────────────────
 
 async function connectToken(val) {
@@ -30,10 +58,10 @@ el.configToggle.addEventListener('click', () => {
   configOpen = !configOpen;
   el.configSection.classList.toggle('hidden', !configOpen);
   el.configToggle.textContent = configOpen ? 'Done' : 'Config';
-  if (configOpen) writeConfigFields();
+  if (configOpen) { writeConfigFields(); syncTribePicker(); }
 });
 
-[el.cfgOrg, el.cfgLabel, el.cfgBots].forEach(input => {
+[el.cfgOrg, el.cfgBots].forEach(input => {
   input.addEventListener('keydown', e => { if (e.key === 'Enter') el.configSave.click(); });
 });
 
@@ -122,10 +150,19 @@ function moveTip(e) {
 
 // ── Init ─────────────────────────────────────────────────────
 
+buildTribePicker();
 readURL();
 el.readyOnly.checked   = state.readyOnly;
 el.showIgnored.checked = state.showIgnored;
 renderScore();
+
+if (!state.config.label) {
+  configOpen = true;
+  el.configSection.classList.remove('hidden');
+  el.configToggle.textContent = 'Done';
+  writeConfigFields();
+  syncTribePicker();
+}
 
 if (state.token) {
   el.authSection.classList.add('hidden');

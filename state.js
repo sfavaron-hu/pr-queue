@@ -7,12 +7,21 @@ const STORAGE = {
   prsCache: 'prq_prs_cache',
 };
 
+const TRIBES = [
+  { label: 'comm',              color: '#6D18A8' },
+  { label: 'data',              color: '#c2e0c6' },
+  { label: 'ops',               color: '#1D76DB' },
+  { label: 'people foundation', color: '#19F4F2' },
+  { label: 'talent',            color: '#5319e7' },
+  { label: 'time management',   color: '#04547a' },
+];
+
 let state = {
   token:   localStorage.getItem(STORAGE.token) || '',
   ignored: new Set(JSON.parse(localStorage.getItem(STORAGE.ignored) || '[]')),
   config: {
     org:   'HumandDev',
-    label: 'comm',
+    label: '',
     bots:  'hu-agent|hu-reviewer',
     ...JSON.parse(localStorage.getItem(STORAGE.config) || '{}'),
   },
@@ -77,7 +86,7 @@ function saveConfig() {
 function readConfigFields() {
   state.config = {
     org:   el.cfgOrg.value.trim()   || 'HumandDev',
-    label: el.cfgLabel.value.trim() || 'comm',
+    label: el.cfgLabel.value.trim(),
     bots:  el.cfgBots.value.trim()  || 'hu-agent|hu-reviewer',
   };
   saveConfig();
@@ -97,7 +106,7 @@ function updateURL() {
   if (state.readyOnly)            p.set('ready',   '1');
   if (state.showIgnored)          p.set('skipped', '1');
   if (state.config.org   !== 'HumandDev')             p.set('org',   state.config.org);
-  if (state.config.label !== 'comm')                  p.set('label', state.config.label);
+  if (state.config.label)                              p.set('label', state.config.label);
   if (state.config.bots  !== 'hu-agent|hu-reviewer')  p.set('bots',  state.config.bots);
   const qs = p.toString();
   history.replaceState(null, '', qs ? `?${qs}` : location.pathname);

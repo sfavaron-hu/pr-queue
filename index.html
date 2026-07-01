@@ -545,6 +545,37 @@ html, body {
 [data-tip], .badge { cursor: default; user-select: none; }
 
 .hidden { display: none !important; }
+
+/* ── Tribe picker ── */
+.tribe-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.tribe-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.tribe-chip:hover { border-color: var(--border-hover); color: var(--text); }
+.tribe-chip.selected { border-color: var(--tc); color: var(--tc); background: color-mix(in srgb, var(--tc) 10%, transparent); }
+.tribe-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tc);
+  flex-shrink: 0;
+}
 </style>
 
 <div id="tip"></div>
@@ -585,9 +616,10 @@ html, body {
       <label>Org</label>
       <input type="text" id="cfg-org" class="input" value="HumandDev" />
     </div>
-    <div class="config-field">
-      <label>Label</label>
-      <input type="text" id="cfg-label" class="input" value="comm" />
+    <div class="config-field" style="grid-column:span 2;">
+      <label>Tribu</label>
+      <input type="hidden" id="cfg-label" />
+      <div class="tribe-picker" id="tribe-picker"></div>
     </div>
     <div class="config-field">
       <label>Bot pattern (regex)</label>

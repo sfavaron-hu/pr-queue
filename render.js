@@ -301,7 +301,7 @@ function threeDAysAgo() {
 // ── Load PRs ─────────────────────────────────────────────────
 
 async function loadPRs() {
-  if (!state.token || state.loading) return;
+  if (!state.token || state.loading || !state.config.label) return;
   state.loading = true;
 
   const hasExisting = state.prs.length > 0;
