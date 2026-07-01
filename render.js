@@ -113,7 +113,6 @@ function renderCard(pr, isNew = false, delay = 0) {
         </div>
         <div class="pr-actions">
           <a href="${esc(pr.url)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Open →</a>
-          ${pr.ready && !ignored ? `<button class="btn btn-ghost btn-sm done-btn" data-id="${pr.id}" data-lines="${pr.lines || 0}" style="color:var(--green);border-color:rgba(52,211,153,0.3)">✓ Done</button>` : ''}
           ${pr.noSkip ? '' : `<button class="btn btn-ghost btn-sm ignore-btn" data-id="${pr.id}">${ignored ? 'Restore' : 'Skip'}</button>`}
         </div>
       </div>
@@ -207,15 +206,6 @@ function renderList() {
     });
   });
 
-  el.prList.querySelectorAll('.done-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id    = Number(btn.dataset.id);
-      const lines = Number(btn.dataset.lines);
-      awardPoints(lines);
-      state.prs = state.prs.filter(p => p.id !== id);
-      renderList();
-    });
-  });
 }
 
 // ── Own PRs ──────────────────────────────────────────────────

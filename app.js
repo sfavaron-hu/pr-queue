@@ -95,7 +95,8 @@ el.configSave.addEventListener('click', () => {
   configOpen = false;
   el.configSection.classList.add('hidden');
   el.configToggle.textContent = 'Config';
-  if (state.token) { loadPRs(); loadOwnPRs(); }
+  renderScore();
+  if (state.token) { loadPRs(); loadOwnPRs(); loadAutoScore(); }
 });
 
 el.signoutBtn.addEventListener('click', () => {
