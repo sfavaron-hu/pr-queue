@@ -332,6 +332,7 @@ html, body {
 .pr-card:hover { border-color: var(--border-hover); background: var(--surface-hover); }
 .pr-card.is-ignored { opacity: 0.35; }
 .pr-card.is-stale   { opacity: 0.45; pointer-events: none; }
+.pr-card.is-merged  { opacity: 0.55; }
 
 .new-review-dot {
   position: absolute;
@@ -510,33 +511,6 @@ html, body {
   gap: 6px;
 }
 
-.own-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin-bottom: 5px;
-  transition: border-color 0.15s;
-  font-size: 12px;
-  position: relative;
-}
-.own-card:hover { border-color: var(--border-hover); }
-
-.own-card-top {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.own-card-title {
-  line-height: 1.35;
-  color: var(--text);
-  font-weight: 500;
-  font-size: 12px;
-}
-.own-card-title a { color: inherit; text-decoration: none; }
-.own-card-title a:hover { color: var(--accent); }
 
 #own-pr-list .pr-card { padding: 10px 12px; }
 #own-pr-list .pr-title { font-size: 12px; margin-bottom: 6px; }

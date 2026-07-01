@@ -68,6 +68,24 @@ function renderCard(pr, isNew = false, delay = 0) {
 
   const newCls   = isNew ? ' is-new' : '';
   const newStyle = isNew && delay ? ` style="animation-delay:${delay}ms"` : '';
+
+  if (pr.merged) {
+    return `
+    <div class="pr-card is-merged" data-id="${pr.id}">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px;">
+        <div class="pr-title" style="margin:0;flex:1;">
+          <a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="pr-repo">${esc(pr.repo)}</span>
+        <span class="pr-number">#${pr.number}</span>
+        <span class="badge badge-green" style="margin-left:auto;">✓ Merged</span>
+        <span class="badge badge-gray">${timeAgo(pr.createdAt)}</span>
+      </div>
+    </div>`;
+  }
+
   return `
     <div class="pr-card${ignored ? ' is-ignored' : ''}${newCls}" data-id="${pr.id}"${newStyle}>
       ${newReviewDot}
@@ -221,17 +239,11 @@ function renderOwnPRs() {
 
   if (state.mergedPRs.length > 0) {
     html += `<div class="section-label" style="margin-top:16px;font-size:10px;">Mergeados <span class="count-badge" style="font-size:10px">${state.mergedPRs.length}</span></div>`;
-    html += state.mergedPRs.map(pr => `
-      <div class="own-card" style="opacity:0.6;">
-        <div class="own-card-top">
-          <span class="pr-repo">${esc(pr.repo)}</span>
-          <span class="pr-number">#${pr.number}</span>
-          <span class="badge badge-green" style="font-size:10px;margin-left:auto;">✓ Merged</span>
-        </div>
-        <div class="own-card-title">
-          <a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a>
-        </div>
-      </div>`).join('');
+    html += state.mergedPRs.map(pr => renderCard({
+      ...pr,
+      merged: true,
+      createdAt: pr.updatedAt,
+    })).join('');
   }
 
   el.ownPrList.innerHTML = html;
