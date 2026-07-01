@@ -40,7 +40,7 @@ function renderScore() {
 
 
 async function loadAutoScore() {
-  if (!state.token || !state.me) return;
+  if (!state.token || !state.me || !document.hasFocus()) return;
   const { org, label } = state.config;
   if (!label) return;
   try {
@@ -61,6 +61,7 @@ async function loadAutoScore() {
     const candidates = items.filter(pr => pr.user.login !== state.me && !autoIds.has(pr.id));
     if (candidates.length === 0) return;
 
+    let gained = 0;
     for (let i = 0; i < candidates.length; i += 3) {
       const batch = candidates.slice(i, i + 3);
       await Promise.all(batch.map(async pr => {
@@ -73,14 +74,55 @@ async function loadAutoScore() {
           const userApproved = (reviews || []).some(r => r.user.login === state.me && r.state === 'APPROVED');
           if (!userApproved) return;
           const lines = (prDetails.additions || 0) + (prDetails.deletions || 0);
+          const pts = ptsForLines(lines);
           const fresh = loadScore(label);
-          fresh.pts += ptsForLines(lines);
+          fresh.pts += pts;
           fresh[sizeKey(lines)] = (fresh[sizeKey(lines)] || 0) + 1;
           fresh.autoIds = [...new Set([...(fresh.autoIds || []), pr.id])];
           saveScore(fresh, label);
           renderScore();
+          gained += pts;
         } catch { /* silent */ }
       }));
     }
+    if (gained > 0 && document.hasFocus()) triggerScoreGainEffect(gained);
   } catch { /* silent */ }
+}
+
+// ── Score gain effect (sound + totem-style popup) ───────────────
+
+function playScoreSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const notes = [440, 660];
+    notes.forEach((freq, i) => {
+      const t = ctx.currentTime + i * 0.09;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.2, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    });
+    setTimeout(() => ctx.close(), 400);
+  } catch { /* AudioContext unavailable/blocked: skip silently */ }
+}
+
+function triggerScoreGainEffect(delta) {
+  playScoreSound();
+  const anchor = document.getElementById('week-score');
+  if (!anchor) return;
+  anchor.style.display = ''; // ensure visible even if score badge is currently hidden (pts=0)
+  const pop = document.createElement('span');
+  pop.className = 'score-pop';
+  const spin = document.createElement('span');
+  spin.className = 'score-pop-spin';
+  spin.textContent = `+${delta % 1 === 0 ? delta : delta.toFixed(1)}`;
+  pop.appendChild(spin);
+  pop.addEventListener('animationend', () => pop.remove());
+  anchor.appendChild(pop);
 }
