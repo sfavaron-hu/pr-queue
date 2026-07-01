@@ -100,17 +100,31 @@ setInterval(() => {
   if (state.lastUpdated) el.lastUpdated.textContent = `Updated ${timeAgo(state.lastUpdated)}`;
 }, 30000);
 
-// Refresh every 1 min while tab is visible
-setInterval(() => {
-  if (state.token && !state.loading && !document.hidden) { loadPRs(); loadOwnPRs(); }
-}, 3 * 60 * 1000);
+// Poll only while tab is visible; stop timer when hidden, restart on focus
+let pollInterval = null;
 
-// Refresh on tab focus if it's been more than 1 min since last update
+function startPolling() {
+  if (pollInterval) return;
+  pollInterval = setInterval(() => {
+    if (state.token && !state.loading) { loadPRs(); loadOwnPRs(); }
+  }, 3 * 60 * 1000);
+}
+
+function stopPolling() {
+  clearInterval(pollInterval);
+  pollInterval = null;
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && state.token && !state.loading) {
-    if (!state.lastUpdated || Date.now() - state.lastUpdated > 3 * 60 * 1000) {
-      loadPRs(); loadOwnPRs();
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    if (state.token && !state.loading) {
+      if (!state.lastUpdated || Date.now() - state.lastUpdated > 3 * 60 * 1000) {
+        loadPRs(); loadOwnPRs();
+      }
     }
+    startPolling();
   }
 });
 
@@ -163,6 +177,8 @@ if (!state.config.label) {
   writeConfigFields();
   syncTribePicker();
 }
+
+if (!document.hidden) startPolling();
 
 if (state.token) {
   el.authSection.classList.add('hidden');
