@@ -541,6 +541,15 @@ html, body {
 .own-badges { display: flex; gap: 4px; flex-wrap: wrap; }
 .own-badges .badge { font-size: 10px; padding: 1px 6px; }
 
+#own-pr-list .pr-card { padding: 10px 12px; }
+#own-pr-list .pr-title { font-size: 12px; margin-bottom: 6px; }
+#own-pr-list .pr-repo  { font-size: 10px; }
+#own-pr-list .pr-number { font-size: 10px; }
+#own-pr-list .pr-meta  { font-size: 11px; }
+#own-pr-list .badge    { font-size: 10px; padding: 1px 5px; }
+#own-pr-list .btn-sm   { font-size: 11px; padding: 3px 8px; }
+#own-pr-list .pr-author img { width: 14px; height: 14px; }
+
 /* ── Tooltip ── */
 #tip {
   position: fixed;
@@ -694,6 +703,7 @@ let state = {
     ...JSON.parse(localStorage.getItem(STORAGE.config) || '{}'),
   },
   me:          localStorage.getItem('prq_me') || '',
+  meAvatar:    localStorage.getItem('prq_me_avatar') || '',
   prs:         [],
   renderedIds:   new Set(),
   cardTimers:    [],
@@ -1013,13 +1023,13 @@ function renderCard(pr, isNew = false, delay = 0) {
       </div>
       <div class="pr-meta">
         <div class="pr-author">
-          <img src="${esc(pr.authorAvatar)}" alt="${esc(pr.author)}" loading="lazy" />
+          ${pr.authorAvatar ? `<img src="${esc(pr.authorAvatar)}" alt="${esc(pr.author)}" loading="lazy" />` : ''}
           <span>${esc(pr.author)}</span>
         </div>
         <div class="pr-actions">
           <a href="${esc(pr.url)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Open →</a>
           ${pr.ready && !ignored ? `<button class="btn btn-ghost btn-sm done-btn" data-id="${pr.id}" data-lines="${pr.lines || 0}" style="color:var(--green);border-color:rgba(52,211,153,0.3)">✓ Done</button>` : ''}
-          <button class="btn btn-ghost btn-sm ignore-btn" data-id="${pr.id}">${ignored ? 'Restore' : 'Skip'}</button>
+          ${pr.noSkip ? '' : `<button class="btn btn-ghost btn-sm ignore-btn" data-id="${pr.id}">${ignored ? 'Restore' : 'Skip'}</button>`}
         </div>
       </div>
     </div>`;
@@ -1162,6 +1172,8 @@ async function enrichOwnPR(pr) {
 
     return { id: pr.id, number, owner, repo, title: pr.title, url: pr.html_url,
       ci, conflicts: prDetails.mergeable_state === 'dirty', draft: prDetails.draft,
+      lines: (prDetails.additions || 0) + (prDetails.deletions || 0),
+      createdAt: new Date(pr.created_at),
       approved, changesReq, newComments, newApprovals, newChanges,
       allCommentIds: humanComments.map(c => c.id),
       allReviewIds:  humanRevs.map(r => r.id) };
@@ -1215,7 +1227,12 @@ function renderOwnPRs() {
   el.ownCount.textContent = prs.length > 0 ? prs.length : '';
   el.ownCount.style.display = prs.length > 0 ? '' : 'none';
 
-  let html = prs.map(renderOwnCard).join('');
+  let html = prs.map(p => renderCard({
+    ...p,
+    author: state.me, authorAvatar: state.meAvatar,
+    humanActivity: p.newComments || 0, activityBy: [], dontMerge: false, ready: false,
+    noSkip: true,
+  })).join('');
 
   if (state.mergedPRs.length > 0) {
     html += `<div class="section-label" style="margin-top:16px;font-size:10px;">Mergeados <span class="count-badge" style="font-size:10px">${state.mergedPRs.length}</span></div>`;
@@ -1380,7 +1397,9 @@ async function connectToken(val) {
   try {
     const user = await apiFetch(`${API}/user`);
     state.me = user.login;
+    state.meAvatar = user.avatar_url || '';
     localStorage.setItem('prq_me', state.me);
+    localStorage.setItem('prq_me_avatar', state.meAvatar);
     el.loggedUser.textContent = '@' + state.me;
     el.loggedUser.classList.remove('hidden');
     el.signoutBtn.classList.remove('hidden');
@@ -1500,6 +1519,12 @@ renderScore();
 
 if (state.token) {
   el.authSection.classList.add('hidden');
+  if (state.me && !state.meAvatar) {
+    apiFetch(`${API}/user`).then(u => {
+      state.meAvatar = u.avatar_url || '';
+      localStorage.setItem('prq_me_avatar', state.meAvatar);
+    }).catch(() => {});
+  }
   if (state.me) {
     el.loggedUser.textContent = '@' + state.me;
     el.loggedUser.classList.remove('hidden');
