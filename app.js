@@ -2,9 +2,19 @@
 
 function syncTribePicker() {
   const current = el.cfgLabel.value;
-  document.querySelectorAll('.tribe-chip').forEach(chip => {
+  const isKnown = TRIBES.some(t => t.label === current);
+  document.querySelectorAll('.tribe-chip[data-label]').forEach(chip => {
     chip.classList.toggle('selected', chip.dataset.label === current);
   });
+  const custom = document.getElementById('tribe-custom-input');
+  if (!custom) return;
+  if (!isKnown && current) {
+    custom.value = current;
+    custom.classList.add('selected');
+  } else {
+    custom.value = '';
+    custom.classList.remove('selected');
+  }
 }
 
 function buildTribePicker() {
@@ -19,10 +29,25 @@ function buildTribePicker() {
     btn.innerHTML = `<span class="tribe-chip-dot"></span>${label}`;
     btn.addEventListener('click', () => {
       el.cfgLabel.value = label;
+      const custom = document.getElementById('tribe-custom-input');
+      if (custom) custom.value = '';
       syncTribePicker();
     });
     picker.appendChild(btn);
   });
+
+  const custom = document.createElement('input');
+  custom.type = 'text';
+  custom.id = 'tribe-custom-input';
+  custom.className = 'tribe-chip';
+  custom.placeholder = 'otra…';
+  custom.addEventListener('input', () => {
+    el.cfgLabel.value = custom.value.trim();
+    document.querySelectorAll('.tribe-chip[data-label]').forEach(c => c.classList.remove('selected'));
+    custom.classList.toggle('selected', !!custom.value.trim());
+  });
+  picker.appendChild(custom);
+
   syncTribePicker();
 }
 

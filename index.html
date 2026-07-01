@@ -569,6 +569,8 @@ html, body {
 }
 .tribe-chip:hover { border-color: var(--border-hover); color: var(--text); }
 .tribe-chip.selected { border-color: var(--tc); color: var(--tc); background: color-mix(in srgb, var(--tc) 10%, transparent); }
+input.tribe-chip { cursor: text; outline: none; width: 72px; transition: border-color 0.15s, color 0.15s, width 0.2s; }
+input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent); color: var(--text); width: 110px; }
 .tribe-chip-dot {
   width: 7px;
   height: 7px;
