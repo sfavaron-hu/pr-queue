@@ -1,9 +1,10 @@
 const API = 'https://api.github.com';
 
 const STORAGE = {
-  token:   'prq_token',
-  ignored: 'prq_ignored',
-  config:  'prq_config',
+  token:    'prq_token',
+  ignored:  'prq_ignored',
+  config:   'prq_config',
+  prsCache: 'prq_prs_cache',
 };
 
 let state = {

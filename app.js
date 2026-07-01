@@ -46,8 +46,9 @@ el.configSave.addEventListener('click', () => {
 });
 
 el.signoutBtn.addEventListener('click', () => {
-  state.token = ''; state.me = '';
+  state.token = ''; state.me = ''; state.prs = [];
   localStorage.removeItem(STORAGE.token);
+  localStorage.removeItem(STORAGE.prsCache);
   localStorage.removeItem('prq_me');
   el.authSection.classList.remove('hidden');
   el.configSection.classList.add('hidden');
@@ -128,6 +129,17 @@ renderScore();
 
 if (state.token) {
   el.authSection.classList.add('hidden');
+
+  // Show stale data immediately while fetch runs in background
+  const cachedRaw = localStorage.getItem(STORAGE.prsCache);
+  if (cachedRaw) {
+    try {
+      state.prs = JSON.parse(cachedRaw).map(pr => ({ ...pr, createdAt: new Date(pr.createdAt) }));
+      el.toolbar.classList.remove('hidden');
+      renderList();
+    } catch { localStorage.removeItem(STORAGE.prsCache); }
+  }
+
   if (state.me && !state.meAvatar) {
     apiFetch(`${API}/user`).then(u => {
       state.meAvatar = u.avatar_url || '';

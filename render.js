@@ -345,6 +345,7 @@ async function loadPRs() {
     state.prs = state.prs.filter(p => newSearchIds.has(p.id));
     state.lastUpdated = Date.now();
     el.lastUpdated.textContent = 'Updated just now';
+    try { localStorage.setItem(STORAGE.prsCache, JSON.stringify(state.prs)); } catch { /* quota */ }
     el.progressFill.style.width = '100%';
     setTimeout(() => { el.progressFill.style.width = '0%'; }, 500);
     el.toolbar.classList.remove('hidden');
