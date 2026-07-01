@@ -63,10 +63,14 @@ function renderCard(pr, isNew = false, delay = 0) {
   const conflictBadge  = pr.conflicts  ? `<span class="badge badge-red">⚡ Conflicts</span>` : '';
   const dontMergeBadge = pr.dontMerge  ? `<span class="badge badge-amber">🚧 Don't merge</span>` : '';
 
+  const newReviewDot = (pr.newApprovals > 0 || pr.newChanges > 0)
+    ? `<span class="new-review-dot" data-tip="Review nuevo sin ver"></span>` : '';
+
   const newCls   = isNew ? ' is-new' : '';
   const newStyle = isNew && delay ? ` style="animation-delay:${delay}ms"` : '';
   return `
     <div class="pr-card${ignored ? ' is-ignored' : ''}${newCls}" data-id="${pr.id}"${newStyle}>
+      ${newReviewDot}
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px;">
         <div class="pr-title" style="margin:0;flex:1;">
           <a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a>
@@ -232,15 +236,14 @@ function renderOwnPRs() {
 
   el.ownPrList.innerHTML = html;
 
-  el.ownPrList.querySelectorAll('.own-pr-link').forEach(link => {
-    link.addEventListener('click', () => {
-      const id   = Number(link.dataset.id);
-      const cids = link.dataset.cids ? link.dataset.cids.split(',').map(Number).filter(Boolean) : [];
-      const rids = link.dataset.rids ? link.dataset.rids.split(',').map(Number).filter(Boolean) : [];
-      state.ownActivity[id] = { commentIds: cids, reviewIds: rids };
+  el.ownPrList.querySelectorAll('.pr-card[data-id]').forEach(card => {
+    const id = Number(card.dataset.id);
+    const pr = state.ownPRs.find(p => p.id === id);
+    if (!pr) return;
+    card.querySelector('.pr-title a')?.addEventListener('click', () => {
+      state.ownActivity[id] = { commentIds: pr.allCommentIds || [], reviewIds: pr.allReviewIds || [] };
       saveOwnActivity();
-      const pr = state.ownPRs.find(p => p.id === id);
-      if (pr) { pr.newComments = 0; pr.newApprovals = 0; pr.newChanges = 0; }
+      pr.newComments = 0; pr.newApprovals = 0; pr.newChanges = 0;
       renderOwnPRs();
     });
   });

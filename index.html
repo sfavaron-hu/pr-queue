@@ -327,10 +327,23 @@ html, body {
   padding: 14px 16px;
   margin-bottom: 6px;
   transition: border-color 0.15s, background 0.15s;
+  position: relative;
 }
 .pr-card:hover { border-color: var(--border-hover); background: var(--surface-hover); }
 .pr-card.is-ignored { opacity: 0.35; }
 .pr-card.is-stale   { opacity: 0.45; pointer-events: none; }
+
+.new-review-dot {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #FFB347;
+  box-shadow: 0 0 6px 2px rgba(255,179,71,0.35);
+  pointer-events: none;
+}
 
 .pr-top {
   display: flex;
