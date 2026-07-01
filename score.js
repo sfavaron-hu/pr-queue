@@ -38,16 +38,6 @@ function renderScore() {
   el.textContent = `🏆 ${score.pts % 1 === 0 ? score.pts : score.pts.toFixed(1)} pts`;
 }
 
-function awardPoints(lines) {
-  const label = state.config.label;
-  const score = loadScore(label);
-  score.pts += ptsForLines(lines);
-  score[sizeKey(lines)] = (score[sizeKey(lines)] || 0) + 1;
-  saveScore(score, label);
-  renderScore();
-  const el = document.getElementById('week-score');
-  if (el) { el.style.transform = 'scale(1.2)'; setTimeout(() => el.style.transform = '', 200); }
-}
 
 async function loadAutoScore() {
   if (!state.token || !state.me) return;

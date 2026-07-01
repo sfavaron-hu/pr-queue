@@ -132,7 +132,7 @@ let pollInterval = null;
 function startPolling() {
   if (pollInterval) return;
   pollInterval = setInterval(() => {
-    if (state.token && !state.loading) { loadPRs(); loadOwnPRs(); }
+    if (state.token && !state.loading) { loadPRs(); loadOwnPRs(); loadAutoScore(); }
   }, 3 * 60 * 1000);
 }
 
