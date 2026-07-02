@@ -279,6 +279,18 @@ html, body {
 }
 .toggle-label:hover { color: var(--text); }
 
+/* .config-field label wins on specificity over .toggle-label alone
+   (block/uppercase/11px), which broke the checkbox+text centering
+   for toggles placed inside a config-field. Restore it here. */
+.config-field label.toggle-label {
+  display: flex;
+  align-items: center;
+  text-transform: none;
+  font-weight: 400;
+  font-size: 12px;
+  margin-bottom: 0;
+}
+
 .toggle-label input[type=checkbox] {
   width: 28px;
   height: 16px;
@@ -677,6 +689,12 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
     <div class="config-field">
       <label>Bot pattern (regex)</label>
       <input type="text" id="cfg-bots" class="input" value="hu-agent|hu-reviewer" />
+    </div>
+    <div class="config-field" style="grid-column:1; display:flex; align-items:center;">
+      <label class="toggle-label">
+        <input type="checkbox" id="cfg-fx-toggle" checked />
+        Efectos y sonidos
+      </label>
     </div>
     <div class="config-field" style="grid-column:span 2; display:flex; justify-content:flex-end;">
       <button class="btn btn-primary btn-sm" id="config-save-btn">Save & refresh</button>

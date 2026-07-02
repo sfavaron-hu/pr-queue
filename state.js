@@ -23,6 +23,7 @@ let state = {
     org:   'HumandDev',
     label: '',
     bots:  'hu-agent|hu-reviewer',
+    fx:    true,
     ...JSON.parse(localStorage.getItem(STORAGE.config) || '{}'),
   },
   me:          localStorage.getItem('prq_me') || '',
@@ -51,6 +52,7 @@ const el = {
   cfgOrg:   $('cfg-org'),
   cfgLabel: $('cfg-label'),
   cfgBots:  $('cfg-bots'),
+  cfgFx:    $('cfg-fx-toggle'),
   toolbar:       $('toolbar'),
   progressBar:   $('progress-bar'),
   progressFill:  $('progress-fill'),
@@ -88,6 +90,7 @@ function readConfigFields() {
     org:   el.cfgOrg.value.trim()   || 'HumandDev',
     label: el.cfgLabel.value.trim(),
     bots:  el.cfgBots.value.trim()  || 'hu-agent|hu-reviewer',
+    fx:    el.cfgFx.checked,
   };
   saveConfig();
   updateURL();
@@ -97,6 +100,7 @@ function writeConfigFields() {
   el.cfgOrg.value   = state.config.org;
   el.cfgLabel.value = state.config.label;
   el.cfgBots.value  = state.config.bots;
+  el.cfgFx.checked  = state.config.fx !== false;
 }
 
 // ── URL state ────────────────────────────────────────────────

@@ -113,6 +113,7 @@ function playScoreSound() {
 }
 
 function triggerScoreGainEffect(delta) {
+  if (state.config.fx === false) return;
   playScoreSound();
   const anchor = document.getElementById('week-score');
   if (!anchor) return;
