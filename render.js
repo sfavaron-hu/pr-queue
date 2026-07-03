@@ -252,7 +252,7 @@ function renderOwnPRs() {
 }
 
 async function loadOwnPRs() {
-  if (!state.token || !document.hasFocus()) return;
+  if (!state.token || document.hidden) return;
   const { org, label } = state.config;
   if (!state.me) return;
 
@@ -291,7 +291,7 @@ function threeDAysAgo() {
 // ── Load PRs ─────────────────────────────────────────────────
 
 async function loadPRs() {
-  if (!state.token || state.loading || !state.config.label || !document.hasFocus()) return;
+  if (!state.token || state.loading || !state.config.label || document.hidden) return;
   state.loading = true;
 
   const hasExisting = state.prs.length > 0;

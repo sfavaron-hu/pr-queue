@@ -146,7 +146,7 @@ document.addEventListener('visibilitychange', () => {
     stopPolling();
   } else {
     if (state.token && !state.loading) {
-      if (!state.lastUpdated || Date.now() - state.lastUpdated > 3 * 60 * 1000) {
+      if (!state.lastUpdated || Date.now() - state.lastUpdated > 10 * 1000) {
         loadPRs(); loadOwnPRs();
       }
     }
