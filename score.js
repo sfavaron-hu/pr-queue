@@ -40,7 +40,7 @@ function renderScore() {
 
 
 async function loadAutoScore() {
-  if (!state.token || !state.me || !document.hasFocus()) return;
+  if (!state.token || !state.me || document.hidden) return;
   const { org, label } = state.config;
   if (!label) return;
   try {
