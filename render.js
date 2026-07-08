@@ -33,12 +33,10 @@ function lineCountHTML(n, additions, deletions) {
   if      (n <= 10)  { weight = 700; extra = ' ✦'; }
   else if (n <= 20)  { weight = 600; }
   else               { weight = 400; }
-  const add = additions || 0;
-  const del = deletions || 0;
-  const addHTML = add > 0 ? `<span style="color:#3fb950;">+${add}</span>` : '';
-  const delHTML = del > 0 ? `<span style="color:#f85149;">−${del}</span>` : '';
-  const parts = [addHTML, delHTML].filter(Boolean).join(' ');
-  return `<span class="badge" style="font-weight:${weight};background:transparent;padding:2px 4px;">${parts}${extra}</span>`;
+  const diff = (additions || 0) - (deletions || 0);
+  const color = diff > 0 ? '#3fb950' : diff < 0 ? '#f85149' : '#6e7681';
+  const sign = diff > 0 ? '+' : '';
+  return `<span class="badge" style="color:${color};font-weight:${weight};background:transparent;padding:2px 4px;">${sign}${diff}${extra}</span>`;
 }
 
 function sizeBadgeHTML(n) {
