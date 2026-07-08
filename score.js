@@ -73,7 +73,7 @@ async function loadAutoScore() {
           ]);
           const userApproved = (reviews || []).some(r => r.user.login === state.me && r.state === 'APPROVED');
           if (!userApproved) return;
-          const lines = Math.abs((prDetails.additions || 0) - (prDetails.deletions || 0));
+          const lines = (prDetails.additions || 0) + (prDetails.deletions || 0);
           const pts = ptsForLines(lines);
           const fresh = loadScore(label);
           fresh.pts += pts;

@@ -27,16 +27,18 @@ function ciBadge(ci) {
   return `<span class="badge ${cls}">${lbl}</span>`;
 }
 
-function lineCountHTML(n) {
+function lineCountHTML(n, additions, deletions) {
   if (n == null || n === 0) return '';
-  let color, weight, extra = '';
-  if      (n <= 10)  { color = '#ffd700'; weight = 700; extra = ' ✦'; }
-  else if (n <= 20)  { color = '#f0c040'; weight = 600; }
-  else if (n <= 50)  { color = '#9fcf6f'; weight = 500; }
-  else if (n <= 150) { color = '#3fb950'; weight = 400; }
-  else if (n <= 400) { color = '#6e7681'; weight = 400; }
-  else               { color = '#3d4451'; weight = 400; }
-  return `<span class="badge" style="color:${color};font-weight:${weight};background:transparent;padding:2px 4px;">${n} líneas${extra}</span>`;
+  let weight, extra = '';
+  if      (n <= 10)  { weight = 700; extra = ' ✦'; }
+  else if (n <= 20)  { weight = 600; }
+  else               { weight = 400; }
+  const add = additions || 0;
+  const del = deletions || 0;
+  const addHTML = add > 0 ? `<span style="color:#3fb950;">+${add}</span>` : '';
+  const delHTML = del > 0 ? `<span style="color:#f85149;">−${del}</span>` : '';
+  const parts = [addHTML, delHTML].filter(Boolean).join(' ');
+  return `<span class="badge" style="font-weight:${weight};background:transparent;padding:2px 4px;">${parts}${extra}</span>`;
 }
 
 function sizeBadgeHTML(n) {
@@ -94,7 +96,7 @@ function renderCard(pr, isNew = false, delay = 0) {
           <a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a>
         </div>
         <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
-          ${sizeBadgeHTML(pr.lines)}${lineCountHTML(pr.lines)}
+          ${sizeBadgeHTML(pr.lines)}${lineCountHTML(pr.lines, pr.additions, pr.deletions)}
         </div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
