@@ -69,7 +69,7 @@ async function enrichPR(pr, botRe, onProgress) {
       url: pr.html_url, createdAt: new Date(pr.created_at),
       ci, humanActivity, activityBy, approved, changesReq, draft: prDetails.draft,
       conflicts: prDetails.mergeable_state === 'dirty',
-      lines: (prDetails.additions || 0) + (prDetails.deletions || 0),
+      lines: Math.abs((prDetails.additions || 0) - (prDetails.deletions || 0)),
       dontMerge: pr.labels.some(l => l.name.includes("don't merge") || l.name.includes("dont merge") || l.name.includes("🚧")),
       ready: ci === 'green' && humanActivity === 0 && !prDetails.draft
         && !pr.labels.some(l => l.name.includes("don't merge") || l.name.includes("dont merge") || l.name.includes("🚧")) };
@@ -111,7 +111,7 @@ async function enrichOwnPR(pr) {
 
     return { id: pr.id, number, owner, repo, title: pr.title, url: pr.html_url,
       ci, conflicts: prDetails.mergeable_state === 'dirty', draft: prDetails.draft,
-      lines: (prDetails.additions || 0) + (prDetails.deletions || 0),
+      lines: Math.abs((prDetails.additions || 0) - (prDetails.deletions || 0)),
       createdAt: new Date(pr.created_at),
       approved, changesReq, newComments, newApprovals, newChanges,
       allCommentIds: humanComments.map(c => c.id),
