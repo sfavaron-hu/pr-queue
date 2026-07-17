@@ -16,6 +16,7 @@ const TRIBES = [
   { label: 'time management',   color: '#04547a' },
 ];
 
+// Static snapshot (2026-07-17), update manually — names must match GitHub repo names exactly.
 const REPOS_ACTIVE = [
   'humand-web',              // 215 PRs, last 90d
   'humand-backoffice',       // 208 PRs, last 90d
