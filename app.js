@@ -51,6 +51,36 @@ function buildTribePicker() {
   syncTribePicker();
 }
 
+// ── Repo picker ──────────────────────────────────────────────
+
+function syncRepoPicker() {
+  const excluded = new Set(el.cfgRepos.value.split(',').map(s => s.trim()).filter(Boolean));
+  document.querySelectorAll('.repo-chip[data-repo]').forEach(chip => {
+    chip.classList.toggle('selected', !excluded.has(chip.dataset.repo));
+  });
+}
+
+function buildRepoPicker() {
+  const picker = document.getElementById('repo-picker');
+  if (!picker) return;
+  REPOS_ACTIVE.forEach(repo => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'repo-chip';
+    btn.dataset.repo = repo;
+    btn.textContent = repo;
+    btn.addEventListener('click', () => {
+      const excluded = new Set(el.cfgRepos.value.split(',').map(s => s.trim()).filter(Boolean));
+      if (excluded.has(repo)) excluded.delete(repo);
+      else excluded.add(repo);
+      el.cfgRepos.value = [...excluded].join(',');
+      syncRepoPicker();
+    });
+    picker.appendChild(btn);
+  });
+  syncRepoPicker();
+}
+
 // ── Events ───────────────────────────────────────────────────
 
 async function connectToken(val) {
@@ -83,7 +113,7 @@ el.configToggle.addEventListener('click', () => {
   configOpen = !configOpen;
   el.configSection.classList.toggle('hidden', !configOpen);
   el.configToggle.textContent = configOpen ? 'Done' : 'Config';
-  if (configOpen) { writeConfigFields(); syncTribePicker(); }
+  if (configOpen) { writeConfigFields(); syncTribePicker(); syncRepoPicker(); }
 });
 
 [el.cfgOrg, el.cfgBots].forEach(input => {
@@ -191,6 +221,7 @@ function moveTip(e) {
 // ── Init ─────────────────────────────────────────────────────
 
 buildTribePicker();
+buildRepoPicker();
 readURL();
 el.readyOnly.checked   = state.readyOnly;
 el.showIgnored.checked = state.showIgnored;
@@ -202,6 +233,7 @@ if (!state.config.label) {
   el.configToggle.textContent = 'Done';
   writeConfigFields();
   syncTribePicker();
+  syncRepoPicker();
 }
 
 if (!document.hidden) startPolling();
