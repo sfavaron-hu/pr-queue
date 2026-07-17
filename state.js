@@ -16,6 +16,15 @@ const TRIBES = [
   { label: 'time management',   color: '#04547a' },
 ];
 
+const REPOS_ACTIVE = [
+  'humand-web',              // 215 PRs, last 90d
+  'humand-backoffice',       // 208 PRs, last 90d
+  'hu-translations',         // 55 PRs, last 90d
+  'material-hu',             // 25 PRs, last 90d
+  'humand-main-api',         // 17 PRs, last 90d
+  'humand-frontend-testing', // 3 PRs, last 90d
+];
+
 let state = {
   token:   localStorage.getItem(STORAGE.token) || '',
   ignored: new Set(JSON.parse(localStorage.getItem(STORAGE.ignored) || '[]')),
@@ -24,6 +33,7 @@ let state = {
     label: '',
     bots:  'hu-agent|hu-reviewer',
     fx:    true,
+    excludedRepos: [],
     ...JSON.parse(localStorage.getItem(STORAGE.config) || '{}'),
   },
   me:          localStorage.getItem('prq_me') || '',
@@ -51,6 +61,7 @@ const el = {
   configSave:    $('config-save-btn'),
   cfgOrg:   $('cfg-org'),
   cfgLabel: $('cfg-label'),
+  cfgRepos: $('cfg-repos'),
   cfgBots:  $('cfg-bots'),
   cfgFx:    $('cfg-fx-toggle'),
   toolbar:       $('toolbar'),
@@ -91,6 +102,7 @@ function readConfigFields() {
     label: el.cfgLabel.value.trim(),
     bots:  el.cfgBots.value.trim()  || 'hu-agent|hu-reviewer',
     fx:    el.cfgFx.checked,
+    excludedRepos: el.cfgRepos.value.split(',').map(s => s.trim()).filter(Boolean),
   };
   saveConfig();
   updateURL();
@@ -101,6 +113,7 @@ function writeConfigFields() {
   el.cfgLabel.value = state.config.label;
   el.cfgBots.value  = state.config.bots;
   el.cfgFx.checked  = state.config.fx !== false;
+  el.cfgRepos.value = (state.config.excludedRepos || []).join(',');
 }
 
 // ── URL state ────────────────────────────────────────────────
