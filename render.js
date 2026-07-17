@@ -122,13 +122,15 @@ function renderCard(pr, isNew = false, delay = 0) {
 function renderList() {
   state.cardTimers.forEach(clearTimeout);
   state.cardTimers = [];
-  const visible = state.prs.filter(pr => {
+  const excludedRepos = state.config.excludedRepos || [];
+  const prs = state.prs.filter(pr => !excludedRepos.includes(pr.repo));
+  const visible = prs.filter(pr => {
     if (!state.showIgnored && state.ignored.has(pr.id)) return false;
     if (state.readyOnly && !pr.ready) return false;
     return true;
   });
 
-  const botPRs  = state.prs.filter(p => p.botPR);
+  const botPRs  = prs.filter(p => p.botPR);
   const ready   = visible.filter(p => p.ready && !state.ignored.has(p.id) && !p.botPR);
   const others  = visible
     .filter(p => (!p.ready || state.ignored.has(p.id)) && !p.botPR)
