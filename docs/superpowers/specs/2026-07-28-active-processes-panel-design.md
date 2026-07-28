@@ -37,7 +37,14 @@ Sources, all already verified to exist:
 
 Measured cost (23 repos, 91 worktrees, warm FS): `claude agents` 0.76s, reading 99 index files (52K) 0.03s, `worktree list` 0.29s, `git log -1` 1.12s, `git status` 2.75s — **~5s serial**. Repos are walked concurrently, which puts the target at ~1.5–2s. `git status` is more than half the budget; if it ever becomes the bottleneck it is the first thing to make optional, since dirty-state is the least essential field.
 
-Repo discovery: directories under `~/Code/humand` containing `.git`. No config file — the workspace root is a constant in `collect.js`.
+Repo discovery: directories containing `.git` directly under the workspace root. The root is resolved in this order, with **no hardcoded path anywhere** (see *Shareability*):
+
+1. `PRQ_WORKSPACE` env var, if set.
+2. Otherwise the parent directory of the pr-queue checkout — which is correct for anyone who clones pr-queue alongside their repos.
+
+The Claude config directory is `CLAUDE_CONFIG_DIR` if set, else `~/.claude`.
+
+Base branch per repo (needed for the unpushed count) is **derived, not assumed** — repos here disagree, some `develop` and some `main`. Read `git symbolic-ref refs/remotes/origin/HEAD`; if that ref is absent (common on fresh clones), fall back to the first of `develop`, `main`, `master` that exists on the remote, and if none do, report the unpushed count as unknown rather than guessing.
 
 **Degradation is per-source, never fatal.** No `claude` on PATH → processes render without sessions. A repo that throws → that repo is skipped and appended to a `warnings[]` array in the output. The collector exits 0 with partial data rather than failing closed; a panel showing 20 of 23 repos beats a panel showing an error.
 
@@ -47,7 +54,9 @@ Node, no dependencies. Serves the existing pr-queue static files, plus:
 
 - `GET /api/local` → runs `collect.js`, returns its JSON. Computed per request, so it is always fresh; at ~2s there is no reason to cache server-side.
 
-Kept alive on **port 7777** by a launchd agent, so `localhost:7777` is a bookmark that always has data. 7777 was verified free and sits well clear of the Vite dev-server range, which auto-increments from 5173. This is the whole reason for choosing a sidecar over a scheduled collector: the data has to be there when the page opens, not when the user remembers to refresh.
+Kept alive on **port 7777** by a launchd agent, so `localhost:7777` is a bookmark that always has data. 7777 was verified free and sits well clear of the Vite dev-server range, which auto-increments from 5173. The port is overridable via `PRQ_PORT`; if the port is taken, `serve.js` fails with a clear message rather than silently picking another, since the whole point is a stable bookmark.
+
+**launchd is opt-in.** The baseline is one command, `node serve.js`. The always-on agent is a convenience installed by a separate script, never a prerequisite — a teammate trying this out should not have to install a background daemon to see whether it is useful. This is the whole reason for choosing a sidecar over a scheduled collector: the data has to be there when the page opens, not when the user remembers to refresh.
 
 ### 3. `local.js` — the panel, self-hiding
 
@@ -99,6 +108,22 @@ Sorting: **Tu turno** first, then **Esperando a otro** oldest wait first (that i
 
 The distinction that carries the whole feature is *tu turno* vs *esperando a otro*. Age alone is not a priority signal; a three-week wait on someone else's review needs a nudge, not work.
 
+### 7. Shareability
+
+If the panel turns out to be useful, any developer should be able to run their own sidecar against their own machine. That is a constraint on this change, not a later port — retrofitting hardcoded paths is exactly the kind of work that never happens.
+
+What it requires, all already folded into the sections above:
+
+- **No hardcoded paths.** Workspace root and Claude config dir resolve from env vars with sane derivations. No `/Users/sebas` anywhere in the committed code.
+- **No assumed repo layout.** Base branch is derived per repo; repo list is discovered, not enumerated. `REPOS_ACTIVE` in `state.js` stays what it is today — a snapshot for the *review queue* pills — and this panel does not read it.
+- **No org coupling.** The collector is pure git plus `claude agents`; nothing in it knows about HumandDev.
+- **No dependencies and no build step**, matching the rest of the repo. `node serve.js` on a stock Node is the entire setup.
+- **Graceful without Claude Code.** Someone who does not use it, or uses it elsewhere, gets worktrees and PRs and no sessions — the panel is still useful.
+
+Deliverable: a README section covering `node serve.js`, the two env vars, the optional launchd install, and the one non-obvious gotcha — **the local origin has its own localStorage, so the PAT and tribe/repo config must be entered once on `localhost:7777`**, separate from whatever is saved on the Pages origin.
+
+The panel self-hiding on Pages is what makes this safe to share: the same `main` serves both audiences, and a teammate who never runs the sidecar sees no change at all.
+
 ### Accepted redundancy
 
 A process card and the "Mis PRs" column will both show the same open PR. Accepted for v1: folding "Mis PRs" into the panel is a larger, riskier change, and keeping it means this one is purely additive and can be reverted by deleting one script tag. If the panel proves to be the better view, that merge is a follow-up.
@@ -112,6 +137,8 @@ The repo has no test suite. This change introduces `node --test` (built into Nod
 - **Ticket extraction and grouping** — `SQSH-1234` and `CSBM-5716` from real branch names; two repos on the same ticket collapse into one process; a branch with no ticket becomes its own process and is marked.
 - **Parsers** — `git worktree list --porcelain`, `git status --short`, and `claude agents --json` against captured real fixtures, so the collector is testable without touching the actual disk.
 - **Degradation** — a repo whose git command throws produces a `warnings[]` entry and does not abort the run.
+- **Path resolution** — `PRQ_WORKSPACE` wins when set; without it the root derives from the checkout location. Guards the shareability constraint against regressing into a hardcoded path.
+- **Base branch derivation** — `origin/HEAD` present, absent-with-`develop`, absent-with-`main`, and none-of-them (unpushed count reported unknown, not guessed).
 
 Manual QA for the panel:
 1. `serve.js` running → panel renders, processes grouped, states plausible against reality.
