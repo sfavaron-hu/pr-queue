@@ -29,11 +29,36 @@ Sources, all already verified to exist:
 | Source | Gives |
 |---|---|
 | `claude agents --json` | active sessions: `sessionId`, `name`, `cwd`, `kind` (`interactive`/`background`), `status` (`idle`/…) or `state` (`blocked`/…), `startedAt` |
-| `~/.claude/projects/*/sessions-index.json` | per session: `gitBranch`, `projectPath`, `summary`, `modified`, `messageCount` |
-| `git worktree list --porcelain` per repo | worktree path + branch |
+| `~/.claude/projects/*/<sessionId>.jsonl` (tail) | real last activity, last `cwd`, and `pr-link` records |
+| `git worktree list --porcelain` per repo | worktree path + branch, plus `prunable` / `detached` markers |
 | `git log -1 --format=%ct` per worktree | last commit timestamp |
 | `git status --short` per worktree | dirty file count |
 | `git log origin/<base>..HEAD --oneline` per worktree | unpushed commit count |
+
+#### Session data: three corrections found by probing the real files
+
+The obvious implementation of this section is wrong in three ways. Each was measured, not reasoned about.
+
+**`sessions-index.json` does not contain active sessions.** Of the 14 live sessions, **0 resolved** — the index is written for closed/historical sessions. The usable source is the transcript itself: build a `sessionId → path` map by scanning `<claudeDir>/projects/*/*.jsonl` (1271 files in this workspace, one `readdir` per project dir) and look sessions up there.
+
+**File mtime is not last activity.** Bookkeeping records (`ai-title`, `mode`, `permission-mode`) are appended without a `timestamp` and bump mtime long after real work stopped. Measured: one session's mtime read `23:26` while its last real record was `13:52` — a **9-hour** skew; another showed a **5-day** skew (mtime 07-28, last message 07-23). Using mtime would paint stale sessions as active, which is precisely the failure this panel exists to prevent. Activity is the **maximum `timestamp` across transcript records**, found by reading the **last 64KB** of the file and scanning backwards. Cost: **5ms for 8 sessions** — negligible. Sessions with no transcript at all (observed: one background agent) fall back to `startedAt`.
+
+**A session's `cwd` is often the workspace root, not a worktree.** So `cwd` alone cannot attach a session to a process, and the transcript's `gitBranch` field is worse than useless — it reports the branch of wherever the session started, which for root-cwd sessions is the workspace repo's own `main`. Join priority:
+
+1. **`pr-link` records** — `{ type: 'pr-link', sessionId, prNumber, prUrl, prRepository, timestamp }`. A direct, unambiguous session→PR association recorded by Claude Code itself.
+2. **`cwd` matching a known worktree path** — resolved against the worktree list, which yields the branch and therefore the ticket.
+3. **Neither** — the session is *unattached*. It goes in an explicit "sesiones sueltas" group. It must never be keyed by its `cwd`, or every root-cwd session collapses into one meaningless process.
+
+`pr-link` also removes the label-scope limitation described in §5: a process can show its PR number and URL from local data alone, whether or not GitHub returned that PR.
+
+#### Worktree layouts
+
+Both conventions are in use here — siblings of the repo (`humand-web--SQSH-3851-…`) and nested inside it (`humand-web/.worktrees/chore/SQSH-3239-…`). `git worktree list` reports both, so discovery needs no special handling; **path-prefix assumptions about where a worktree lives would break**, and nothing may rely on them.
+
+Two real cases the porcelain parser must handle, found while measuring — the current workspace has **110 worktrees, 3 prunable and 12 detached**:
+
+- **`prunable`** — the worktree's gitdir points at a location that no longer exists. Its directory is gone, so `status`/`log` would fail; it is reported with a `prunable` flag and no git detail. These are the clearest cleanup candidates the panel can surface.
+- **`detached`** — no `branch` line at all. With no branch there is no join key, so these appear as branchless worktrees that never attach to a PR, marked as such rather than silently dropped.
 
 Measured cost (23 repos, 91 worktrees, warm FS): `claude agents` 0.76s, reading 99 index files (52K) 0.03s, `worktree list` 0.29s, `git log -1` 1.12s, `git status` 2.75s — **~5s serial**. Repos are walked concurrently, which puts the target at ~1.5–2s. `git status` is more than half the budget; if it ever becomes the bottleneck it is the first thing to make optional, since dirty-state is the least essential field.
 
@@ -88,15 +113,17 @@ updatedAt: new Date(pr.updated_at),
 
 **Zero additional API calls.** `state.ownPRs` already carries `ci`, `conflicts`, `draft`, `approved`, `changesReq`, `newComments`, `newApprovals`, `newChanges` — the complete signal set the classifier needs.
 
-Known limitation, accepted for v1: `loadOwnPRs` scopes its search by `label:<tribu>`, so a PR without the tribe label will not join. Because the panel's spine is *local* data, such a process still appears — just without PR detail. Adding an unlabeled own-PR query is a follow-up if this proves to matter in practice, not part of this change.
+`loadOwnPRs` scopes its search by `label:<tribu>`, so a PR without the tribe label will not join from the GitHub side. This is largely covered by the `pr-link` records described in §1: the process still shows its PR number and URL from local data, just without live CI/review state. A process with neither a labeled PR nor a `pr-link` appears with no PR detail at all, which is correct — the panel's spine is local data. Adding an unlabeled own-PR query stays a follow-up.
 
 ### 6. Activity and state classification
 
 **Session liveness is deliberately not used as the activity signal.** An open terminal means only that a terminal was left open — sometimes for weeks, waiting on an external blocker — and a closed one means nothing at all, since finished sessions are closed without a trace. Sessions are an *attachment* to a process (with a resume command), never evidence that it is moving.
 
 ```
-lastActivity = max(session .jsonl mtime, last commit, PR updatedAt)
+lastActivity = max(last transcript timestamp, last commit, PR updatedAt)
 ```
+
+Explicitly **not** the transcript's file mtime — see §1, where that was measured skewing by up to 5 days.
 
 Three states, evaluated in order:
 
@@ -135,6 +162,8 @@ The repo has no test suite. This change introduces `node --test` (built into Nod
 - **State classifier** — a pure function from `(process, now)` to one of the three states. Table-driven cases: changes-requested, unseen comments, failed CI, conflicts, recent own activity, open PR with no review, pending CI, 13-day-old, 15-day-old, and a process with no PR at all.
 - **`lastActivity`** — picks the max across the three timestamps, and tolerates any one of them being absent.
 - **Ticket extraction and grouping** — `SQSH-1234` and `CSBM-5716` from real branch names; two repos on the same ticket collapse into one process; a branch with no ticket becomes its own process and is marked.
+- **Session attachment** — a session with a `pr-link` attaches via that PR; one whose `cwd` matches a worktree attaches via that branch; one with a root `cwd` and no `pr-link` lands in "sesiones sueltas" rather than forming a process keyed by its `cwd`. This last case is the regression that would quietly ruin the panel, and it is the reason this test exists.
+- **Transcript activity** — the last `timestamp` wins over the file mtime, trailing records without a `timestamp` are skipped, and a session with no transcript falls back to `startedAt`.
 - **Parsers** — `git worktree list --porcelain`, `git status --short`, and `claude agents --json` against captured real fixtures, so the collector is testable without touching the actual disk.
 - **Degradation** — a repo whose git command throws produces a `warnings[]` entry and does not abort the run.
 - **Path resolution** — `PRQ_WORKSPACE` wins when set; without it the root derives from the checkout location. Guards the shareability constraint against regressing into a hardcoded path.
