@@ -62,7 +62,7 @@ function parseTranscriptTail(text) {
     }
     if (out.lastCwd === null && o.cwd) out.lastCwd = o.cwd;
     if (out.prLink === null && o.type === 'pr-link' && o.prNumber) {
-      out.prLink = { number: o.prNumber, repo: o.prRepository || null, url: o.prUrl || null };
+      out.prLink = { number: o.prNumber, repo: o.prRepository || null, url: safeHttpUrl(o.prUrl) };
     }
     if (out.aiTitle === null && o.type === 'ai-title' && o.aiTitle) {
       out.aiTitle = o.aiTitle;
@@ -84,6 +84,24 @@ function parseLastCommitLog(stdout) {
   return { ts: secsStr ? Number(secsStr) * 1000 : null, subject: subject || null };
 }
 
+// Allowlists a URL's scheme to http/https, rejecting everything else —
+// `javascript:`, `data:`, `vbscript:`, `file:`, protocol-relative `//host`,
+// and any scheme-confusion trick (leading whitespace, embedded tabs/newlines,
+// mixed case) that a hand-rolled regex or `startsWith` denylist would miss.
+// `new URL()` does the real scheme parsing; a relative/protocol-relative
+// value has no scheme to resolve without a base and throws, which lands in
+// the catch and is rejected too. Returns the value unchanged (not a re-
+// serialized URL) so callers get back exactly what they passed in.
+function safeHttpUrl(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  try {
+    const u = new URL(value);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 // Parses `owner/name` out of a real `git remote get-url origin` value. Handles
 // the SSH form (git@github.com:Owner/Repo.git) and the HTTPS form
 // (https://github.com/Owner/Repo.git), each with or without the `.git`
@@ -100,4 +118,4 @@ function parseGithubSlug(remoteUrl) {
 }
 
 module.exports = { parseWorktrees, parseStatusShort, parseAgents, parseTranscriptTail,
-                    parseGithubSlug, parseLastCommitLog };
+                    parseGithubSlug, parseLastCommitLog, safeHttpUrl };

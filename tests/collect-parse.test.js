@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { parseWorktrees, parseStatusShort, parseAgents,
-        parseTranscriptTail, parseGithubSlug, parseLastCommitLog } = require('../collect-parse.js');
+        parseTranscriptTail, parseGithubSlug, parseLastCommitLog, safeHttpUrl } = require('../collect-parse.js');
 
 const WORKTREE_FIXTURE = `worktree /w/humand-web
 HEAD 5552c1c23d5ab2a22bfd9c5cd9da130e8b86adfb
@@ -212,4 +212,66 @@ test('parseLastCommitLog returns nulls for empty input', () => {
   const out = parseLastCommitLog('');
   assert.equal(out.ts, null);
   assert.equal(out.subject, null);
+});
+
+// safeHttpUrl is the scheme allowlist that keeps a `javascript:` URI (or any
+// other non-http(s) scheme) out of every href derived from untrusted local
+// data. It must accept only http/https and reject everything else, including
+// scheme-confusion tricks a regex or startsWith denylist would miss.
+test('safeHttpUrl accepts http and https URLs unchanged', () => {
+  assert.equal(safeHttpUrl('http://example.com/x'), 'http://example.com/x');
+  assert.equal(safeHttpUrl('https://github.com/HumandDev/humand-web/pull/1'),
+    'https://github.com/HumandDev/humand-web/pull/1');
+});
+
+test('safeHttpUrl rejects a javascript: URI', () => {
+  assert.equal(safeHttpUrl('javascript:alert(1)'), null);
+});
+
+test('safeHttpUrl rejects a javascript: URI regardless of case', () => {
+  assert.equal(safeHttpUrl('JaVaScRiPt:alert(1)'), null);
+});
+
+test('safeHttpUrl rejects a javascript: URI with leading whitespace', () => {
+  assert.equal(safeHttpUrl('  javascript:alert(1)'), null);
+});
+
+test('safeHttpUrl rejects a javascript: URI with an embedded tab in the scheme', () => {
+  assert.equal(safeHttpUrl('java\tscript:alert(1)'), null);
+});
+
+test('safeHttpUrl rejects a data: URI', () => {
+  assert.equal(safeHttpUrl('data:text/html,<script>alert(1)</script>'), null);
+});
+
+test('safeHttpUrl rejects a vbscript: URI', () => {
+  assert.equal(safeHttpUrl('vbscript:msgbox(1)'), null);
+});
+
+test('safeHttpUrl rejects a file: URI', () => {
+  assert.equal(safeHttpUrl('file:///etc/passwd'), null);
+});
+
+test('safeHttpUrl rejects a protocol-relative URL', () => {
+  assert.equal(safeHttpUrl('//evil.com/x'), null);
+});
+
+test('safeHttpUrl rejects an empty string, null, undefined, and non-strings', () => {
+  assert.equal(safeHttpUrl(''), null);
+  assert.equal(safeHttpUrl(null), null);
+  assert.equal(safeHttpUrl(undefined), null);
+  assert.equal(safeHttpUrl(42), null);
+});
+
+// The parsing boundary: a poisoned prUrl in a pr-link transcript record must
+// never survive into the payload, but the number and repo — which carry no
+// injection risk — must still come through untouched.
+test('parseTranscriptTail nulls out a javascript: prUrl but keeps number and repo', () => {
+  const text = JSON.stringify({ type: 'pr-link', sessionId: 's1', prNumber: 42,
+    prUrl: 'javascript:alert(1)', prRepository: 'HumandDev/humand-web',
+    timestamp: '2026-07-28T13:49:04.352Z' }) + '\n';
+  const { prLink } = parseTranscriptTail(text);
+  assert.equal(prLink.number, 42);
+  assert.equal(prLink.repo, 'HumandDev/humand-web');
+  assert.equal(prLink.url, null);
 });

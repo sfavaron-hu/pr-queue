@@ -16,6 +16,37 @@ const procEl = {
   toggle:  () => document.getElementById('proc-toggle'),
 };
 
+// Same allowlist as collect-parse.js's safeHttpUrl, duplicated here rather
+// than shared: local.js is a plain browser script (no modules, no build
+// step) and collect-parse.js is CommonJS, so there is no import path between
+// them. Every href in this file is untrusted — it comes from the payload
+// (which already ran a `prUrl` through the parser's own copy) or from
+// state.ownPRs (GitHub API data), or is built by string interpolation of
+// repo/branch names — so this file re-checks all three rather than trusting
+// upstream validation or a currently-safe hardcoded prefix to stay that way.
+// `new URL()` does real scheme parsing (case, whitespace, embedded control
+// chars); a protocol-relative value like `//evil.com/x` has no scheme to
+// resolve without a base and throws, landing in the catch as rejected too.
+function safeHttpUrl(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  try {
+    const u = new URL(value);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+// An anchor when the url passes the allowlist, otherwise the label rendered
+// as plain escaped text with no `<a>` at all — the row keeps its information
+// (a PR number, a "diff" label) instead of disappearing, but nothing with a
+// rejected scheme ever reaches an href.
+function safeLinkHTML(url, label, attrs) {
+  const safe = safeHttpUrl(url);
+  if (!safe) return escS(label);
+  return `<a href="${esc(safe)}"${attrs || ''}>${escS(label)}</a>`;
+}
+
 function procPRsFor(proc) {
   const own = (typeof state !== 'undefined' && state.ownPRs) || [];
   return own.filter(pr => pr.headRef && proc.branches.indexOf(pr.headRef) !== -1);
@@ -59,8 +90,8 @@ function sessionLabel(s) {
 
 function looseRowHTML(sessions) {
   const items = sessions.map(s => {
-    const link = s.prLink && s.prLink.url
-      ? ` <a href="${esc(s.prLink.url)}" target="_blank">#${esc(String(s.prLink.number))}</a>` : '';
+    const link = s.prLink
+      ? ` ${safeLinkHTML(s.prLink.url, '#' + s.prLink.number, ' target="_blank"')}` : '';
     const when = s.lastActivity ? ` <span class="proc-detail">${timeAgo(new Date(s.lastActivity))}</span>` : '';
     return `${esc(sessionLabel(s))}${s.status ? ' (' + esc(s.status) + ')' : ''}${link}${when}`;
   }).join(' · ');
@@ -171,7 +202,7 @@ function procRowHTML(row, now, workspaceRoot) {
     if (pr.changesReq) flags.push('cambios pedidos');
     else if (pr.approved) flags.push('aprobado');
     else if ((pr.humanReviews || 0) === 0) flags.push('sin review');
-    bits.push(`<a href="${esc(pr.url)}" target="_blank">#${esc(String(pr.number))}</a>` +
+    bits.push(safeLinkHTML(pr.url, '#' + pr.number, ' target="_blank"') +
       (flags.length ? ` <span class="proc-detail">${esc(flags.join(' · '))}</span>` : ''));
   });
 
@@ -180,7 +211,7 @@ function procRowHTML(row, now, workspaceRoot) {
   const diffs = diffLinksFor(p);
   diffs.forEach(d => {
     const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
-    bits.push(`<a class="proc-chip" href="${esc(d.url)}" target="_blank">${escS(label)}</a>`);
+    bits.push(safeLinkHTML(d.url, label, ' class="proc-chip" target="_blank"'));
   });
 
   sessionChips(p).forEach(chip => bits.push(chip));
