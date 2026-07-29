@@ -132,7 +132,17 @@ async function collect(opts) {
     collectSessions(agents, claudeDir, { listFiles, readTail }, warn),
   ]);
 
-  const worktrees = perRepo.flat();
+  // Backstop: a worktree can be re-reported by more than one repo scan (e.g. if
+  // repo discovery regresses and a linked worktree gets treated as its own
+  // repo, `git worktree list` from there reports the whole set again). Never
+  // let a duplicate path reach the payload, regardless of discovery. Keep the
+  // first occurrence.
+  const seenPaths = new Set();
+  const worktrees = perRepo.flat().filter(wt => {
+    if (seenPaths.has(wt.path)) return false;
+    seenPaths.add(wt.path);
+    return true;
+  });
   const { attached, loose } = attachSessions(rawSessions, worktrees);
 
   return {

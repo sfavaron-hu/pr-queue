@@ -183,3 +183,32 @@ test('collect reports unpushed as null when no base branch can be derived', asyn
   const out = await collect(opts);
   assert.equal(out.processes[0].worktrees[0].unpushed, null);
 });
+
+test('collect de-duplicates a worktree path reported by more than one repo scan', async () => {
+  // Guards against a repo-discovery regression (e.g. a linked worktree being
+  // treated as its own "repo") re-reporting the same worktree via a second
+  // `git worktree list` scan. The payload must never contain a duplicate path,
+  // even if discovery misbehaves.
+  const { opts } = harness({
+    listDirs: async () => ['humand-web', 'humand-web--dup'],
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        // Both "repos" report the exact same worktree set, as would happen if
+        // the second is really just a linked worktree of the first.
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/feat/SQSH-3851-web-ai\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('rev-list')) return '0';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees);
+  assert.equal(wt.length, 1);
+  assert.equal(wt[0].path, '/w/humand-web');
+});

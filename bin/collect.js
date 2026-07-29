@@ -17,8 +17,13 @@ async function listDirs(root) {
   const entries = await fs.readdir(root, { withFileTypes: true });
   const dirs = entries.filter(e => e.isDirectory()).map(e => e.name);
   const checks = await Promise.all(dirs.map(async d => {
-    // .git is a file, not a directory, inside a linked worktree — stat, not isDirectory.
-    try { await fs.stat(path.join(root, d, '.git')); return d; } catch { return null; }
+    // .git is a directory only in a main checkout; in a linked worktree it's a
+    // file. Accepting files here would rediscover every sibling worktree as
+    // its own "repo" and re-report that repo's whole worktree set per sibling.
+    try {
+      const st = await fs.stat(path.join(root, d, '.git'));
+      return st.isDirectory() ? d : null;
+    } catch { return null; }
   }));
   return checks.filter(Boolean);
 }
