@@ -66,6 +66,8 @@ test('groupProcesses attaches sessions by branch', () => {
   });
   assert.equal(out[0].sessions.length, 1);
   assert.equal(out[0].sessions[0].sessionId, 's1');
+  assert.equal(out[0].branches.length, 1);
+  assert.equal(out[0].branches[0], 'feat/SQSH-3851-web');
 });
 
 const WT = [
