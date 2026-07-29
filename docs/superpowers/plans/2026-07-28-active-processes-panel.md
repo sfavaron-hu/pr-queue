@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a local-only panel to pr-queue that groups worktrees, Claude Code sessions and PRs into "processes" and classifies each as *tu turno* / *esperando a otro* / *frío*.
+**Goal:** Add a local-only panel to pr-queue that groups worktrees, Claude Code sessions and PRs into "processes" and classifies each as *tu turno* / *esperando a otro* / *en pausa* / *frío*.
 
 **Architecture:** A dependency-free Node collector (`collect.js`) reads local git + `claude agents --json` and emits JSON. A dependency-free Node sidecar (`serve.js`) serves the existing static site plus `GET /api/local`. A new browser script (`local.js`) fetches that endpoint and, **only if it succeeds**, mounts a panel — so the GitHub Pages deploy used by other people is unchanged. Classification logic lives in `classify.js`, loaded by both Node and the browser via a one-line dual export.
 
@@ -674,7 +674,7 @@ This is the task that carries the feature. The distinction that matters is *tu t
 - Consumes: `COLD_DAYS` from Task 2.
 - Produces:
   - `lastActivity(proc, prs) => number|null` — max over `proc.lastLocalActivity` and each PR's `updatedAt`.
-  - `classify(proc, prs, now) => 'turno' | 'esperando' | 'frio'`
+  - `classify(proc, prs, now) => 'turno' | 'esperando' | 'pausa' | 'frio'`
   - `sortProcesses(rows, now) => rows` sorted for display, where `rows` is `Array<{ proc, prs }>`.
   - PR objects are the browser's `state.ownPRs` entries: `{ draft, ci, conflicts, approved, changesReq, newComments, newApprovals, newChanges, updatedAt, headRef, number, url, repo }`. `updatedAt` may be a `Date` or epoch ms.
 
@@ -755,8 +755,17 @@ test('waiting beats cold — a 30 day old unreviewed PR is still esperando', () 
     [pr({ updatedAt: NOW - 30 * DAY, humanReviews: 0 })], NOW), 'esperando');
 });
 
-test('13 days with no PR is not yet cold', () => {
-  assert.equal(classify(proc({ lastLocalActivity: NOW - 13 * DAY }), [], NOW), 'esperando');
+test('13 days with no PR is en pausa, not esperando — nobody is blocking it', () => {
+  assert.equal(classify(proc({ lastLocalActivity: NOW - 13 * DAY }), [], NOW), 'pausa');
+});
+
+test('3 days with no PR is en pausa', () => {
+  assert.equal(classify(proc({ lastLocalActivity: NOW - 3 * DAY }), [], NOW), 'pausa');
+});
+
+test('an approved PR with reviews, touched 3 days ago, is en pausa not esperando', () => {
+  assert.equal(classify(proc({ lastLocalActivity: NOW - 3 * DAY }),
+    [pr({ approved: true, humanReviews: 1, updatedAt: NOW - 3 * DAY })], NOW), 'pausa');
 });
 
 test('15 days with no PR is cold', () => {
@@ -772,18 +781,20 @@ test('a process with no PR and no known activity is cold', () => {
   assert.equal(classify(proc({ lastLocalActivity: null }), [], NOW), 'frio');
 });
 
-test('sortProcesses puts turno first, then oldest wait, then oldest cold', () => {
+test('sortProcesses orders turno, esperando, pausa, frio — oldest first inside each', () => {
   const rows = [
     { proc: proc({ key: 'cold-new', lastLocalActivity: NOW - 15 * DAY }), prs: [] },
     { proc: proc({ key: 'wait-new', lastLocalActivity: NOW - 3 * DAY }),
       prs: [pr({ updatedAt: NOW - 3 * DAY, humanReviews: 0 })] },
     { proc: proc({ key: 'cold-old', lastLocalActivity: NOW - 40 * DAY }), prs: [] },
+    { proc: proc({ key: 'paused', lastLocalActivity: NOW - 5 * DAY }), prs: [] },
     { proc: proc({ key: 'wait-old', lastLocalActivity: NOW - 20 * DAY }),
       prs: [pr({ updatedAt: NOW - 20 * DAY, humanReviews: 0 })] },
     { proc: proc({ key: 'mine', lastLocalActivity: NOW - DAY }), prs: [] },
   ];
   const keys = sortProcesses(rows, NOW).map(r => r.proc.key);
-  assert.deepEqual(keys, ['mine', 'wait-old', 'wait-new', 'cold-old', 'cold-new']);
+  assert.deepEqual(keys,
+    ['mine', 'wait-old', 'wait-new', 'paused', 'cold-old', 'cold-new']);
 });
 ```
 
@@ -840,10 +851,12 @@ function classify(proc, prs, now) {
 
   var last = lastActivity(proc, list);
   if (last === null) return 'frio';
-  return (now - last > COLD_MS) ? 'frio' : 'esperando';
+  // Not your move and nobody is blocking it: set down, not dead. Calling this
+  // "esperando" would claim someone is blocking a process with no PR.
+  return (now - last > COLD_MS) ? 'frio' : 'pausa';
 }
 
-var STATE_ORDER = { turno: 0, esperando: 1, frio: 2 };
+var STATE_ORDER = { turno: 0, esperando: 1, pausa: 2, frio: 3 };
 
 function sortProcesses(rows, now) {
   return rows.slice().sort(function (a, b) {
@@ -1525,7 +1538,7 @@ test('serves index.html at the root', async () => {
   const res = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /text\/html/);
-  assert.match(await res.text(), /<script src="local\.js">/);
+  assert.match(await res.text(), /<script src="state\.js">/);
   server.close();
 });
 
@@ -1554,7 +1567,7 @@ test('unknown paths 404', async () => {
 });
 ```
 
-Note: the `index.html` assertion depends on Task 8 adding the `local.js` script tag. Run Task 6's tests after Task 8 if executing strictly in order, or accept that one test fails until then — it is listed here because `serve.js` is what makes the tag reachable.
+Note: these tests assert only what exists at Task 6. The `local.js` script tag is verified in Task 8, where it is added — no test here is allowed to fail pending a later task.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1764,6 +1777,7 @@ Add the CSS next to `.main-layout` (near line 557):
   letter-spacing: .04em; padding: 2px 6px; border-radius: 4px; text-align: center; }
 .proc-state.turno     { background: #d73a49; color: #fff; }
 .proc-state.esperando { background: #dbab09; color: #1b1f23; }
+.proc-state.pausa     { background: rgba(127,127,127,.45); }
 .proc-state.frio      { background: rgba(127,127,127,.25); }
 .proc-key { font-weight: 600; }
 .proc-noticket { font-size: 10px; opacity: .55; margin-left: 6px; }
@@ -1854,8 +1868,11 @@ function looseRowHTML(sessions) {
   </div>`;
 }
 
+const PROC_STATE_LABELS = { turno: 'Tu turno', esperando: 'Esperando',
+                            pausa: 'En pausa', frio: 'Frío' };
+
 function procStateLabel(s) {
-  return s === 'turno' ? 'Tu turno' : s === 'esperando' ? 'Esperando' : 'Frío';
+  return PROC_STATE_LABELS[s] || s;
 }
 
 function procRowHTML(row, now) {
@@ -1918,13 +1935,16 @@ function renderLocalPanel() {
   procEl.body().innerHTML = sorted.map(r => procRowHTML(r, now)).join('')
     + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '');
 
-  const active = sorted.filter(r => classify(r.proc, r.prs, now) !== 'frio').length;
-  procEl.count().textContent = active || '';
+  const states = sorted.map(r => classify(r.proc, r.prs, now));
+  const count = s => states.filter(x => x === s).length;
 
-  const cold = sorted.length - active;
+  // The badge counts what needs a decision from you, not everything that exists.
+  procEl.count().textContent = count('turno') || '';
+
   const warn = (payload.warnings || []).length;
   procEl.meta().textContent =
-    `${sorted.length} procesos · ${cold} fríos (>${COLD_DAYS}d)` +
+    `${sorted.length} procesos · ${count('turno')} tu turno · ${count('esperando')} esperando · ` +
+    `${count('pausa')} en pausa · ${count('frio')} fríos (>${COLD_DAYS}d)` +
     (warn ? ` · ${warn} warnings` : '') +
     (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
 }
@@ -1981,7 +2001,21 @@ async function initLocalPanel() {
 initLocalPanel();
 ```
 
-- [ ] **Step 3: Verify the panel against reality**
+- [ ] **Step 3: Extend the serve test to cover the new script tag**
+
+Now that the tag exists, assert it. In `tests/serve.test.js`, in the `serves index.html at the root` test, add:
+
+```js
+  assert.match(body, /<script src="classify\.js">/);
+  assert.match(body, /<script src="local\.js">/);
+```
+
+(capture `const body = await res.text();` once and reuse it for all three assertions).
+
+Run: `npm test`
+Expected: PASS.
+
+- [ ] **Step 4: Verify the panel against reality**
 
 With `node serve.js` running, open `http://localhost:7777`:
 
@@ -1998,7 +2032,7 @@ With `node serve.js` running, open `http://localhost:7777`:
    A session last worked on days ago must show days ago, not minutes. Minutes-ago for everything means the implementation regressed to file mtime.
 7. **A "Sesiones sin worktree" row appears** for sessions whose `cwd` is the workspace root, rather than those sessions forming a process named after a directory.
 
-- [ ] **Step 4: Verify the self-hide — this is the shared-deploy safety check**
+- [ ] **Step 5: Verify the self-hide — this is the shared-deploy safety check**
 
 ```bash
 kill %1                      # stop the sidecar
@@ -2007,14 +2041,14 @@ python3 -m http.server 8123  # serve the same files with no /api/local
 
 Open `http://localhost:8123`. Expected: **no panel, no console errors, pr-queue behaves exactly as before.** This is the experience every other user on Pages gets. Then confirm with the real thing: open the Pages URL and check that the panel is absent and the console is clean.
 
-- [ ] **Step 5: Verify without a PAT**
+- [ ] **Step 6: Verify without a PAT**
 
 In a fresh private window on `http://localhost:7777`, do not save a token. Expected: the panel still renders from local data, with every row showing "sin PR". Local data must not depend on GitHub auth.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add local.js index.html
+git add local.js index.html tests/serve.test.js
 git commit -m "feat: active processes panel, self-hiding without the sidecar"
 ```
 
@@ -2193,7 +2227,8 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   they appear as branchless rows rather than being dropped.
 - **State means turns, not age.** *Tu turno* is unanswered review comments, failed CI,
   conflicts or your own recent work. *Esperando* is an unreviewed PR or CI in flight —
-  not your move, however old. *Frío* is nothing from anyone in 14 days.
+  not your move, however old. *En pausa* is neither: usually no PR yet, just set down.
+  *Frío* is nothing from anyone in 14 days.
 - **Session liveness is not activity.** An open terminal only means a terminal was left
   open. Activity is the newest of: last session message, last commit, last PR update.
 - **Transcript file mtime is not last activity, and this bites.** Claude Code appends
@@ -2246,7 +2281,7 @@ Checked against the spec, section by section:
 | 3. `local.js` — self-hiding, placement, stale-then-revalidate | 8 |
 | 4. Process model — `ticket ?? branch`, aggregation | 2 |
 | 5. PR join — `headRef`, `updatedAt`, zero extra calls | 7 |
-| 6. Activity and classification — three states, 14 days, sorting | 3 |
+| 6. Activity and classification — four states, 14 days, sorting | 3 |
 | 7. Shareability — no hardcoded paths, env vars, README | 4, 9 |
 | Accepted redundancy — "Mis PRs" untouched | no task, by design |
 | Testing — classifier, `lastActivity`, grouping, parsers, degradation, paths, base branch | 1-5, 9 |

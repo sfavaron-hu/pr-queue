@@ -125,13 +125,16 @@ lastActivity = max(last transcript timestamp, last commit, PR updatedAt)
 
 Explicitly **not** the transcript's file mtime — see §1, where that was measured skewing by up to 5 days.
 
-Three states, evaluated in order:
+Four states, evaluated in order:
 
 1. **Tu turno** — `changesReq`, or unseen comments/reviews (`newComments`/`newChanges` > 0), or `ci === 'failed'`, or `conflicts`, or own activity within 48h.
 2. **Esperando a otro** — PR open with no human review yet, or `ci === 'pending'`, or review requested and unanswered.
-3. **Frío** — `lastActivity` older than **14 days** and none of the above. Candidate to close or delete.
+3. **En pausa** — none of the above, and last activity within **14 days**. Typically a process with no PR yet that was simply set down. Not your move, but nobody is blocking it either.
+4. **Frío** — `lastActivity` older than **14 days**, or unknown. Candidate to close or delete.
 
-Sorting: **Tu turno** first, then **Esperando a otro** oldest wait first (that is the one to go chase), then **Frío** oldest first.
+*En pausa* exists because the obvious three-state model has no honest home for a process with no PR that was last touched five days ago: it is not your turn, and calling it "esperando a otro" claims someone is blocking it when no one is. With 110 worktrees that bucket is large, and a label that lies about it makes the whole panel less trustworthy.
+
+Sorting: **Tu turno** first, then **Esperando a otro** oldest wait first (that is the one to go chase), then **En pausa**, then **Frío**, each oldest first.
 
 The distinction that carries the whole feature is *tu turno* vs *esperando a otro*. Age alone is not a priority signal; a three-week wait on someone else's review needs a nudge, not work.
 
@@ -159,7 +162,7 @@ A process card and the "Mis PRs" column will both show the same open PR. Accepte
 
 The repo has no test suite. This change introduces `node --test` (built into Node, no dependency) covering `collect.js`, which is where the real logic is:
 
-- **State classifier** — a pure function from `(process, now)` to one of the three states. Table-driven cases: changes-requested, unseen comments, failed CI, conflicts, recent own activity, open PR with no review, pending CI, 13-day-old, 15-day-old, and a process with no PR at all.
+- **State classifier** — a pure function from `(process, prs, now)` to one of the four states. Table-driven cases: changes-requested, unseen comments, failed CI, conflicts, recent own activity, open PR with no review, pending CI, 13-day-old with no PR (*en pausa*), 15-day-old (*frío*), and a process with no PR and no known activity.
 - **`lastActivity`** — picks the max across the three timestamps, and tolerates any one of them being absent.
 - **Ticket extraction and grouping** — `SQSH-1234` and `CSBM-5716` from real branch names; two repos on the same ticket collapse into one process; a branch with no ticket becomes its own process and is marked.
 - **Session attachment** — a session with a `pr-link` attaches via that PR; one whose `cwd` matches a worktree attaches via that branch; one with a root `cwd` and no `pr-link` lands in "sesiones sueltas" rather than forming a process keyed by its `cwd`. This last case is the regression that would quietly ruin the panel, and it is the reason this test exists.
