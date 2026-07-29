@@ -145,14 +145,14 @@ function sortProcesses(rows, now) {
     var sa = STATE_ORDER[classify(a.proc, a.prs, now)];
     var sb = STATE_ORDER[classify(b.proc, b.prs, now)];
     if (sa !== sb) return sa - sb;
-    // Within every state, oldest first: the longest wait is the one to chase,
-    // and the oldest cold process is the strongest cleanup candidate.
+    // Within every state, newest first: recently touched work is easier to pick back up
+    // than something forgotten for weeks. Rows with no known activity still sort last.
     var la = lastActivity(a.proc, a.prs);
     var lb = lastActivity(b.proc, b.prs);
     if (la === null && lb === null) return 0;
     if (la === null) return 1;
     if (lb === null) return -1;
-    return la - lb;
+    return lb - la;
   });
 }
 

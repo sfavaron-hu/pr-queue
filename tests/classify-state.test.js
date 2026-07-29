@@ -96,7 +96,7 @@ test('a process with no PR and no known activity is cold', () => {
   assert.equal(classify(proc({ lastLocalActivity: null }), [], NOW), 'frio');
 });
 
-test('sortProcesses orders turno, esperando, pausa, frio — oldest first inside each', () => {
+test('sortProcesses orders turno, esperando, pausa, frio — newest first inside each', () => {
   const rows = [
     { proc: proc({ key: 'cold-new', lastLocalActivity: NOW - 15 * DAY }), prs: [] },
     { proc: proc({ key: 'wait-new', lastLocalActivity: NOW - 3 * DAY }),
@@ -109,7 +109,7 @@ test('sortProcesses orders turno, esperando, pausa, frio — oldest first inside
   ];
   const keys = sortProcesses(rows, NOW).map(r => r.proc.key);
   assert.deepEqual(keys,
-    ['mine', 'wait-old', 'wait-new', 'paused', 'cold-old', 'cold-new']);
+    ['mine', 'wait-new', 'wait-old', 'paused', 'cold-new', 'cold-old']);
 });
 
 test('sortProcesses maintains stable order for rows with no lastActivity in same state', () => {
@@ -123,8 +123,8 @@ test('sortProcesses maintains stable order for rows with no lastActivity in same
     { proc: proc({ key: 'null-third', lastLocalActivity: null }), prs: [] },
   ];
   // All are 'frio' (no activity, no PRs).
-  // The ones with activity should sort before nulls (oldest first).
-  // The null-activity rows should keep their input relative order.
+  // Rows with activity sort before nulls (newest first among those with timestamps).
+  // Null-activity rows maintain their input relative order and sort last.
   const sorted = sortProcesses(rows, NOW);
   const keys = sorted.map(r => r.proc.key);
   assert.deepEqual(keys,
