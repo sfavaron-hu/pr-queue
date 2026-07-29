@@ -142,7 +142,9 @@ Four states, evaluated in order:
 
 *En pausa* exists because the obvious three-state model has no honest home for a process with no PR that was last touched five days ago: it is not your turn, and calling it "esperando a otro" claims someone is blocking it when no one is. With 110 worktrees that bucket is large, and a label that lies about it makes the whole panel less trustworthy.
 
-Sorting: **Tu turno** first, then **Esperando a otro** oldest wait first (that is the one to go chase), then **En pausa**, then **Frío**, each oldest first.
+Sorting: states in order — **Tu turno**, **Esperando a otro**, **En pausa**, **Frío** — and **newest first inside each**, so the freshest thing in each bucket is the one you see. Processes with no known activity sort last.
+
+The original design sorted oldest-first inside each state, reasoning that the longest wait is the one to chase and the oldest cold process is the strongest cleanup candidate. After using the panel the owner reversed it: recency is what makes a row recognisable, and a thing you touched yesterday is easier to pick back up than one from three weeks ago. The trade-off is that a genuinely stale wait now sinks in the *Esperando* bucket; if that becomes a problem, invert that one state rather than all four.
 
 The distinction that carries the whole feature is *tu turno* vs *esperando a otro*. Age alone is not a priority signal; a three-week wait on someone else's review needs a nudge, not work.
 
