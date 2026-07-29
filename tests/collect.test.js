@@ -288,3 +288,26 @@ test('collect keeps a detached worktree in a repo whose base branch is derivable
   assert.equal(wt[0].path, '/w/humand-web-detached');
   assert.equal(wt[0].detached, true);
 });
+
+test('collect never fails closed when the workspace root cannot be read (e.g. a typo\'d PRQ_WORKSPACE)', async () => {
+  const { opts } = harness({
+    listDirs: async () => { throw new Error('ENOENT: no such file or directory, scandir \'/w\''); },
+  });
+
+  const out = await collect(opts);
+
+  // Exits with a well-formed payload rather than rejecting.
+  assert.equal(out.generatedAt, NOW);
+  assert.equal(out.workspaceRoot, '/w');
+  assert.deepEqual(out.processes, []);
+
+  assert.equal(out.warnings.length, 1);
+  assert.match(out.warnings[0].message, /PRQ_WORKSPACE/);
+  assert.match(out.warnings[0].message, /\/w/);
+
+  // Sessions don't depend on the workspace root being readable — the one
+  // session the harness produces still comes through, just as a loose
+  // session since there are no worktrees left to attach it to.
+  assert.equal(out.looseSessions.length, 1);
+  assert.equal(out.looseSessions[0].sessionId, 's1');
+});

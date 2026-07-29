@@ -138,7 +138,16 @@ async function collect(opts) {
     warn(null, 'agents', e.message);
   }
 
-  const repos = await listDirs(workspaceRoot);
+  // A typo'd PRQ_WORKSPACE (or one pointing nowhere) must not fail the whole
+  // run: sessions still come from claudeDir independent of this, and the rest
+  // of the collector honours "never fail closed" everywhere else already.
+  let repos = [];
+  try {
+    repos = await listDirs(workspaceRoot);
+  } catch (e) {
+    warn(null, 'workspace', `Cannot read workspace root "${workspaceRoot}" (check PRQ_WORKSPACE): ${e.message}`);
+  }
+
   const [perRepo, rawSessions] = await Promise.all([
     Promise.all(repos.map(repo =>
       collectRepo(repo, nodePath.join(workspaceRoot, repo), run, warn))),

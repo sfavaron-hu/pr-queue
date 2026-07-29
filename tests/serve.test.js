@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { createServer, DEFAULT_PORT, resolvePort } = require('../serve.js');
+const { collect } = require('../collect.js');
 
 function listen(server) {
   return new Promise(res => server.listen(0, '127.0.0.1', () => res(server.address().port)));
@@ -22,6 +23,25 @@ test('GET /api/local returns 500 with a message when the collector throws', asyn
   const res = await fetch(`http://127.0.0.1:${port}/api/local`);
   assert.equal(res.status, 500);
   assert.match((await res.json()).error, /boom/);
+  server.close();
+});
+
+test('GET /api/local returns 200 with a warning, not 500, when the workspace root is unreadable (e.g. a typo\'d PRQ_WORKSPACE)', async () => {
+  const collectFn = () => collect({
+    env: {}, homeDir: '/home/dev', checkoutDir: '/w/pr-queue', now: () => 1785000000000,
+    run: async (cmd) => (cmd === 'claude' ? '[]' : ''),
+    listDirs: async () => { throw new Error('ENOENT: no such file or directory'); },
+    listFiles: async () => [],
+    readTail: async () => '',
+  });
+  const server = createServer({ collectFn });
+  const port = await listen(server);
+  const res = await fetch(`http://127.0.0.1:${port}/api/local`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.processes, []);
+  assert.equal(body.warnings.length, 1);
+  assert.match(body.warnings[0].message, /PRQ_WORKSPACE/);
   server.close();
 });
 
