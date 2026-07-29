@@ -948,6 +948,14 @@ test('pickBaseBranch prefers origin/HEAD when present', () => {
   assert.equal(pickBaseBranch('refs/remotes/origin/main', ['main']), 'main');
 });
 
+test('pickBaseBranch handles the trailing newline that real git output carries', () => {
+  // This is what `git symbolic-ref refs/remotes/origin/HEAD` actually returns.
+  // Without trimming, the regex never matches and every repo silently gets a
+  // null base branch — which nulls out every unpushed count.
+  assert.equal(pickBaseBranch('refs/remotes/origin/develop\n', ['develop']), 'develop');
+  assert.equal(pickBaseBranch('  refs/remotes/origin/main  \n', ['main']), 'main');
+});
+
 test('pickBaseBranch falls back to develop, then main, then master', () => {
   assert.equal(pickBaseBranch(null, ['main', 'develop', 'master']), 'develop');
   assert.equal(pickBaseBranch(null, ['main', 'master']), 'main');
@@ -991,7 +999,12 @@ const BASE_FALLBACKS = ['develop', 'main', 'master'];
 
 function pickBaseBranch(originHeadRef, remoteBranches) {
   if (originHeadRef) {
-    const m = String(originHeadRef).match(/^refs\/remotes\/origin\/(.+)$/);
+    // Trim here, at the parsing boundary. Real `git symbolic-ref` output ends
+    // in a newline, and `$` without /m plus `.` (which excludes \n) means an
+    // untrimmed value never matches — which silently returned null for every
+    // real repo, nulling out every `unpushed` count. Callers must not have to
+    // remember this.
+    const m = String(originHeadRef).trim().match(/^refs\/remotes\/origin\/(.+)$/);
     if (m) return m[1];
   }
   const have = new Set(remoteBranches || []);
