@@ -119,6 +119,9 @@ async function enrichOwnPR(pr) {
       createdAt: new Date(pr.created_at),
       approved, changesReq, newComments, newApprovals, newChanges,
       allCommentIds: humanComments.map(c => c.id),
-      allReviewIds:  humanRevs.map(r => r.id) };
+      allReviewIds:  humanRevs.map(r => r.id),
+      headRef: prDetails.head.ref,
+      updatedAt: new Date(pr.updated_at),
+      humanReviews: humanRevs.length };
   } catch { return null; }
 }
