@@ -62,7 +62,9 @@ Two real cases the porcelain parser must handle, found while measuring — the c
 
 Measured cost (23 repos, 91 worktrees, warm FS): `claude agents` 0.76s, reading 99 index files (52K) 0.03s, `worktree list` 0.29s, `git log -1` 1.12s, `git status` 2.75s — **~5s serial**. Repos are walked concurrently, which puts the target at ~1.5–2s. `git status` is more than half the budget; if it ever becomes the bottleneck it is the first thing to make optional, since dirty-state is the least essential field.
 
-Repo discovery: directories containing `.git` directly under the workspace root. The root is resolved in this order, with **no hardcoded path anywhere** (see *Shareability*):
+Repo discovery: **main checkouts** directly under the workspace root — a directory whose `.git` is itself a **directory**. This distinction is not cosmetic: a linked worktree's `.git` is a *file*, so treating "contains `.git`" as "is a repo" discovers every sibling worktree as its own repo, and `git worktree list` run from each one re-reports that repo's entire worktree set. Measured on this machine: **73 worktree rows for 38 distinct paths, one path repeated 4×**, with `dirty` and `unpushed` counts multiplied accordingly. The collector additionally de-duplicates by worktree path as a backstop.
+
+The root is resolved in this order, with **no hardcoded path anywhere** (see *Shareability*):
 
 1. `PRQ_WORKSPACE` env var, if set.
 2. Otherwise the parent directory of the pr-queue checkout — which is correct for anyone who clones pr-queue alongside their repos.

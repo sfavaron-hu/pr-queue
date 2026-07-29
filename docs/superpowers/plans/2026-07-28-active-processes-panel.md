@@ -1026,7 +1026,7 @@ git commit -m "feat: env-driven path resolution and derived base branch"
 - Consumes: everything from Tasks 1, 2 and 4.
 - Produces: `collect(opts) => Promise<payload>` matching the *Collector output contract*. `opts` is `{ env, homeDir, checkoutDir, run, listDirs, listFiles, readTail, now }`, all injectable so tests never touch the real disk.
   - `run(cmd, args, cwd) => Promise<string>` — rejects on failure.
-  - `listDirs(root) => Promise<string[]>` — subdirectory names containing `.git`.
+  - `listDirs(root) => Promise<string[]>` — subdirectory names that are **main checkouts**, i.e. whose `.git` is a *directory*. A linked worktree's `.git` is a file; including those makes every sibling worktree look like a repo, and `git worktree list` from each re-reports the whole set (measured: 73 rows for 38 paths, one repeated 4×).
   - `listFiles(dir) => Promise<string[]>` — entry names, used to index transcripts.
   - `readTail(path, bytes) => Promise<string>` — the **last** `bytes` of a file. Reading whole transcripts is unnecessary and slow; 64KB is enough to find the last timestamp.
 - Also produces: `bin/collect.js`, runnable as `npm run collect`.
@@ -1406,8 +1406,13 @@ async function listDirs(root) {
   const entries = await fs.readdir(root, { withFileTypes: true });
   const dirs = entries.filter(e => e.isDirectory()).map(e => e.name);
   const checks = await Promise.all(dirs.map(async d => {
-    // .git is a file, not a directory, inside a linked worktree — stat, not isDirectory.
-    try { await fs.stat(path.join(root, d, '.git')); return d; } catch { return null; }
+    // Main checkouts only: `.git` must be a DIRECTORY. A linked worktree has a
+    // `.git` file, and treating those as repos makes `git worktree list` report
+    // the same worktree set once per sibling — duplicating every row.
+    try {
+      const st = await fs.stat(path.join(root, d, '.git'));
+      return st.isDirectory() ? d : null;
+    } catch { return null; }
   }));
   return checks.filter(Boolean);
 }
