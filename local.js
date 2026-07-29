@@ -52,7 +52,7 @@ function mergeLooseSessions(payload) {
 function looseRowHTML(sessions) {
   const items = sessions.map(s => {
     const link = s.prLink && s.prLink.url
-      ? ` <a href="${esc(s.prLink.url)}" target="_blank">#${s.prLink.number}</a>` : '';
+      ? ` <a href="${esc(s.prLink.url)}" target="_blank">#${esc(String(s.prLink.number))}</a>` : '';
     const when = s.lastActivity ? ` <span class="proc-detail">${timeAgo(new Date(s.lastActivity))}</span>` : '';
     return `${esc(s.name || s.sessionId.slice(0, 8))}${s.status ? ' (' + esc(s.status) + ')' : ''}${link}${when}`;
   }).join(' · ');
@@ -87,7 +87,7 @@ function procRowHTML(row, now) {
     if (pr.changesReq) flags.push('cambios pedidos');
     else if (pr.approved) flags.push('aprobado');
     else if ((pr.humanReviews || 0) === 0) flags.push('sin review');
-    bits.push(`<a href="${esc(pr.url)}" target="_blank">#${pr.number}</a>` +
+    bits.push(`<a href="${esc(pr.url)}" target="_blank">#${esc(String(pr.number))}</a>` +
       (flags.length ? ` <span class="proc-detail">${esc(flags.join(' · '))}</span>` : ''));
   });
 
@@ -152,47 +152,69 @@ function applyProcCollapsed() {
   procEl.caret().textContent = collapsed ? '▸' : '▾';
 }
 
-async function initLocalPanel() {
-  // Paint the cached payload first so the panel is never empty on load.
-  try {
-    const cached = localStorage.getItem(PROC_CACHE_KEY);
-    if (cached) { window.LOCAL_STATE = JSON.parse(cached); renderLocalPanel(); }
-  } catch { /* ignore a corrupt cache */ }
+let procMounted = false;
 
-  let payload;
-  try {
-    const res = await fetch('/api/local', { cache: 'no-store' });
-    if (!res.ok) return;              // no sidecar → not our environment
-    payload = await res.json();
-  } catch {
-    return;                           // GitHub Pages lands here. Mount nothing.
-  }
-  if (!payload || !Array.isArray(payload.processes)) return;
-
-  window.LOCAL_STATE = payload;
-  try { localStorage.setItem(PROC_CACHE_KEY, JSON.stringify(payload)); } catch { /* quota */ }
-
+// Everything that makes the panel visible and interactive, exactly once.
+// The cached paint and the fetched paint both go through here, so the
+// collapse preference is applied from the very first frame and the toggle is
+// never rendered without its listener.
+function mountPanel() {
   renderLocalPanel();
   applyProcCollapsed();
-
-  // Own PRs load asynchronously and arrive after this point, so the first
-  // render has no PR detail. Wrap the existing renderOwnPRs (a global, since
-  // these are plain scripts) to re-render the panel whenever they land —
-  // cheaper and less invasive than editing render.js.
-  if (typeof window.renderOwnPRs === 'function') {
-    const inner = window.renderOwnPRs;
-    window.renderOwnPRs = function () {
-      const out = inner.apply(this, arguments);
-      try { renderLocalPanel(); } catch (e) { console.warn('proc panel render failed', e); }
-      return out;
-    };
-  }
+  if (procMounted) return;
+  procMounted = true;
 
   procEl.toggle().addEventListener('click', () => {
     const collapsed = localStorage.getItem(PROC_COLLAPSED_KEY) === '1';
     localStorage.setItem(PROC_COLLAPSED_KEY, collapsed ? '0' : '1');
     applyProcCollapsed();
   });
+
+  if (typeof window.renderOwnPRs === 'function' && !window.renderOwnPRs.__procWrapped) {
+    const inner = window.renderOwnPRs;
+    const wrapped = function () {
+      const out = inner.apply(this, arguments);
+      try { renderLocalPanel(); } catch (e) { console.warn('proc panel render failed', e); }
+      return out;
+    };
+    wrapped.__procWrapped = true;
+    window.renderOwnPRs = wrapped;
+  }
+}
+
+// The panel must never survive a failed fetch. A stale cached payload
+// rendered as if it were current is worse than no panel at all — this
+// feature exists to say which work is actually fresh.
+function unmountPanel() {
+  window.LOCAL_STATE = null;
+  procEl.body().innerHTML = '';
+  procEl.count().textContent = '';
+  procEl.meta().textContent = '';
+  procEl.section().style.display = 'none';
+}
+
+async function initLocalPanel() {
+  let painted = false;
+  try {
+    const cached = localStorage.getItem(PROC_CACHE_KEY);
+    if (cached) { window.LOCAL_STATE = JSON.parse(cached); mountPanel(); painted = true; }
+  } catch { /* ignore a corrupt cache */ }
+
+  let payload;
+  try {
+    const res = await fetch('/api/local', { cache: 'no-store' });
+    if (!res.ok) throw new Error('no sidecar');
+    payload = await res.json();
+    if (!payload || !Array.isArray(payload.processes)) throw new Error('bad payload');
+  } catch {
+    if (painted) unmountPanel();
+    return;
+  }
+
+  window.LOCAL_STATE = payload;
+  try { localStorage.setItem(PROC_CACHE_KEY, JSON.stringify(payload)); } catch { /* quota */ }
+
+  mountPanel();
 }
 
 initLocalPanel();
