@@ -149,6 +149,7 @@ function sortProcesses(rows, now) {
     // and the oldest cold process is the strongest cleanup candidate.
     var la = lastActivity(a.proc, a.prs);
     var lb = lastActivity(b.proc, b.prs);
+    if (la === null && lb === null) return 0;
     if (la === null) return 1;
     if (lb === null) return -1;
     return la - lb;

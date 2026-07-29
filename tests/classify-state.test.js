@@ -111,3 +111,23 @@ test('sortProcesses orders turno, esperando, pausa, frio — oldest first inside
   assert.deepEqual(keys,
     ['mine', 'wait-old', 'wait-new', 'paused', 'cold-old', 'cold-new']);
 });
+
+test('sortProcesses maintains stable order for rows with no lastActivity in same state', () => {
+  // Multiple processes with lastActivity === null must be sorted stably
+  // (they keep their input relative order since the comparator returns 0).
+  // This pins the fix: if (la === null && lb === null) return 0
+  const rows = [
+    { proc: proc({ key: 'null-first', lastLocalActivity: null }), prs: [] },
+    { proc: proc({ key: 'has-activity', lastLocalActivity: NOW - 30 * DAY }), prs: [] },
+    { proc: proc({ key: 'null-second', lastLocalActivity: null }), prs: [] },
+    { proc: proc({ key: 'null-third', lastLocalActivity: null }), prs: [] },
+  ];
+  // All are 'frio' (no activity, no PRs).
+  // The ones with activity should sort before nulls (oldest first).
+  // The null-activity rows should keep their input relative order.
+  const sorted = sortProcesses(rows, NOW);
+  const keys = sorted.map(r => r.proc.key);
+  assert.deepEqual(keys,
+    ['has-activity', 'null-first', 'null-second', 'null-third'],
+    'rows with no activity maintain input order; rows with activity sort first');
+});
