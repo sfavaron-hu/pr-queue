@@ -51,6 +51,12 @@ The obvious implementation of this section is wrong in three ways. Each was meas
 
 `pr-link` also removes the label-scope limitation described in §5: a process can show its PR number and URL from local data alone, whether or not GitHub returned that PR.
 
+#### Base-branch checkouts are not processes
+
+A worktree sitting on its repo's own base branch is excluded. It is not work in progress, and because processes group by branch name, including them is worse than noise: every repo whose main checkout sits on `main` collapses into a **single** process named `main`, merging unrelated repos into one row. Observed live before the fix: one `main` row spanning `eslint-plugin-suggest-hugo-components`, `hu-rooms`, `humand-janus` and `material-hu`, plus a matching `develop` row. That is not merely untidy, it is misleading.
+
+The base branch is already derived per repo for the unpushed count, so the data is on hand. Two cases are deliberately kept: a **detached** worktree (no branch, so it cannot be a base-branch checkout) and any worktree in a repo whose base branch **could not be derived** — with no base to compare against, dropping work would be worse than showing it.
+
 #### Worktree layouts
 
 Both conventions are in use here — siblings of the repo (`humand-web--SQSH-3851-…`) and nested inside it (`humand-web/.worktrees/chore/SQSH-3239-…`). `git worktree list` reports both, so discovery needs no special handling; **path-prefix assumptions about where a worktree lives would break**, and nothing may rely on them.

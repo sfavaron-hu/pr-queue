@@ -1264,7 +1264,16 @@ async function collectRepo(repo, repoPath, run, warn) {
     }
   }
 
-  return Promise.all(worktrees.map(async (wt) => {
+  // A worktree on its repo's own base branch is not work in progress. Keeping
+  // them is actively misleading: grouping is by branch name, so every repo
+  // sitting on `main` collapses into one process merging unrelated repos.
+  // Detached worktrees have no branch and are kept; so is everything in a repo
+  // whose base branch could not be derived, since there is nothing to compare.
+  const active = base
+    ? worktrees.filter(wt => wt.branch !== base)
+    : worktrees;
+
+  return Promise.all(active.map(async (wt) => {
     const row = { repo, path: wt.path, branch: wt.branch, detached: wt.detached,
                   prunable: wt.prunable, dirty: null, unpushed: null, lastCommit: null };
     // A prunable worktree's directory is gone — running git in it would just fail.
