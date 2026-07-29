@@ -212,3 +212,77 @@ test('collect de-duplicates a worktree path reported by more than one repo scan'
   assert.equal(wt.length, 1);
   assert.equal(wt[0].path, '/w/humand-web');
 });
+
+test('collect drops a worktree sitting on its own base branch', async () => {
+  // Grouping is by branch name, so a base-branch worktree is not just noise —
+  // it would collapse every repo sitting on `main`/`develop` into one process.
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/develop\n\n' +
+               'worktree /w/humand-web-feat\nHEAD def\nbranch refs/heads/feat/SQSH-3851-web-ai\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('rev-list')) return '0';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees);
+  assert.equal(wt.length, 1);
+  assert.equal(wt[0].path, '/w/humand-web-feat');
+});
+
+test('collect keeps every worktree when the base branch cannot be derived', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/develop\n\n' +
+               'worktree /w/humand-web-feat\nHEAD def\nbranch refs/heads/feat/SQSH-3851-web-ai\n';
+      }
+      if (a.includes('symbolic-ref')) throw new Error('no origin/HEAD');
+      // Neither of these is in the develop/main/master fallback list, so
+      // pickBaseBranch returns null.
+      if (a.includes('for-each-ref')) return 'trunk\nrelease\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees);
+  assert.equal(wt.length, 2);
+  assert.deepEqual(wt.map(w => w.path).sort(), ['/w/humand-web', '/w/humand-web-feat']);
+});
+
+test('collect keeps a detached worktree in a repo whose base branch is derivable', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/develop\n\n' +
+               'worktree /w/humand-web-detached\nHEAD def\ndetached\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('rev-list')) return '0';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees);
+  assert.equal(wt.length, 1);
+  assert.equal(wt[0].path, '/w/humand-web-detached');
+  assert.equal(wt[0].detached, true);
+});

@@ -17,7 +17,11 @@ async function collectRepo(repo, repoPath, run, warn) {
 
   let base = null;
   try {
-    base = pickBaseBranch(await run('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], repoPath), []);
+    // Real `git symbolic-ref` output ends in a trailing newline that
+    // pickBaseBranch's anchored regex won't match through — trim before
+    // handing it off, or base silently comes back null for every repo.
+    const headRef = (await run('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], repoPath)).trim();
+    base = pickBaseBranch(headRef, []);
   } catch {
     try {
       const refs = await run('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/remotes/origin'], repoPath);
@@ -27,7 +31,16 @@ async function collectRepo(repo, repoPath, run, warn) {
     }
   }
 
-  return Promise.all(worktrees.map(async (wt) => {
+  // A worktree on its repo's own base branch is not work in progress. Keeping
+  // them is actively misleading: grouping is by branch name, so every repo
+  // sitting on `main` collapses into one process merging unrelated repos.
+  // Detached worktrees have no branch and are kept; so is everything in a repo
+  // whose base branch could not be derived, since there is nothing to compare.
+  const active = base
+    ? worktrees.filter(wt => wt.branch !== base)
+    : worktrees;
+
+  return Promise.all(active.map(async (wt) => {
     const row = { repo, path: wt.path, branch: wt.branch, detached: wt.detached,
                   prunable: wt.prunable, dirty: null, unpushed: null, lastCommit: null };
     // A prunable worktree's directory is gone — running git in it would just fail.
