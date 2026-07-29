@@ -952,8 +952,13 @@ test('pickBaseBranch handles the trailing newline that real git output carries',
   // This is what `git symbolic-ref refs/remotes/origin/HEAD` actually returns.
   // Without trimming, the regex never matches and every repo silently gets a
   // null base branch — which nulls out every unpushed count.
-  assert.equal(pickBaseBranch('refs/remotes/origin/develop\n', ['develop']), 'develop');
-  assert.equal(pickBaseBranch('  refs/remotes/origin/main  \n', ['main']), 'main');
+  //
+  // The empty fallback lists are load-bearing: passing ['develop'] here would
+  // make this a FALSE PIN, because a failed primary match falls through to the
+  // fallback list and returns 'develop' anyway. With [] there is no second path
+  // to the right answer, so the test can only pass via the trimmed regex.
+  assert.equal(pickBaseBranch('refs/remotes/origin/develop\n', []), 'develop');
+  assert.equal(pickBaseBranch('  refs/remotes/origin/main  \n', []), 'main');
 });
 
 test('pickBaseBranch falls back to develop, then main, then master', () => {
