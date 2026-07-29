@@ -56,6 +56,12 @@ async function handle(req, res, collectFn) {
   if (!full.startsWith(ROOT + path.sep)) {
     res.writeHead(403); return res.end('forbidden');
   }
+  // Escaping ROOT isn't the only way in: a dotfile/dotdir segment (`.git`,
+  // `.env`) can resolve *inside* ROOT and still be sensitive. Refuse any
+  // segment starting with `.` other than the root itself.
+  if (rel.split('/').some(seg => seg.startsWith('.'))) {
+    res.writeHead(403); return res.end('forbidden');
+  }
 
   try {
     const data = await fs.readFile(full);
