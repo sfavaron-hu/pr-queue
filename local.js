@@ -49,12 +49,20 @@ function mergeLooseSessions(payload) {
   payload.looseSessions = stillLoose;
 }
 
+// collect-parse.js can emit a null sessionId; `s.name || s.sessionId.slice(...)`
+// then throws on `.slice` of null. Coerce to a string first so a session with
+// neither a name nor an id still renders something instead of crashing.
+function sessionLabel(s) {
+  if (s.name) return s.name;
+  return s.sessionId ? String(s.sessionId).slice(0, 8) : 'sesión';
+}
+
 function looseRowHTML(sessions) {
   const items = sessions.map(s => {
     const link = s.prLink && s.prLink.url
       ? ` <a href="${esc(s.prLink.url)}" target="_blank">#${esc(String(s.prLink.number))}</a>` : '';
     const when = s.lastActivity ? ` <span class="proc-detail">${timeAgo(new Date(s.lastActivity))}</span>` : '';
-    return `${esc(s.name || s.sessionId.slice(0, 8))}${s.status ? ' (' + esc(s.status) + ')' : ''}${link}${when}`;
+    return `${esc(sessionLabel(s))}${s.status ? ' (' + esc(s.status) + ')' : ''}${link}${when}`;
   }).join(' · ');
 
   return `<div class="proc-row">
@@ -94,6 +102,16 @@ function procRowHTML(row, now) {
   const dirty = p.worktrees.reduce((n, w) => n + (w.dirty || 0), 0);
   if (dirty > 0) bits.push(`<span class="proc-detail">${dirty} sin commitear</span>`);
 
+  // `unpushed` may be null (unknown, e.g. no base branch to diff against) on
+  // any given worktree — that must not silently count as 0, but a `null` in
+  // the sum must not render as NaN either. Only worktrees with a real number
+  // contribute; if none do, there is nothing to show.
+  const unpushedKnown = p.worktrees.some(w => typeof w.unpushed === 'number');
+  const unpushed = unpushedKnown
+    ? p.worktrees.reduce((n, w) => n + (typeof w.unpushed === 'number' ? w.unpushed : 0), 0)
+    : null;
+  if (unpushed > 0) bits.push(`<span class="proc-detail">${unpushed} sin pushear</span>`);
+
   const prunable = p.worktrees.filter(w => w.prunable).length;
   if (prunable > 0) bits.push(`<span class="proc-detail">${prunable} worktree prunable</span>`);
 
@@ -102,8 +120,15 @@ function procRowHTML(row, now) {
 
   if (p.sessions.length > 0) {
     const sess = p.sessions.map(x =>
-      `${esc(x.name || x.sessionId.slice(0, 8))}${x.status ? ' (' + esc(x.status) + ')' : ''}`).join(', ');
-    bits.push(`<span class="proc-detail">sesión: ${sess} · <code>claude --resume ${esc(p.sessions[0].sessionId)}</code></span>`);
+      `${esc(sessionLabel(x))}${x.status ? ' (' + esc(x.status) + ')' : ''}`).join(', ');
+    // resumeCmd comes straight from the payload — collect.js already builds it,
+    // so this is the only place that constructs it. Fall back to building it
+    // from sessionId for an older cached payload that predates the field, and
+    // show nothing rather than throw when there is no sessionId at all.
+    const first = p.sessions[0];
+    const resumeCmd = first.resumeCmd || (first.sessionId ? `claude --resume ${first.sessionId}` : null);
+    bits.push(`<span class="proc-detail">sesión: ${sess}` +
+      (resumeCmd ? ` · <code>${esc(resumeCmd)}</code>` : '') + `</span>`);
   }
 
   const repos = [...new Set(p.worktrees.map(w => w.repo))].join(', ');
@@ -128,22 +153,33 @@ function renderLocalPanel() {
   const rows = payload.processes.map(proc => ({ proc, prs: procPRsFor(proc) }));
   const sorted = sortProcesses(rows, now);
 
-  procEl.section().style.display = '';
-  procEl.body().innerHTML = sorted.map(r => procRowHTML(r, now)).join('')
+  // Build the entire body first. If anything here throws, nothing has been
+  // mutated yet — the section stays exactly as it was (hidden, or showing the
+  // previous good paint) instead of a half-built header with no body.
+  const bodyHTML = sorted.map(r => procRowHTML(r, now)).join('')
     + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '');
 
   const states = sorted.map(r => classify(r.proc, r.prs, now));
   const count = s => states.filter(x => x === s).length;
 
-  // The badge counts what needs a decision from you, not everything that exists.
-  procEl.count().textContent = count('turno') || '';
-
-  const warn = (payload.warnings || []).length;
-  procEl.meta().textContent =
+  const warn = payload.warnings || [];
+  const metaText =
     `${sorted.length} procesos · ${count('turno')} tu turno · ${count('esperando')} esperando · ` +
     `${count('pausa')} en pausa · ${count('frio')} fríos (>${COLD_DAYS}d)` +
-    (warn ? ` · ${warn} warnings` : '') +
+    (warn.length ? ` · ${warn.length} warnings` : '') +
     (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
+
+  procEl.body().innerHTML = bodyHTML;
+  // The badge counts what needs a decision from you, not everything that exists.
+  procEl.count().textContent = count('turno') || '';
+  procEl.count().style.display = count('turno') > 0 ? '' : 'none';
+  procEl.meta().textContent = metaText;
+  // Hovering surfaces the actual warning messages — otherwise "· N warnings"
+  // is a count with nowhere to see what went wrong.
+  procEl.meta().title = warn.length
+    ? warn.map(w => `${w.repo ? w.repo + ': ' : ''}${w.step}: ${w.message}`).join('\n')
+    : '';
+  procEl.section().style.display = '';
 }
 
 function applyProcCollapsed() {
@@ -193,11 +229,24 @@ function unmountPanel() {
   procEl.section().style.display = 'none';
 }
 
+// mountPanel() can throw mid-build (e.g. a malformed row). Never let that
+// leave a half-mounted header on screen — fall back to a clean unmount.
+function mountPanelSafely() {
+  try {
+    mountPanel();
+    return true;
+  } catch (e) {
+    console.warn('proc panel mount failed', e);
+    try { unmountPanel(); } catch { /* already gone */ }
+    return false;
+  }
+}
+
 async function initLocalPanel() {
   let painted = false;
   try {
     const cached = localStorage.getItem(PROC_CACHE_KEY);
-    if (cached) { window.LOCAL_STATE = JSON.parse(cached); mountPanel(); painted = true; }
+    if (cached) { window.LOCAL_STATE = JSON.parse(cached); painted = mountPanelSafely(); }
   } catch { /* ignore a corrupt cache */ }
 
   let payload;
@@ -214,7 +263,7 @@ async function initLocalPanel() {
   window.LOCAL_STATE = payload;
   try { localStorage.setItem(PROC_CACHE_KEY, JSON.stringify(payload)); } catch { /* quota */ }
 
-  mountPanel();
+  mountPanelSafely();
 }
 
 initLocalPanel();
