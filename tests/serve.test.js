@@ -47,11 +47,11 @@ test('serves a static js file with the right content type', async () => {
   server.close();
 });
 
-test('refuses path traversal', async () => {
+test('refuses a dotfile segment inside ROOT', async () => {
   const server = createServer({ collectFn: async () => ({}) });
   const port = await listen(server);
-  const res = await fetch(`http://127.0.0.1:${port}/../../etc/passwd`);
-  assert.ok(res.status === 403 || res.status === 404);
+  const res = await fetch(`http://127.0.0.1:${port}/.git/config`);
+  assert.equal(res.status, 403);
   server.close();
 });
 

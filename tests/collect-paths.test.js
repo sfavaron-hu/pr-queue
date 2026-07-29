@@ -23,8 +23,14 @@ test('claude dir defaults to ~/.claude', () => {
 });
 
 test('pickBaseBranch prefers origin/HEAD when present', () => {
-  assert.equal(pickBaseBranch('refs/remotes/origin/develop', ['main', 'develop']), 'develop');
-  assert.equal(pickBaseBranch('refs/remotes/origin/main', ['main']), 'main');
+  // 'trunk' is deliberately absent from BASE_FALLBACKS and the fallback list is
+  // empty, so this can only pass via the primary regex — not via the fallback
+  // returning the same string by coincidence.
+  assert.equal(pickBaseBranch('refs/remotes/origin/trunk', []), 'trunk');
+});
+
+test('pickBaseBranch falls through to the fallback list when the primary ref is malformed', () => {
+  assert.equal(pickBaseBranch('not-a-ref', ['develop']), 'develop');
 });
 
 test('pickBaseBranch falls back to develop, then main, then master', () => {
