@@ -224,7 +224,9 @@ test('collect drops a worktree sitting on its own base branch', async () => {
         return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/develop\n\n' +
                'worktree /w/humand-web-feat\nHEAD def\nbranch refs/heads/feat/SQSH-3851-web-ai\n';
       }
-      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      // Real `git symbolic-ref` output ends in a newline — exercise the
+      // integration path with the same shape real git actually produces.
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop\n';
       if (a.startsWith('status')) return '';
       if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
       if (a.includes('rev-list')) return '0';

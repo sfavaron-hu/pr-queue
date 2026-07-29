@@ -19,7 +19,12 @@ const BASE_FALLBACKS = ['develop', 'main', 'master'];
 
 function pickBaseBranch(originHeadRef, remoteBranches) {
   if (originHeadRef) {
-    const m = String(originHeadRef).match(/^refs\/remotes\/origin\/(.+)$/);
+    // Trim here, at the parsing boundary. Real `git symbolic-ref` output ends
+    // in a newline, and `$` without /m plus `.` (which excludes \n) means an
+    // untrimmed value never matches — which silently returned null for every
+    // real repo, nulling out every `unpushed` count. Callers must not have to
+    // remember this.
+    const m = String(originHeadRef).trim().match(/^refs\/remotes\/origin\/(.+)$/);
     if (m) return m[1];
   }
   const have = new Set(remoteBranches || []);

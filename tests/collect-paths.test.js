@@ -37,3 +37,11 @@ test('pickBaseBranch returns null rather than guessing', () => {
   assert.equal(pickBaseBranch(null, []), null);
   assert.equal(pickBaseBranch(null, ['trunk', 'release']), null);
 });
+
+test('pickBaseBranch handles the trailing newline that real git output carries', () => {
+  // Empty fallback lists are deliberate: passing the same branch name in
+  // remoteBranches would let the fallback path mask a broken primary match,
+  // since both would return the same value either way.
+  assert.equal(pickBaseBranch('refs/remotes/origin/develop\n', []), 'develop');
+  assert.equal(pickBaseBranch('  refs/remotes/origin/main  \n', []), 'main');
+});
