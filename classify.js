@@ -90,8 +90,74 @@ function groupProcesses(input) {
   return Array.from(map.values());
 }
 
+var TURN_WINDOW_MS = 48 * 60 * 60 * 1000;
+var COLD_MS = COLD_DAYS * 24 * 60 * 60 * 1000;
+
+function toMs(v) {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === 'number') return v;
+  var t = new Date(v).getTime();
+  return isNaN(t) ? null : t;
+}
+
+function lastActivity(proc, prs) {
+  var best = typeof proc.lastLocalActivity === 'number' ? proc.lastLocalActivity : null;
+  (prs || []).forEach(function (p) {
+    var ts = toMs(p.updatedAt);
+    if (ts !== null && (best === null || ts > best)) best = ts;
+  });
+  return best;
+}
+
+function classify(proc, prs, now) {
+  var list = prs || [];
+
+  var yourMove = list.some(function (p) {
+    return p.changesReq === true
+      || (p.newComments  || 0) > 0
+      || (p.newChanges   || 0) > 0
+      || (p.newApprovals || 0) > 0
+      || p.ci === 'failed'
+      || p.conflicts === true;
+  });
+  if (yourMove) return 'turno';
+
+  var local = typeof proc.lastLocalActivity === 'number' ? proc.lastLocalActivity : null;
+  if (local !== null && now - local <= TURN_WINDOW_MS) return 'turno';
+
+  var waiting = list.some(function (p) {
+    return p.ci === 'pending' || (p.humanReviews || 0) === 0;
+  });
+  if (waiting) return 'esperando';
+
+  var last = lastActivity(proc, list);
+  if (last === null) return 'frio';
+  // Not your move and nobody is blocking it: set down, not dead. Calling this
+  // "esperando" would claim someone is blocking a process with no PR.
+  return (now - last > COLD_MS) ? 'frio' : 'pausa';
+}
+
+var STATE_ORDER = { turno: 0, esperando: 1, pausa: 2, frio: 3 };
+
+function sortProcesses(rows, now) {
+  return rows.slice().sort(function (a, b) {
+    var sa = STATE_ORDER[classify(a.proc, a.prs, now)];
+    var sb = STATE_ORDER[classify(b.proc, b.prs, now)];
+    if (sa !== sb) return sa - sb;
+    // Within every state, oldest first: the longest wait is the one to chase,
+    // and the oldest cold process is the strongest cleanup candidate.
+    var la = lastActivity(a.proc, a.prs);
+    var lb = lastActivity(b.proc, b.prs);
+    if (la === null) return 1;
+    if (lb === null) return -1;
+    return la - lb;
+  });
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { COLD_DAYS: COLD_DAYS, extractTicket: extractTicket,
                      processKey: processKey, groupProcesses: groupProcesses,
-                     attachSessions: attachSessions };
+                     attachSessions: attachSessions, lastActivity: lastActivity,
+                     classify: classify, sortProcesses: sortProcesses };
 }
