@@ -80,7 +80,83 @@ function procStateLabel(s) {
   return PROC_STATE_LABELS[s] || s;
 }
 
-function procRowHTML(row, now) {
+// `lastCommitSubject` and `aiTitle` are untrusted text (a commit subject can
+// contain `<script>` or quotes; `aiTitle` is model-generated), and an older
+// cached payload can hand back `null`/`undefined` for either. `esc()` has no
+// type coercion and throws on non-strings, so every interpolation of these
+// fields goes through this wrapper first.
+function escS(v) {
+  return (v === null || v === undefined) ? '' : esc(String(v));
+}
+
+// Line 2: the context subtitle. First available of the joined PR's title, an
+// attached session's aiTitle, or a worktree's last commit subject — all three
+// are free per the collector. `null` when none exist, so the row omits the
+// line instead of rendering it empty.
+function subtitleFor(p, prs) {
+  const pr = prs.find(x => x.title);
+  if (pr) return pr.title;
+  const sess = p.sessions.find(x => x.aiTitle);
+  if (sess) return sess.aiTitle;
+  const wt = p.worktrees.find(w => w.lastCommitSubject);
+  if (wt) return wt.lastCommitSubject;
+  return null;
+}
+
+// One compare link per distinct repo among the process's worktrees. A
+// detached worktree has no branch (no compare possible) and a prunable one
+// has no git detail at all — neither qualifies. Nor does a worktree missing
+// `githubRepo`/`baseBranch` (unparseable remote, or base branch unknown), or
+// an older cached payload that predates those fields entirely.
+function diffLinksFor(p) {
+  const seen = new Set();
+  const links = [];
+  p.worktrees.forEach(w => {
+    if (seen.has(w.repo) || w.detached || w.prunable) return;
+    if (!w.githubRepo || !w.baseBranch || !w.branch) return;
+    seen.add(w.repo);
+    links.push({ repo: w.repo, url: `https://github.com/${w.githubRepo}/compare/${w.baseBranch}...${w.branch}` });
+  });
+  return links;
+}
+
+// A click-to-copy chip. `text` is the untrusted-ish command string; both the
+// visible label and the `data-copy` attribute go through esc(), since a
+// data- attribute is exactly the kind of interpolation this feature warns
+// about getting wrong.
+function copyChip(label, text) {
+  return `<button type="button" class="proc-chip proc-copy" data-copy="${esc(text)}" title="${esc(text)}">${escS(label)}</button>`;
+}
+
+// `resume <session name>` per attached session, carrying its resumeCmd.
+// resumeCmd comes straight from the payload; fall back to building it from
+// sessionId for an older cached payload that predates the field, and skip a
+// session with neither rather than throw.
+function sessionChips(p) {
+  return p.sessions.map(x => {
+    const cmd = x.resumeCmd || (x.sessionId ? `claude --resume ${x.sessionId}` : null);
+    return cmd ? copyChip(`resume ${sessionLabel(x)}`, cmd) : null;
+  }).filter(Boolean);
+}
+
+// `cd <path>` per worktree, or — for a prunable one, whose directory is
+// gone — a copyable `git worktree prune` instead. The repo's main checkout
+// path isn't itself in the payload, but collect.js derives every repoPath the
+// same way (workspaceRoot joined with the repo name), so that's reconstructed
+// here for the prune command. Falls back to the bare repo name if an older
+// cached payload lacks `workspaceRoot`, which still gives the user something
+// to fill in rather than nothing.
+function worktreeChip(w, workspaceRoot, multi) {
+  const repoLabel = multi ? ` ${w.repo}` : '';
+  if (w.prunable) {
+    const repoPath = workspaceRoot ? `${workspaceRoot}/${w.repo}` : w.repo;
+    return copyChip(`prune${repoLabel} ⎘`, `git -C ${repoPath} worktree prune`);
+  }
+  if (!w.path) return null;
+  return copyChip(`cd${repoLabel} ⎘`, `cd ${w.path}`);
+}
+
+function procRowHTML(row, now, workspaceRoot) {
   const p = row.proc;
   const s = classify(p, row.prs, now);
   const last = lastActivity(p, row.prs);
@@ -99,6 +175,22 @@ function procRowHTML(row, now) {
       (flags.length ? ` <span class="proc-detail">${esc(flags.join(' · '))}</span>` : ''));
   });
 
+  // A diff link is shown even when a PR already joined — it is a different
+  // view (and it is how you open a PR for a branch that has none yet).
+  const diffs = diffLinksFor(p);
+  diffs.forEach(d => {
+    const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
+    bits.push(`<a class="proc-chip" href="${esc(d.url)}" target="_blank">${escS(label)}</a>`);
+  });
+
+  sessionChips(p).forEach(chip => bits.push(chip));
+
+  const multiWorktree = p.worktrees.length > 1;
+  p.worktrees.forEach(w => {
+    const chip = worktreeChip(w, workspaceRoot, multiWorktree);
+    if (chip) bits.push(chip);
+  });
+
   const dirty = p.worktrees.reduce((n, w) => n + (w.dirty || 0), 0);
   if (dirty > 0) bits.push(`<span class="proc-detail">${dirty} sin commitear</span>`);
 
@@ -112,32 +204,18 @@ function procRowHTML(row, now) {
     : null;
   if (unpushed > 0) bits.push(`<span class="proc-detail">${unpushed} sin pushear</span>`);
 
-  const prunable = p.worktrees.filter(w => w.prunable).length;
-  if (prunable > 0) bits.push(`<span class="proc-detail">${prunable} worktree prunable</span>`);
-
   const detached = p.worktrees.filter(w => w.detached).length;
   if (detached > 0) bits.push(`<span class="proc-detail">${detached} detached</span>`);
 
-  if (p.sessions.length > 0) {
-    const sess = p.sessions.map(x =>
-      `${esc(sessionLabel(x))}${x.status ? ' (' + esc(x.status) + ')' : ''}`).join(', ');
-    // resumeCmd comes straight from the payload — collect.js already builds it,
-    // so this is the only place that constructs it. Fall back to building it
-    // from sessionId for an older cached payload that predates the field, and
-    // show nothing rather than throw when there is no sessionId at all.
-    const first = p.sessions[0];
-    const resumeCmd = first.resumeCmd || (first.sessionId ? `claude --resume ${first.sessionId}` : null);
-    bits.push(`<span class="proc-detail">sesión: ${sess}` +
-      (resumeCmd ? ` · <code>${esc(resumeCmd)}</code>` : '') + `</span>`);
-  }
-
   const repos = [...new Set(p.worktrees.map(w => w.repo))].join(', ');
+  const subtitle = subtitleFor(p, row.prs);
 
   return `<div class="proc-row">
     <span class="proc-state ${s}">${procStateLabel(s)}</span>
     <span>
       <span class="proc-key">${esc(p.key)}</span>${p.ticket ? '' : '<span class="proc-noticket">sin ticket</span>'}
       ${repos ? `<span class="proc-detail"> · ${esc(repos)}</span>` : ''}
+      ${subtitle ? `<br><span class="proc-subtitle">${escS(subtitle)}</span>` : ''}
       <br>${bits.join(' · ') || '<span class="proc-detail">sin PR</span>'}
     </span>
     <span class="proc-detail">${last ? timeAgo(new Date(last)) : '—'}</span>
@@ -156,7 +234,7 @@ function renderLocalPanel() {
   // Build the entire body first. If anything here throws, nothing has been
   // mutated yet — the section stays exactly as it was (hidden, or showing the
   // previous good paint) instead of a half-built header with no body.
-  const bodyHTML = sorted.map(r => procRowHTML(r, now)).join('')
+  const bodyHTML = sorted.map(r => procRowHTML(r, now, payload.workspaceRoot)).join('')
     + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '');
 
   const states = sorted.map(r => classify(r.proc, r.prs, now));
@@ -188,6 +266,35 @@ function applyProcCollapsed() {
   procEl.caret().textContent = collapsed ? '▸' : '▾';
 }
 
+// Brief visual feedback for a copy chip: swap its label to "copiado" for a
+// moment, then restore it. A rejected clipboard promise (permissions,
+// non-secure context) is swallowed rather than thrown — there is no user
+// action to recover from that beyond trying again.
+function flashCopied(btn) {
+  const original = btn.textContent;
+  btn.textContent = 'copiado';
+  btn.classList.add('copied');
+  setTimeout(() => {
+    btn.textContent = original;
+    btn.classList.remove('copied');
+  }, 1200);
+}
+
+// One delegated listener on the panel body handles every copy chip, current
+// and future — renderLocalPanel() replaces innerHTML on every repaint, which
+// would stack a listener per row per paint if attached directly to buttons.
+function installCopyDelegation() {
+  procEl.body().addEventListener('click', (e) => {
+    const btn = e.target.closest('.proc-copy');
+    if (!btn) return;
+    const text = btn.dataset.copy;
+    if (!text || !navigator.clipboard || !navigator.clipboard.writeText) return;
+    navigator.clipboard.writeText(text).then(
+      () => flashCopied(btn),
+      () => { /* clipboard write rejected; nothing to recover from here */ });
+  });
+}
+
 let procMounted = false;
 
 // Everything that makes the panel visible and interactive, exactly once.
@@ -205,6 +312,8 @@ function mountPanel() {
     localStorage.setItem(PROC_COLLAPSED_KEY, collapsed ? '0' : '1');
     applyProcCollapsed();
   });
+
+  installCopyDelegation();
 
   if (typeof window.renderOwnPRs === 'function' && !window.renderOwnPRs.__procWrapped) {
     const inner = window.renderOwnPRs;

@@ -573,6 +573,13 @@ html, body {
 .proc-noticket { font-size: 10px; opacity: .55; margin-left: 6px; }
 .proc-detail { opacity: .7; font-size: 11px; }
 .proc-detail code { font-size: 10px; opacity: .8; }
+.proc-subtitle { display: inline-block; opacity: .85; font-size: 11.5px; margin-top: 1px; }
+.proc-chip { background: rgba(127,127,127,.14); border: 1px solid transparent;
+  border-radius: 4px; padding: 1px 6px; font: inherit; font-size: 11px;
+  color: inherit; cursor: pointer; }
+.proc-chip:hover { background: rgba(127,127,127,.26); }
+.proc-chip.copied { color: var(--green, #3fb950); }
+a.proc-chip { text-decoration: none; }
 @media (max-width: 680px) { .proc-row { grid-template-columns: 70px 1fr; } }
 
 /* ── Layout ── */
