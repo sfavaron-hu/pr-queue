@@ -45,9 +45,11 @@ function parseAgents(stdout) {
 // Scans a transcript tail backwards. Records are one JSON object per line;
 // the first line is usually truncated by the 64KB read and must be tolerated.
 // Trailing ai-title/mode/permission-mode records have no timestamp — skipping
-// them is the whole reason we do not use the file's mtime.
+// them is the whole reason we do not use the file's mtime. The ai-title record
+// itself never carries a timestamp either, so "newest wins" just means the
+// first one hit while scanning backwards (the transcript is append-only).
 function parseTranscriptTail(text) {
-  const out = { lastTs: null, lastCwd: null, prLink: null };
+  const out = { lastTs: null, lastCwd: null, prLink: null, aiTitle: null };
   const lines = String(text).split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
@@ -62,9 +64,40 @@ function parseTranscriptTail(text) {
     if (out.prLink === null && o.type === 'pr-link' && o.prNumber) {
       out.prLink = { number: o.prNumber, repo: o.prRepository || null, url: o.prUrl || null };
     }
-    if (out.lastTs !== null && out.lastCwd !== null && out.prLink !== null) break;
+    if (out.aiTitle === null && o.type === 'ai-title' && o.aiTitle) {
+      out.aiTitle = o.aiTitle;
+    }
+    if (out.lastTs !== null && out.lastCwd !== null && out.prLink !== null && out.aiTitle !== null) break;
   }
   return out;
 }
 
-module.exports = { parseWorktrees, parseStatusShort, parseAgents, parseTranscriptTail };
+// Parses `git log -1 --format=%ct%x00%s` output: epoch seconds and the
+// subject, split on the FIRST NUL only — a commit subject can itself contain
+// anything (including more NULs, in theory) so it must never be assumed
+// non-empty or NUL-free.
+function parseLastCommitLog(stdout) {
+  const raw = String(stdout).trim();
+  const sep = raw.indexOf('\0');
+  const secsStr = sep === -1 ? raw : raw.slice(0, sep);
+  const subject = sep === -1 ? '' : raw.slice(sep + 1);
+  return { ts: secsStr ? Number(secsStr) * 1000 : null, subject: subject || null };
+}
+
+// Parses `owner/name` out of a real `git remote get-url origin` value. Handles
+// the SSH form (git@github.com:Owner/Repo.git) and the HTTPS form
+// (https://github.com/Owner/Repo.git), each with or without the `.git`
+// suffix. Anything else — missing remote, non-GitHub host, unparseable text —
+// returns null rather than guessing.
+function parseGithubSlug(remoteUrl) {
+  const s = String(remoteUrl || '').trim();
+  if (!s) return null;
+  let m = s.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/);
+  if (m) return `${m[1]}/${m[2]}`;
+  m = s.match(/^https?:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/);
+  if (m) return `${m[1]}/${m[2]}`;
+  return null;
+}
+
+module.exports = { parseWorktrees, parseStatusShort, parseAgents, parseTranscriptTail,
+                    parseGithubSlug, parseLastCommitLog };

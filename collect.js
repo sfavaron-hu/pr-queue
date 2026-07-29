@@ -2,7 +2,7 @@
 // real workspace; bin/collect.js supplies the real implementations.
 const nodePath = require('node:path');
 const { parseWorktrees, parseStatusShort, parseAgents,
-        parseTranscriptTail } = require('./collect-parse.js');
+        parseTranscriptTail, parseGithubSlug, parseLastCommitLog } = require('./collect-parse.js');
 const { resolveWorkspaceRoot, resolveClaudeDir, pickBaseBranch } = require('./collect-paths.js');
 const { groupProcesses, attachSessions } = require('./classify.js');
 
@@ -40,9 +40,20 @@ async function collectRepo(repo, repoPath, run, warn) {
     ? worktrees.filter(wt => wt.branch !== base)
     : worktrees;
 
+  // One `git remote` call per repo, not per worktree — shared across every row
+  // below. A missing/non-GitHub/unparseable remote never aborts the repo.
+  let githubRepo = null;
+  try {
+    const remoteUrl = (await run('git', ['remote', 'get-url', 'origin'], repoPath)).trim();
+    githubRepo = parseGithubSlug(remoteUrl);
+  } catch (e) {
+    warn(repo, 'githubRemote', e.message);
+  }
+
   return Promise.all(active.map(async (wt) => {
     const row = { repo, path: wt.path, branch: wt.branch, detached: wt.detached,
-                  prunable: wt.prunable, dirty: null, unpushed: null, lastCommit: null };
+                  prunable: wt.prunable, dirty: null, unpushed: null, lastCommit: null,
+                  lastCommitSubject: null, githubRepo, baseBranch: base };
     // A prunable worktree's directory is gone — running git in it would just fail.
     if (wt.prunable) return row;
 
@@ -51,8 +62,10 @@ async function collectRepo(repo, repoPath, run, warn) {
     } catch (e) { warn(repo, 'status', e.message); }
 
     try {
-      const secs = (await run('git', ['log', '-1', '--format=%ct'], wt.path)).trim();
-      if (secs) row.lastCommit = Number(secs) * 1000;
+      const raw = await run('git', ['log', '-1', '--format=%ct%x00%s'], wt.path);
+      const { ts, subject } = parseLastCommitLog(raw);
+      row.lastCommit = ts;
+      row.lastCommitSubject = subject;
     } catch (e) { warn(repo, 'lastCommit', e.message); }
 
     if (base && wt.branch) {
@@ -99,7 +112,7 @@ async function collectSessions(agents, claudeDir, deps, warn) {
     const base = {
       sessionId: a.sessionId, name: a.name, kind: a.kind, status: a.status,
       cwd: a.cwd, lastActivity: a.startedAt, prLink: null, branch: null,
-      resumeCmd: `claude --resume ${a.sessionId}`,
+      aiTitle: null, resumeCmd: `claude --resume ${a.sessionId}`,
     };
 
     const file = index.get(a.sessionId);
@@ -113,12 +126,13 @@ async function collectSessions(agents, claudeDir, deps, warn) {
       return base;
     }
 
-    const { lastTs, lastCwd, prLink } = parseTranscriptTail(tail);
+    const { lastTs, lastCwd, prLink, aiTitle } = parseTranscriptTail(tail);
     return Object.assign(base, {
       // NEVER the file mtime: bookkeeping records bump it by hours or days.
       lastActivity: lastTs !== null ? lastTs : a.startedAt,
       cwd: lastCwd || a.cwd,
       prLink,
+      aiTitle,
     });
   }));
 }

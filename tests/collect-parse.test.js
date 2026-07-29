@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { parseWorktrees, parseStatusShort, parseAgents,
-        parseTranscriptTail } = require('../collect-parse.js');
+        parseTranscriptTail, parseGithubSlug, parseLastCommitLog } = require('../collect-parse.js');
 
 const WORKTREE_FIXTURE = `worktree /w/humand-web
 HEAD 5552c1c23d5ab2a22bfd9c5cd9da130e8b86adfb
@@ -119,5 +119,97 @@ test('parseTranscriptTail survives a truncated first line', () => {
 });
 
 test('parseTranscriptTail returns nulls for empty input', () => {
-  assert.deepEqual(parseTranscriptTail(''), { lastTs: null, lastCwd: null, prLink: null });
+  assert.deepEqual(parseTranscriptTail(''),
+    { lastTs: null, lastCwd: null, prLink: null, aiTitle: null });
+});
+
+// Real ai-title records carry no timestamp at all — this is the shape that
+// actually ships, not a hypothetical.
+test('parseTranscriptTail extracts aiTitle from a timestamp-less ai-title record', () => {
+  const text = [
+    JSON.stringify({ type: 'user', cwd: '/w', timestamp: '2026-07-28T13:00:00.000Z' }),
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Review GitHub pull request 133 adversarially',
+      sessionId: 'abc' }),
+  ].join('\n');
+  assert.equal(parseTranscriptTail(text).aiTitle,
+    'Review GitHub pull request 133 adversarially');
+});
+
+test('parseTranscriptTail returns null aiTitle when the tail has no ai-title record', () => {
+  const text = [
+    JSON.stringify({ type: 'user', cwd: '/w', timestamp: '2026-07-28T13:00:00.000Z' }),
+    JSON.stringify({ type: 'system', timestamp: '2026-07-28T13:01:00.000Z' }),
+  ].join('\n');
+  assert.equal(parseTranscriptTail(text).aiTitle, null);
+});
+
+test('parseTranscriptTail keeps the newest ai-title when several are present', () => {
+  // Scanning backwards, the last one written (bottom of file) must win.
+  const text = [
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Older title' }),
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Newer title' }),
+  ].join('\n');
+  assert.equal(parseTranscriptTail(text).aiTitle, 'Newer title');
+});
+
+test('parseGithubSlug parses the SSH remote form', () => {
+  assert.equal(parseGithubSlug('git@github.com:HumandDev/humand-web.git'),
+    'HumandDev/humand-web');
+});
+
+test('parseGithubSlug parses the SSH remote form without .git', () => {
+  assert.equal(parseGithubSlug('git@github.com:HumandDev/humand-web'),
+    'HumandDev/humand-web');
+});
+
+test('parseGithubSlug parses the HTTPS remote form', () => {
+  assert.equal(parseGithubSlug('https://github.com/HumandDev/humand-web.git'),
+    'HumandDev/humand-web');
+});
+
+test('parseGithubSlug parses the HTTPS remote form without .git', () => {
+  assert.equal(parseGithubSlug('https://github.com/HumandDev/humand-web'),
+    'HumandDev/humand-web');
+});
+
+test('parseGithubSlug returns null for a non-GitHub host', () => {
+  assert.equal(parseGithubSlug('git@gitlab.com:HumandDev/humand-web.git'), null);
+  assert.equal(parseGithubSlug('https://gitlab.com/HumandDev/humand-web'), null);
+});
+
+test('parseGithubSlug returns null for an empty string', () => {
+  assert.equal(parseGithubSlug(''), null);
+});
+
+test('parseGithubSlug returns null for garbage input', () => {
+  assert.equal(parseGithubSlug('not a remote url at all'), null);
+});
+
+test('parseLastCommitLog splits epoch seconds and subject on the first NUL', () => {
+  const out = parseLastCommitLog('1784830161\x00chore(test): instrument sources for E2E coverage');
+  assert.equal(out.ts, 1784830161000);
+  assert.equal(out.subject, 'chore(test): instrument sources for E2E coverage');
+});
+
+test('parseLastCommitLog keeps a subject containing a literal %', () => {
+  const out = parseLastCommitLog('1700000000\x00fix: bump coverage to 100% on module');
+  assert.equal(out.subject, 'fix: bump coverage to 100% on module');
+});
+
+test('parseLastCommitLog splits on the FIRST NUL only, tolerating one in the subject', () => {
+  const out = parseLastCommitLog('1700000000\x00weird\x00subject');
+  assert.equal(out.ts, 1700000000000);
+  assert.equal(out.subject, 'weird\x00subject');
+});
+
+test('parseLastCommitLog returns a null subject when the subject is empty', () => {
+  const out = parseLastCommitLog('1700000000\x00');
+  assert.equal(out.ts, 1700000000000);
+  assert.equal(out.subject, null);
+});
+
+test('parseLastCommitLog returns nulls for empty input', () => {
+  const out = parseLastCommitLog('');
+  assert.equal(out.ts, null);
+  assert.equal(out.subject, null);
 });

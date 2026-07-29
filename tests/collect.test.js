@@ -16,7 +16,7 @@ function harness(over) {
       JSON.stringify({ type: 'pr-link', prNumber: 9294, prRepository: 'HumandDev/humand-web',
                        prUrl: 'https://github.com/HumandDev/humand-web/pull/9294',
                        timestamp: new Date(NOW - 7200000).toISOString() }),
-      JSON.stringify({ type: 'ai-title' }),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Review GitHub pull request 133 adversarially' }),
     ].join('\n'),
     run: async (cmd, args) => {
       calls.push([cmd, args.join(' ')]);
@@ -30,8 +30,9 @@ function harness(over) {
       }
       if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
       if (a.startsWith('status')) return ' M src/a.ts\n';
-      if (a.includes('log -1')) return String(Math.floor((NOW - 3600000) / 1000));
+      if (a.includes('log -1')) return Math.floor((NOW - 3600000) / 1000) + '\x00chore: do the thing';
       if (a.includes('rev-list')) return '2';
+      if (a.includes('remote get-url')) return 'git@github.com:HumandDev/humand-web.git\n';
       return '';
     },
   };
@@ -310,4 +311,46 @@ test('collect never fails closed when the workspace root cannot be read (e.g. a 
   // session since there are no worktrees left to attach it to.
   assert.equal(out.looseSessions.length, 1);
   assert.equal(out.looseSessions[0].sessionId, 's1');
+});
+
+test('collect carries aiTitle through onto the session', async () => {
+  const { opts } = harness();
+  const [p] = (await collect(opts)).processes;
+  assert.equal(p.sessions[0].aiTitle, 'Review GitHub pull request 133 adversarially');
+});
+
+test('collect puts lastCommitSubject, githubRepo, and baseBranch on the worktree row', async () => {
+  const { opts } = harness();
+  const [p] = (await collect(opts)).processes;
+  const wt = p.worktrees[0];
+  assert.equal(wt.lastCommitSubject, 'chore: do the thing');
+  assert.equal(wt.githubRepo, 'HumandDev/humand-web');
+  assert.equal(wt.baseBranch, 'develop');
+});
+
+test('collect records a warning and sets githubRepo null when git remote throws', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') {
+        return JSON.stringify([{ pid: 1, cwd: '/w/humand-web', kind: 'interactive',
+          startedAt: NOW - 1000, sessionId: 's1', name: 'humand-09', status: 'idle' }]);
+      }
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/feat/SQSH-3851-web-ai\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('rev-list')) return '0';
+      if (a.includes('remote get-url')) throw new Error('No such remote origin');
+      return '';
+    },
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.githubRepo, null);
+  assert.ok(out.warnings.some(w => w.repo === 'humand-web' && w.step === 'githubRemote'));
+  // The run still succeeds end-to-end despite the failed remote lookup.
+  assert.equal(out.processes.length, 1);
 });
