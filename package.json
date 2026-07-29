@@ -1,0 +1,11 @@
+{
+  "name": "pr-queue",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PR review queue dashboard + local active-processes panel",
+  "scripts": {
+    "test": "node --test",
+    "serve": "node serve.js",
+    "collect": "node bin/collect.js"
+  }
+}
