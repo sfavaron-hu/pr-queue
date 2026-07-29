@@ -553,6 +553,28 @@ html, body {
   line-height: 1.5;
 }
 
+.proc-section { margin-bottom: 16px; }
+.proc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.proc-toggle { background: none; border: 0; color: inherit; font: inherit;
+  cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 0; }
+.proc-meta { font-size: 11px; opacity: .6; margin-left: auto; }
+.proc-body { display: grid; gap: 6px; }
+.proc-body.hidden { display: none; }
+.proc-row { display: grid; grid-template-columns: 90px 1fr auto;
+  gap: 10px; align-items: center; padding: 8px 10px; border-radius: 6px;
+  background: rgba(127,127,127,.06); font-size: 12px; }
+.proc-state { font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; padding: 2px 6px; border-radius: 4px; text-align: center; }
+.proc-state.turno     { background: #d73a49; color: #fff; }
+.proc-state.esperando { background: #dbab09; color: #1b1f23; }
+.proc-state.pausa     { background: rgba(127,127,127,.45); }
+.proc-state.frio      { background: rgba(127,127,127,.25); }
+.proc-key { font-weight: 600; }
+.proc-noticket { font-size: 10px; opacity: .55; margin-left: 6px; }
+.proc-detail { opacity: .7; font-size: 11px; }
+.proc-detail code { font-size: 10px; opacity: .8; }
+@media (max-width: 680px) { .proc-row { grid-template-columns: 70px 1fr; } }
+
 /* ── Layout ── */
 .main-layout {
   display: grid;
@@ -728,6 +750,17 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
     </div>
   </div>
 
+  <div class="proc-section" id="proc-section" style="display:none">
+    <div class="proc-header">
+      <button type="button" class="proc-toggle" id="proc-toggle">
+        <span id="proc-caret">▾</span> Procesos activos
+        <span class="count-badge" id="proc-count"></span>
+      </button>
+      <span class="proc-meta" id="proc-meta"></span>
+    </div>
+    <div class="proc-body" id="proc-body"></div>
+  </div>
+
   <div class="main-layout">
   <div class="tribe-column">
 
@@ -789,6 +822,8 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
 <script src="state.js"></script>
 <script src="github.js"></script>
 <script src="score.js"></script>
+<script src="classify.js"></script>
 <script src="render.js"></script>
 <script src="app.js"></script>
+<script src="local.js"></script>
 

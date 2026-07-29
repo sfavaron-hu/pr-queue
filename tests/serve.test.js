@@ -31,7 +31,10 @@ test('serves index.html at the root', async () => {
   const res = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /text\/html/);
-  assert.match(await res.text(), /<script src="state\.js">/);
+  const body = await res.text();
+  assert.match(body, /<script src="state\.js">/);
+  assert.match(body, /<script src="classify\.js">/);
+  assert.match(body, /<script src="local\.js">/);
   server.close();
 });
 
