@@ -162,6 +162,23 @@ Deliverable: a README section covering `node serve.js`, the two env vars, the op
 
 The panel self-hiding on Pages is what makes this safe to share: the same `main` serves both audiences, and a teammate who never runs the sidecar sees no change at all.
 
+### 8. Recall and actionability (follow-up increment)
+
+Using the finished panel surfaced two gaps that only appear once you look at 28 real rows.
+
+**A ticket number is not a memory.** `SQSH-3954` tells you nothing about what it was. Each row gets a **context subtitle**: the first available of the PR title, the session's `aiTitle`, or the last commit's subject. All three are free — `enrichOwnPR` already returns `title`; Claude Code writes an `aiTitle` record into the transcript tail this collector already reads (observed: *"Review GitHub pull request 133 adversarially"*, *"E2E test coverage mapping for multiple modules"*); and `git log -1` already runs, so `--format=%ct%x00%s` adds a subject at no cost.
+
+**Rows with neither a session nor a PR had nothing to act on.** Every row now ends in an actionable chain, first applicable wins but several can show at once:
+
+1. the PR link, when one joined
+2. otherwise a **GitHub compare link** — `https://github.com/<owner>/<repo>/compare/<base>...<branch>` — which needs `owner/repo` parsed from `git remote get-url origin` (one call per repo, ~16 here) and the base branch already derived for the unpushed count. This doubles as the shortcut to *open* the PR, since GitHub's compare page carries the create-PR button.
+3. `claude --resume <id>` when a session is attached
+4. a copy-able `cd <path>` for the worktree
+
+Degenerate cases get the actionable that actually applies: a **prunable** worktree has no directory to `cd` into, so it offers `git worktree prune` instead; a **detached** worktree has no branch, so it gets no compare link.
+
+Row shape becomes three lines: identity, context subtitle, actionables. `localhost` is a secure context, so click-to-copy via `navigator.clipboard` works for the command chips.
+
 ### Accepted redundancy
 
 A process card and the "Mis PRs" column will both show the same open PR. Accepted for v1: folding "Mis PRs" into the panel is a larger, riskier change, and keeping it means this one is purely additive and can be reverted by deleting one script tag. If the panel proves to be the better view, that merge is a follow-up.
