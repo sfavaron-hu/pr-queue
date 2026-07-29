@@ -1,5 +1,11 @@
 // Pure parsers for local command output. No IO, no dependencies.
 
+// safeHttpUrl lives in classify.js — the one file already shared by both the
+// browser (local.js) and Node (this file) runtimes — so the scheme-allowlist
+// security control has exactly one implementation. Re-exported below so
+// existing tests can keep importing it from here.
+const { safeHttpUrl } = require('./classify.js');
+
 function parseWorktrees(stdout) {
   const out = [];
   let cur = null;
@@ -82,24 +88,6 @@ function parseLastCommitLog(stdout) {
   const secsStr = sep === -1 ? raw : raw.slice(0, sep);
   const subject = sep === -1 ? '' : raw.slice(sep + 1);
   return { ts: secsStr ? Number(secsStr) * 1000 : null, subject: subject || null };
-}
-
-// Allowlists a URL's scheme to http/https, rejecting everything else —
-// `javascript:`, `data:`, `vbscript:`, `file:`, protocol-relative `//host`,
-// and any scheme-confusion trick (leading whitespace, embedded tabs/newlines,
-// mixed case) that a hand-rolled regex or `startsWith` denylist would miss.
-// `new URL()` does the real scheme parsing; a relative/protocol-relative
-// value has no scheme to resolve without a base and throws, which lands in
-// the catch and is rejected too. Returns the value unchanged (not a re-
-// serialized URL) so callers get back exactly what they passed in.
-function safeHttpUrl(value) {
-  if (typeof value !== 'string' || value === '') return null;
-  try {
-    const u = new URL(value);
-    return (u.protocol === 'http:' || u.protocol === 'https:') ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 // Parses `owner/name` out of a real `git remote get-url origin` value. Handles

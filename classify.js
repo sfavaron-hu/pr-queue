@@ -138,6 +138,29 @@ function classify(proc, prs, now) {
   return (now - last > COLD_MS) ? 'frio' : 'pausa';
 }
 
+// Allowlists a URL's scheme to http/https, rejecting everything else —
+// `javascript:`, `data:`, `vbscript:`, `file:`, protocol-relative `//host`,
+// and any scheme-confusion trick (leading whitespace, embedded tabs/newlines,
+// mixed case) that a hand-rolled regex or `startsWith` denylist would miss.
+// `new URL()` does the real scheme parsing; a relative/protocol-relative
+// value has no scheme to resolve without a base and throws, which lands in
+// the catch and is rejected too. Returns the value unchanged (not a re-
+// serialized URL) so callers get back exactly what they passed in.
+//
+// Shared here (not in collect-parse.js or local.js) because it is a security
+// control applied at two boundaries — a hostile `prUrl` entering the payload
+// in collect-parse.js, and every href the renderer trusts in local.js — and
+// classify.js is the one file already loaded by both runtimes.
+function safeHttpUrl(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  try {
+    var u = new URL(value);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? value : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 var STATE_ORDER = { turno: 0, esperando: 1, pausa: 2, frio: 3 };
 
 function sortProcesses(rows, now) {
@@ -160,5 +183,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { COLD_DAYS: COLD_DAYS, extractTicket: extractTicket,
                      processKey: processKey, groupProcesses: groupProcesses,
                      attachSessions: attachSessions, lastActivity: lastActivity,
-                     classify: classify, sortProcesses: sortProcesses };
+                     classify: classify, sortProcesses: sortProcesses,
+                     safeHttpUrl: safeHttpUrl };
 }

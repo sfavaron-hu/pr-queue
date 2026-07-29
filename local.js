@@ -16,26 +16,14 @@ const procEl = {
   toggle:  () => document.getElementById('proc-toggle'),
 };
 
-// Same allowlist as collect-parse.js's safeHttpUrl, duplicated here rather
-// than shared: local.js is a plain browser script (no modules, no build
-// step) and collect-parse.js is CommonJS, so there is no import path between
-// them. Every href in this file is untrusted — it comes from the payload
-// (which already ran a `prUrl` through the parser's own copy) or from
-// state.ownPRs (GitHub API data), or is built by string interpolation of
-// repo/branch names — so this file re-checks all three rather than trusting
-// upstream validation or a currently-safe hardcoded prefix to stay that way.
-// `new URL()` does real scheme parsing (case, whitespace, embedded control
-// chars); a protocol-relative value like `//evil.com/x` has no scheme to
-// resolve without a base and throws, landing in the catch as rejected too.
-function safeHttpUrl(value) {
-  if (typeof value !== 'string' || value === '') return null;
-  try {
-    const u = new URL(value);
-    return (u.protocol === 'http:' || u.protocol === 'https:') ? value : null;
-  } catch {
-    return null;
-  }
-}
+// safeHttpUrl is defined as a global by classify.js (loaded before this file
+// in index.html) — the one shared home for logic used by both the browser
+// and Node runtimes. Every href in this file is untrusted — it comes from
+// the payload (which already ran a `prUrl` through the parser's copy of the
+// same shared function) or from state.ownPRs (GitHub API data), or is built
+// by string interpolation of repo/branch names — so this file re-checks all
+// three rather than trusting upstream validation or a currently-safe
+// hardcoded prefix to stay that way.
 
 // An anchor when the url passes the allowlist, otherwise the label rendered
 // as plain escaped text with no `<a>` at all — the row keeps its information
