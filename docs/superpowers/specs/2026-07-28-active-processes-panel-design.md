@@ -181,9 +181,17 @@ Degenerate cases get the actionable that actually applies: a **prunable** worktr
 
 Row shape becomes three lines: identity, context subtitle, actionables. `localhost` is a secure context, so click-to-copy via `navigator.clipboard` works for the command chips.
 
-### Accepted redundancy
+### 9. One panel (supersedes the accepted redundancy)
 
-A process card and the "Mis PRs" column will both show the same open PR. Accepted for v1: folding "Mis PRs" into the panel is a larger, riskier change, and keeping it means this one is purely additive and can be reverted by deleting one script tag. If the panel proves to be the better view, that merge is a follow-up.
+The first version deliberately left the pre-existing "Mis PRs" column alone, so this change stayed purely additive and revertible by deleting one script tag. After using it, the duplication — the same PR in a process row and in the column — was the main complaint, so the panel now absorbs own PRs and the column is hidden **while the panel is mounted**. On Pages the panel never mounts, so the column is untouched for everyone else.
+
+- **PR-to-process attachment** is exact `headRef` match, then ticket match, then a synthetic process. The ticket fallback merges cases that were previously split: a PR on `feat/SQSH-3954-copy` and a worktree on `feat/SQSH-3954-web` are one ticket and belong in one row.
+- **Synthetic processes** carry the PR with no worktrees or sessions, marked `sin worktree local`. They need no classifier change: with `lastLocalActivity === null` the 48h window cannot fire, so they land in *Esperando* when unreviewed and in *pausa*/*frío* by the PR's `updatedAt`.
+- **Hiding the column must be done with a CSS class, not an inline style.** `loadOwnPRs` in `render.js` sets `ownColumn.style.display = ''` on every run, on a timer, so an inline hide silently reverts minutes later. A `body.proc-panel-active` class plus `display: none` and a `1fr` grid override survives it, because `render.js` only ever clears the *inline* value.
+- **The column must come back if the panel fails.** With the panel as the only view, a bug in it costs the user sight of their own PRs, so `unmountPanel()` removes the class. Verified live with a real token: sidecar up → column `display: none` with 10 PR cards inside it; same origin with the sidecar down → panel unmounted, class gone, grid back to two tracks, column `display: block` with those 10 cards visible.
+- Merged PRs from the last 3 days move into a compact section at the panel's foot, so hiding the column does not silently drop them.
+
+**Known gap:** if `state.ownPRs` is empty while a token is configured — `loadOwnPRs` catches every error silently and `enrichOwnPR` returns `null` per PR on failure — every row renders `sin PR`, which is actively wrong, and with the column hidden there is no fallback view. The panel should say that PR data is unavailable rather than implying there are no PRs.
 
 ## Testing
 
