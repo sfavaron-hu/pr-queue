@@ -13,7 +13,7 @@ Work is spread across many parallel "processes" — a Jira ticket (or a branch w
 
 - Writing local state anywhere off the machine (no gist, no commit, no shared endpoint).
 - Changing anything about how pr-queue behaves for other users on Pages.
-- Replacing the "Mis PRs" column. See *Accepted redundancy* below.
+- ~~Replacing the "Mis PRs" column.~~ Superseded — the panel now absorbs own PRs and hides the column while it is mounted. See §9.
 - Making Jira the source of truth. Processes without a ticket are first-class.
 
 ## Design
