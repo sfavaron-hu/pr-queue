@@ -122,40 +122,78 @@ function subtitleFor(p, prs) {
   return null;
 }
 
-// One compare link per distinct repo among the process's worktrees. A
-// detached worktree has no branch (no compare possible) and a prunable one
-// has no git detail at all — neither qualifies. Nor does a worktree missing
-// `githubRepo`/`baseBranch` (unparseable remote, or base branch unknown), or
-// an older cached payload that predates those fields entirely.
-function diffLinksFor(p) {
+// The set of "owner/repo" slugs (lowercased) that already have a joined PR
+// in this row. A PR carries `owner`/`repo` separately; a worktree carries
+// `githubRepo` as a single `owner/name` slug — comparing on the short `repo`
+// name alone would wrongly conflate two same-named repos under different
+// owners, so both sides are normalized to the same "owner/repo" basis.
+function prRepoSlugs(prs) {
+  const set = new Set();
+  (prs || []).forEach(pr => {
+    if (pr.owner && pr.repo) set.add(`${pr.owner}/${pr.repo}`.toLowerCase());
+  });
+  return set;
+}
+
+// One compare link per distinct repo among the process's worktrees, except
+// for a repo that already has a joined PR in this row: the PR link already
+// gets you there, and the one reason to keep `diff` alongside a PR — that
+// GitHub's compare page carries the create-PR button — no longer applies
+// once a PR exists. A process spanning two repos where only one has a PR
+// still gets `diff` for the other. A detached worktree has no branch (no
+// compare possible) and a prunable one has no git detail at all — neither
+// qualifies. Nor does a worktree missing `githubRepo`/`baseBranch`
+// (unparseable remote, or base branch unknown), or an older cached payload
+// that predates those fields entirely.
+function diffLinksFor(p, prs) {
   const seen = new Set();
   const links = [];
+  const prRepos = prRepoSlugs(prs);
   p.worktrees.forEach(w => {
     if (seen.has(w.repo) || w.detached || w.prunable) return;
     if (!w.githubRepo || !w.baseBranch || !w.branch) return;
     seen.add(w.repo);
+    if (prRepos.has(w.githubRepo.toLowerCase())) return;
     links.push({ repo: w.repo, url: `https://github.com/${w.githubRepo}/compare/${w.baseBranch}...${w.branch}` });
   });
   return links;
 }
 
-// A click-to-copy chip. `text` is the untrusted-ish command string; both the
-// visible label and the `data-copy` attribute go through esc(), since a
-// data- attribute is exactly the kind of interpolation this feature warns
-// about getting wrong.
-function copyChip(label, text) {
-  return `<button type="button" class="proc-chip proc-copy" data-copy="${esc(text)}" title="${esc(text)}">${escS(label)}</button>`;
+// A click-to-copy chip. `text` is the untrusted-ish command string copied to
+// the clipboard; both the visible label and the `data-copy` attribute go
+// through esc()/escS(), since a data- attribute is exactly the kind of
+// interpolation this feature warns about getting wrong. `title` defaults to
+// `text` (the existing chips just want the full command on hover) but a
+// caller can pass a richer tooltip — always still escaped here, not by the
+// caller.
+function copyChip(label, text, title) {
+  const t = title === undefined ? text : title;
+  return `<button type="button" class="proc-chip proc-copy" data-copy="${esc(text)}" title="${esc(t)}">${escS(label)}</button>`;
 }
 
-// `resume <session name>` per attached session, carrying its resumeCmd.
-// resumeCmd comes straight from the payload; fall back to building it from
-// sessionId for an older cached payload that predates the field, and skip a
-// session with neither rather than throw.
+// A normalized `resume` chip per attached session, carrying its resumeCmd.
+// The label stays short and stable — `resume` alone when the row has one
+// session, numbered `resume 1`, `resume 2`, … when it has several, so they
+// stay distinguishable without the real session name (which can be a full
+// sentence) ballooning the chip. That name and the session's status live in
+// the tooltip instead. resumeCmd comes straight from the payload; fall back
+// to building it from sessionId for an older cached payload that predates
+// the field, and skip a session with neither rather than throw.
 function sessionChips(p) {
-  return p.sessions.map(x => {
-    const cmd = x.resumeCmd || (x.sessionId ? `claude --resume ${x.sessionId}` : null);
-    return cmd ? copyChip(`resume ${sessionLabel(x)}`, cmd) : null;
-  }).filter(Boolean);
+  const withCmd = p.sessions
+    .map(x => {
+      const cmd = x.resumeCmd || (x.sessionId ? `claude --resume ${x.sessionId}` : null);
+      return cmd ? { x, cmd } : null;
+    })
+    .filter(Boolean);
+
+  return withCmd.map((item, i) => {
+    const label = withCmd.length > 1 ? `resume ${i + 1}` : 'resume';
+    const name = sessionLabel(item.x);
+    const status = item.x.status ? ` (${item.x.status})` : '';
+    const title = `${name}${status} — ${item.cmd}`;
+    return copyChip(label, item.cmd, title);
+  });
 }
 
 // `cd <path>` per worktree, or — for a prunable one, whose directory is
@@ -194,9 +232,10 @@ function procRowHTML(row, now, workspaceRoot) {
       (flags.length ? ` <span class="proc-detail">${esc(flags.join(' · '))}</span>` : ''));
   });
 
-  // A diff link is shown even when a PR already joined — it is a different
-  // view (and it is how you open a PR for a branch that has none yet).
-  const diffs = diffLinksFor(p);
+  // A diff link is suppressed for a repo that already has a joined PR in
+  // this row (see diffLinksFor) and shown otherwise — it is how you open a
+  // PR for a branch that has none yet.
+  const diffs = diffLinksFor(p, row.prs);
   diffs.forEach(d => {
     const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
     bits.push(safeLinkHTML(d.url, label, ' class="proc-chip" target="_blank"'));
