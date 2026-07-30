@@ -35,9 +35,68 @@ function safeLinkHTML(url, label, attrs) {
   return `<a href="${esc(safe)}"${attrs || ''}>${escS(label)}</a>`;
 }
 
-function procPRsFor(proc) {
-  const own = (typeof state !== 'undefined' && state.ownPRs) || [];
-  return own.filter(pr => pr.headRef && proc.branches.indexOf(pr.headRef) !== -1);
+// Attaches each PR in `ownPRs` to at most one process: an exact `headRef`
+// match against `proc.branches` wins if one exists; failing that, the first
+// process (in payload order) whose `ticket` equals the PR's extracted ticket,
+// provided both are non-null. This is what merges a PR on
+// `feat/SQSH-3954-copy` into the same row as a worktree on
+// `feat/SQSH-3954-web` — same ticket, one process — while still preferring
+// the precise branch match when one exists. Two passes over `ownPRs`, not
+// one, so an exact match anywhere always outranks a ticket match anywhere,
+// matching the priority order the spec calls for. Returns the per-process PR
+// lists alongside whatever PR matched nothing, for synthesizeProcesses() to
+// turn into rows of its own.
+function attachOwnPRs(processes, ownPRs) {
+  const rows = processes.map(proc => ({ proc, prs: [] }));
+  const afterExact = [];
+  const unmatched = [];
+
+  ownPRs.forEach(pr => {
+    const row = pr.headRef ? rows.find(r => r.proc.branches.indexOf(pr.headRef) !== -1) : null;
+    if (row) row.prs.push(pr);
+    else afterExact.push(pr);
+  });
+
+  afterExact.forEach(pr => {
+    const ticket = pr.headRef ? extractTicket(pr.headRef) : null;
+    const row = ticket ? rows.find(r => r.proc.ticket && r.proc.ticket === ticket) : null;
+    if (row) row.prs.push(pr);
+    else unmatched.push(pr);
+  });
+
+  return { rows, unmatched };
+}
+
+// One synthetic process per distinct ticket (or, lacking a ticket, per
+// branch) among PRs that attachOwnPRs() matched nowhere — a PR pushed
+// straight to GitHub with no local worktree still gets a row instead of
+// vanishing along with the "Mis PRs" column it used to live in.
+// `worktrees`/`sessions` stay empty and `lastLocalActivity` stays null, which
+// is what keeps this out of the 48h own-activity window: classify() falls
+// straight through turno's local-activity check to the PR-driven
+// esperando/pausa/frío branches, so no classifier change is needed. `ticket`
+// mirrors a real process's shape (non-null only when one was found) so
+// downstream code (the "sin ticket" badge) treats it identically. `synthetic`
+// is the marker procRowHTML uses to print "sin worktree local" in place of
+// the (necessarily empty) repo list. Two PRs that resolve to the same key
+// share one process, both attached to it.
+function synthesizeProcesses(unmatchedPRs) {
+  const map = new Map();
+  unmatchedPRs.forEach(pr => {
+    const ticket = pr.headRef ? extractTicket(pr.headRef) : null;
+    const key = ticket || pr.headRef;
+    if (!map.has(key)) {
+      map.set(key, {
+        proc: { key: key, ticket: ticket || null, branches: [], worktrees: [],
+                sessions: [], lastLocalActivity: null, synthetic: true },
+        prs: [],
+      });
+    }
+    const row = map.get(key);
+    if (pr.headRef && row.proc.branches.indexOf(pr.headRef) === -1) row.proc.branches.push(pr.headRef);
+    row.prs.push(pr);
+  });
+  return Array.from(map.values());
 }
 
 // A session whose cwd resolved to no worktree can still be placed if its
@@ -272,12 +331,27 @@ function procRowHTML(row, now, workspaceRoot) {
     <span class="proc-state ${s}">${procStateLabel(s)}</span>
     <span>
       <span class="proc-key">${esc(p.key)}</span>${p.ticket ? '' : '<span class="proc-noticket">sin ticket</span>'}
-      ${repos ? `<span class="proc-detail"> · ${esc(repos)}</span>` : ''}
+      ${repos ? `<span class="proc-detail"> · ${esc(repos)}</span>`
+        : (p.synthetic ? '<span class="proc-detail"> · sin worktree local</span>' : '')}
       ${subtitle ? `<br><span class="proc-subtitle">${escS(subtitle)}</span>` : ''}
       <br>${bits.join(' · ') || '<span class="proc-detail">sin PR</span>'}
     </span>
     <span class="proc-detail">${last ? timeAgo(new Date(last)) : '—'}</span>
   </div>`;
+}
+
+// Compact "Mergeados" footer: state.mergedPRs (recent-3-day merges, populated
+// by loadOwnPRs in render.js) has nowhere to go once #own-column is hidden —
+// this reproduces just enough of it, one short line per PR, so hiding the
+// column doesn't silently drop it. Deliberately not part of the process list
+// or the state counts computed below: a merged PR is finished work, not
+// something waiting on a decision.
+function mergedSectionHTML(mergedPRs) {
+  if (!mergedPRs || !mergedPRs.length) return '';
+  const rows = mergedPRs.map(pr =>
+    `<div class="proc-merged-row">${safeLinkHTML(pr.url, '#' + pr.number, ' target="_blank"')} <span class="proc-detail">${escS(pr.repo)}</span></div>`
+  ).join('');
+  return `<div class="proc-merged"><div class="proc-merged-heading">Mergeados</div>${rows}</div>`;
 }
 
 function renderLocalPanel() {
@@ -286,14 +360,19 @@ function renderLocalPanel() {
 
   const now = Date.now();
   mergeLooseSessions(payload);
-  const rows = payload.processes.map(proc => ({ proc, prs: procPRsFor(proc) }));
-  const sorted = sortProcesses(rows, now);
+
+  const ownPRs = (typeof state !== 'undefined' && state.ownPRs) || [];
+  const { rows, unmatched } = attachOwnPRs(payload.processes, ownPRs);
+  const allRows = rows.concat(synthesizeProcesses(unmatched));
+  const sorted = sortProcesses(allRows, now);
 
   // Build the entire body first. If anything here throws, nothing has been
   // mutated yet — the section stays exactly as it was (hidden, or showing the
   // previous good paint) instead of a half-built header with no body.
+  const mergedPRs = (typeof state !== 'undefined' && state.mergedPRs) || [];
   const bodyHTML = sorted.map(r => procRowHTML(r, now, payload.workspaceRoot)).join('')
-    + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '');
+    + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '')
+    + mergedSectionHTML(mergedPRs);
 
   const states = sorted.map(r => classify(r.proc, r.prs, now));
   const count = s => states.filter(x => x === s).length;
@@ -315,6 +394,13 @@ function renderLocalPanel() {
   procEl.meta().title = warn.length
     ? warn.map(w => `${w.repo ? w.repo + ': ' : ''}${w.step}: ${w.message}`).join('\n')
     : '';
+  // The panel absorbs "Mis PRs" while it's mounted, so the column and its
+  // 2fr/1fr grid slot need to go — as a body class, not an inline style on
+  // #own-column, because loadOwnPRs() in render.js clears any inline display
+  // on #own-column on every one of its own timer-driven runs. A class on
+  // <body> is untouched by that and keeps winning via the CSS rule in
+  // index.html.
+  document.body.classList.add('proc-panel-active');
   procEl.section().style.display = '';
 }
 
@@ -394,6 +480,11 @@ function unmountPanel() {
   procEl.count().textContent = '';
   procEl.meta().textContent = '';
   procEl.section().style.display = 'none';
+  // Mirrors the class added in renderLocalPanel(): the throw-safety wrapper
+  // (mountPanelSafely) and the sidecar-gone path in initLocalPanel() both
+  // route here, so either one restores "Mis PRs" and the two-column grid —
+  // a bug in this file must never cost the user sight of their own PRs.
+  document.body.classList.remove('proc-panel-active');
 }
 
 // mountPanel() can throw mid-build (e.g. a malformed row). Never let that

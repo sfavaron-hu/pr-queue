@@ -582,6 +582,11 @@ html, body {
 a.proc-chip { text-decoration: none; }
 @media (max-width: 680px) { .proc-row { grid-template-columns: 70px 1fr; } }
 
+.proc-merged { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(127,127,127,.15); }
+.proc-merged-heading { font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; opacity: .6; margin-bottom: 4px; }
+.proc-merged-row { font-size: 11px; opacity: .8; padding: 2px 0; }
+
 /* ── Layout ── */
 .main-layout {
   display: grid;
@@ -590,6 +595,14 @@ a.proc-chip { text-decoration: none; }
   align-items: start;
 }
 @media (max-width: 680px) { .main-layout { grid-template-columns: 1fr; } }
+
+/* The active-processes panel absorbs "Mis PRs" while mounted: the column
+   disappears and the queue reclaims its slot in the grid. Class-based (not
+   inline styles from local.js) because render.js's loadOwnPRs() clears any
+   inline display on #own-column on its own timer — a class on <body> is
+   untouched by that and keeps winning. */
+body.proc-panel-active .own-column { display: none; }
+body.proc-panel-active .main-layout { grid-template-columns: 1fr; }
 
 /* ── Own PRs panel ── */
 .own-column-header {
