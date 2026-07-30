@@ -272,7 +272,18 @@ function worktreeChip(w, workspaceRoot, multi) {
   return copyChip(`cd${repoLabel} ⎘`, `cd ${w.path}`);
 }
 
-function procRowHTML(row, now, workspaceRoot) {
+// A soft first-person notice, never phrased as an accusation against GitHub:
+// state.ownPRs can legitimately end up empty while a token is configured
+// (loadOwnPRs in render.js skips while the tab is hidden, and silently
+// swallows fetch/enrichment failures) — that must never be confused with a
+// user who has a token and genuinely has zero open PRs, so the panel is
+// conservative and treats "token present, zero PRs" as unavailable data
+// rather than trying to tell the two apart from ownPRs.length alone.
+function prNoticeHTML() {
+  return `<div class="proc-notice">No pude cargar el estado de los PRs — puede haber PRs abiertos sin reflejar en esta vista.</div>`;
+}
+
+function procRowHTML(row, now, workspaceRoot, prDataUnavailable) {
   const p = row.proc;
   const s = classify(p, row.prs, now);
   const last = lastActivity(p, row.prs);
@@ -334,7 +345,8 @@ function procRowHTML(row, now, workspaceRoot) {
       ${repos ? `<span class="proc-detail"> · ${esc(repos)}</span>`
         : (p.synthetic ? '<span class="proc-detail"> · sin worktree local</span>' : '')}
       ${subtitle ? `<br><span class="proc-subtitle">${escS(subtitle)}</span>` : ''}
-      <br>${bits.join(' · ') || '<span class="proc-detail">sin PR</span>'}
+      <br>${bits.join(' · ') ||
+        (prDataUnavailable ? '<span class="proc-detail">PR: —</span>' : '<span class="proc-detail">sin PR</span>')}
     </span>
     <span class="proc-detail">${last ? timeAgo(new Date(last)) : '—'}</span>
   </div>`;
@@ -362,6 +374,12 @@ function renderLocalPanel() {
   mergeLooseSessions(payload);
 
   const ownPRs = (typeof state !== 'undefined' && state.ownPRs) || [];
+  // "sin PR" is only honest when the panel has no token at all — it genuinely
+  // cannot know, and nobody asked it to. A token with zero PRs is ambiguous
+  // (real, or loadOwnPRs failed/skipped silently) and is treated as
+  // unavailable data rather than an empty result; see prNoticeHTML().
+  const tokenConfigured = typeof state !== 'undefined' && !!state.token;
+  const prDataUnavailable = tokenConfigured && ownPRs.length === 0;
   const { rows, unmatched } = attachOwnPRs(payload.processes, ownPRs);
   const allRows = rows.concat(synthesizeProcesses(unmatched));
   const sorted = sortProcesses(allRows, now);
@@ -370,7 +388,8 @@ function renderLocalPanel() {
   // mutated yet — the section stays exactly as it was (hidden, or showing the
   // previous good paint) instead of a half-built header with no body.
   const mergedPRs = (typeof state !== 'undefined' && state.mergedPRs) || [];
-  const bodyHTML = sorted.map(r => procRowHTML(r, now, payload.workspaceRoot)).join('')
+  const bodyHTML = (prDataUnavailable ? prNoticeHTML() : '')
+    + sorted.map(r => procRowHTML(r, now, payload.workspaceRoot, prDataUnavailable)).join('')
     + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '')
     + mergedSectionHTML(mergedPRs);
 
