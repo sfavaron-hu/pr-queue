@@ -234,12 +234,23 @@ function prRepoSlugs(prs) {
 // qualifies. Nor does a worktree missing `githubRepo`/`baseBranch`
 // (unparseable remote, or base branch unknown), or an older cached payload
 // that predates those fields entirely.
+//
+// Nor does a worktree the collector has confirmed (`onOrigin === false`) is
+// genuinely absent from the remote: GitHub's compare page for a branch that
+// isn't pushed opens an empty diff, which is worse than no link. This skip
+// is per-worktree, not per-repo — it doesn't mark the repo `seen`, so a
+// second worktree for the same repo whose branch *is* on origin (or whose
+// onOrigin is unknown/absent) can still produce the link. `onOrigin === null`
+// (undetermined) and an absent field (older cached payload) both mean
+// "unknown", which must keep behaving exactly as before onOrigin existed —
+// only a confirmed `false` suppresses the link.
 function diffLinksFor(p, prs) {
   const seen = new Set();
   const links = [];
   const prRepos = prRepoSlugs(prs);
   p.worktrees.forEach(w => {
     if (seen.has(w.repo) || w.detached || w.prunable) return;
+    if (w.onOrigin === false) return;
     if (!w.githubRepo || !w.baseBranch || !w.branch) return;
     seen.add(w.repo);
     if (prRepos.has(w.githubRepo.toLowerCase())) return;
@@ -300,6 +311,22 @@ function worktreeChip(w, workspaceRoot, multi) {
   }
   if (!w.path) return null;
   return copyChip(`cd${repoLabel} ⎘`, `cd ${w.path}`);
+}
+
+// A copy-able `git push -u origin <branch>` for a worktree the collector has
+// confirmed is genuinely absent from the remote. This is the actionable
+// that pairs with the "no está en origin" marker in procCardHTML: the
+// number that used to render as "N sin pushear" for a squash-merged branch
+// was arithmetically correct and utterly misleading (a squash merge means
+// the local commits are never going to become ancestors of base, merged PR
+// or not) — so instead of a stat, the card offers the one command that
+// would actually change the state. Callers filter to worktrees that are
+// confirmed absent (not merely detached/prunable, which carry the same
+// `onOrigin: false` for an unrelated reason and have no branch+directory
+// pair to push) before calling this.
+function pushChip(w, multi) {
+  const repoLabel = multi ? ` ${w.repo}` : '';
+  return copyChip(`push${repoLabel} ⎘`, `git -C ${w.path} push -u origin ${w.branch}`);
 }
 
 // A soft first-person notice, never phrased as an accusation against GitHub:
@@ -367,12 +394,27 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   // `unpushed` may be null (unknown, e.g. no base branch to diff against) on
   // any given worktree — that must not silently count as 0, but a `null` in
   // the sum must not render as NaN either. Only worktrees with a real number
-  // contribute; if none do, there is nothing to show.
-  const unpushedKnown = p.worktrees.some(w => typeof w.unpushed === 'number');
+  // contribute; if none do, there is nothing to show. A worktree the
+  // collector has confirmed is genuinely absent from origin
+  // (`onOrigin === false`) is excluded from this sum even when it does carry
+  // a number — see noOriginWorktrees below for why. `onOrigin === null`
+  // (undetermined) or an absent field (older cached payload) both mean
+  // "unknown" and must keep counting exactly as before onOrigin existed —
+  // only a confirmed `false` is excluded.
+  const unpushedKnown = p.worktrees.some(w => w.onOrigin !== false && typeof w.unpushed === 'number');
   const unpushed = unpushedKnown
-    ? p.worktrees.reduce((n, w) => n + (typeof w.unpushed === 'number' ? w.unpushed : 0), 0)
+    ? p.worktrees.reduce((n, w) => n + (w.onOrigin !== false && typeof w.unpushed === 'number' ? w.unpushed : 0), 0)
     : null;
   const detached = p.worktrees.filter(w => w.detached).length;
+  const multiWorktree = p.worktrees.length > 1;
+  // Detached and prunable worktrees also carry `onOrigin: false` from the
+  // collector (no branch to compare against / no directory left to
+  // inspect), but for a different reason than "genuinely unpushed": neither
+  // has a branch+directory pair a push command could use, and a marker/chip
+  // for every prunable worktree would be noise, not signal. Only a worktree
+  // that is neither of those and still confirmed absent from origin
+  // qualifies for the "no está en origin" badge and push chip below.
+  const noOriginWorktrees = p.worktrees.filter(w => w.onOrigin === false && !w.detached && !w.prunable);
 
   // Second row, right: the same badge vocabulary a PR card uses (CI, Draft,
   // ✗ Cambios / ✓ Aprobado, ⚡ Conflicts), aggregated across every PR in the
@@ -390,6 +432,13 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
     if (prs.some(x => x.conflicts)) rightBadges.push('<span class="badge badge-red">⚡ Conflicts</span>');
   }
   if (unpushed > 0) rightBadges.push(`<span class="badge badge-gray">${unpushed} sin pushear</span>`);
+  // "no está en origin" instead of a (misleading) count — see
+  // noOriginWorktrees above. One badge per qualifying worktree, repo-suffixed
+  // only when the row has more than one, matching worktreeChip's convention.
+  noOriginWorktrees.forEach(w => {
+    const repoLabel = multiWorktree ? ` ${w.repo}` : '';
+    rightBadges.push(`<span class="badge badge-gray" data-tip="La rama no existe en el remoto — nunca se pusheó, o se mergeó por squash">no está en origin${escS(repoLabel)}</span>`);
+  });
   if (dirty > 0) rightBadges.push(`<span class="badge badge-gray">${dirty} sin commitear</span>`);
   rightBadges.push(`<span class="badge badge-gray">${last ? timeAgo(new Date(last)) : '—'}</span>`);
 
@@ -397,15 +446,17 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   // already links to the PR (or the compare diff when there is no PR), and
   // that's what the owner actually clicks; render.js's own PR cards keep
   // their "Open →" since that column has no such title link. So: a diff
-  // chip per repo still missing a PR, then a resume chip per session, then a
-  // cd/prune chip per worktree.
+  // chip per repo still missing a PR, then a push chip per worktree confirmed
+  // absent from origin (the actionable that pairs with the badge above —
+  // pushing is what would actually let a diff/PR happen), then a resume chip
+  // per session, then a cd/prune chip per worktree.
   const actions = [];
   diffs.forEach(d => {
     const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
     actions.push(safeLinkHTML(d.url, label, ' target="_blank" rel="noopener" class="btn btn-ghost btn-sm"'));
   });
+  noOriginWorktrees.forEach(w => actions.push(pushChip(w, multiWorktree)));
   sessionChips(p).forEach(chip => actions.push(chip));
-  const multiWorktree = p.worktrees.length > 1;
   p.worktrees.forEach(w => {
     const chip = worktreeChip(w, workspaceRoot, multiWorktree);
     if (chip) actions.push(chip);

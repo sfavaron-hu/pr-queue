@@ -255,16 +255,22 @@ function renderOwnPRs() {
 
 async function loadOwnPRs() {
   if (!state.token || document.hidden) return;
-  const { org, label } = state.config;
+  const { org } = state.config;
   if (!state.me) return;
 
   el.ownColumn.style.display = '';
   if (state.ownPRs.length === 0) el.ownLoading.classList.remove('hidden');
 
   try {
-    const labelQualifier = label && label.trim() ? [`label:${encodeURIComponent(label)}`] : [];
-    const openQualifiers = ['is:pr', 'is:open', ...labelQualifier, `org:${encodeURIComponent(org)}`, `author:${encodeURIComponent(state.me)}`];
-    const mergedQualifiers = ['is:pr', 'is:merged', ...labelQualifier, `org:${encodeURIComponent(org)}`, `author:${encodeURIComponent(state.me)}`, `merged:>${threeDAysAgo()}`];
+    // Unlike loadPRs (the tribe's review queue), this column is "Mis PRs" —
+    // all of the owner's own work org-wide, not just the tribe's slice of
+    // it — so no label: qualifier belongs here at all. Qualifiers are still
+    // built as an array and joined rather than concatenated, so an absent
+    // or empty value can never leave a stray `+` in the query string (a
+    // malformed GitHub search silently returns the wrong results instead of
+    // erroring, so this is worth keeping even with one fewer qualifier).
+    const openQualifiers = ['is:pr', 'is:open', `org:${encodeURIComponent(org)}`, `author:${encodeURIComponent(state.me)}`];
+    const mergedQualifiers = ['is:pr', 'is:merged', `org:${encodeURIComponent(org)}`, `author:${encodeURIComponent(state.me)}`, `merged:>${threeDAysAgo()}`];
     const [openData, mergedData] = await Promise.all([
       apiFetch(`${API}/search/issues?q=${openQualifiers.join('+')}&per_page=50&sort=created&order=desc`),
       apiFetch(`${API}/search/issues?q=${mergedQualifiers.join('+')}&per_page=20&sort=updated&order=desc`),
