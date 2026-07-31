@@ -65,7 +65,8 @@ async function handle(req, res, collectFn) {
 
   try {
     const data = await fs.readFile(full);
-    res.writeHead(200, { 'content-type': TYPES[path.extname(full)] || 'application/octet-stream' });
+    res.writeHead(200, { 'content-type': TYPES[path.extname(full)] || 'application/octet-stream',
+                         'cache-control': 'no-store' });
     res.end(data);
   } catch {
     res.writeHead(404); res.end('not found');

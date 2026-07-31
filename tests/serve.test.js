@@ -17,6 +17,14 @@ test('GET /api/local returns the collector payload as JSON', async () => {
   server.close();
 });
 
+test('GET /api/local still carries its own cache-control: no-store (regression guard)', async () => {
+  const server = createServer({ collectFn: async () => ({ processes: [], warnings: [], workspaceRoot: '/w' }) });
+  const port = await listen(server);
+  const res = await fetch(`http://127.0.0.1:${port}/api/local`);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  server.close();
+});
+
 test('GET /api/local returns 500 with a message when the collector throws', async () => {
   const server = createServer({ collectFn: async () => { throw new Error('boom'); } });
   const port = await listen(server);
@@ -55,6 +63,7 @@ test('serves index.html at the root', async () => {
   assert.match(body, /<script src="state\.js">/);
   assert.match(body, /<script src="classify\.js">/);
   assert.match(body, /<script src="local\.js">/);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
   server.close();
 });
 
@@ -64,6 +73,14 @@ test('serves a static js file with the right content type', async () => {
   const res = await fetch(`http://127.0.0.1:${port}/classify.js`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /javascript/);
+  server.close();
+});
+
+test('a static file response carries cache-control: no-store so browsers never heuristically cache stale JS', async () => {
+  const server = createServer({ collectFn: async () => ({}) });
+  const port = await listen(server);
+  const res = await fetch(`http://127.0.0.1:${port}/classify.js`);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
   server.close();
 });
 
