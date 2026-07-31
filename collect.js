@@ -2,7 +2,8 @@
 // real workspace; bin/collect.js supplies the real implementations.
 const nodePath = require('node:path');
 const { parseWorktrees, parseStatusShort, parseAgents,
-        parseTranscriptTail, parseGithubSlug, parseLastCommitLog } = require('./collect-parse.js');
+        parseTranscriptTail, parseGithubSlug, parseLastCommitLog,
+        parseCommitRangeLog } = require('./collect-parse.js');
 const { resolveWorkspaceRoot, resolveClaudeDir, pickBaseBranch } = require('./collect-paths.js');
 const { groupProcesses, attachSessions } = require('./classify.js');
 
@@ -61,18 +62,39 @@ async function collectRepo(repo, repoPath, run, warn) {
       row.dirty = parseStatusShort(await run('git', ['status', '--short'], wt.path));
     } catch (e) { warn(repo, 'status', e.message); }
 
+    // HEAD's own subject — used for `lastCommit` (the timestamp; that stays
+    // HEAD's regardless, since it feeds "when was this worktree last
+    // touched") and, only when no base range can be computed below, as the
+    // best available fallback for the human-readable subject too.
+    // HEAD's own subject — used for `lastCommit` (the timestamp; that stays
+    // HEAD's regardless, since it feeds "when was this worktree last
+    // touched") and, only when no base range can be computed below, as the
+    // best available fallback for the human-readable subject too.
+    let headSubject = null;
     try {
       const raw = await run('git', ['log', '-1', '--format=%ct%x00%s'], wt.path);
       const { ts, subject } = parseLastCommitLog(raw);
       row.lastCommit = ts;
-      row.lastCommitSubject = subject;
+      headSubject = subject;
     } catch (e) { warn(repo, 'lastCommit', e.message); }
 
     if (base && wt.branch) {
+      // One call covers both `unpushed` (line count) and `lastCommitSubject`
+      // (the newest line's subject) over the same range already used for
+      // unpushed — no second git invocation. An empty range means the branch
+      // has no commit of its own yet, so the subject is null: falling back to
+      // HEAD's subject here would describe someone else's commit as this
+      // worktree's work (the exact bug this replaced).
       try {
-        const n = (await run('git', ['rev-list', '--count', `origin/${base}..HEAD`], wt.path)).trim();
-        if (n) row.unpushed = Number(n);
+        const raw = await run('git', ['log', '--format=%ct%x00%s', `origin/${base}..HEAD`], wt.path);
+        const { count, subject } = parseCommitRangeLog(raw);
+        row.unpushed = count;
+        row.lastCommitSubject = subject;
       } catch (e) { warn(repo, 'unpushed', e.message); }
+    } else {
+      // No base branch derivable (or no branch, e.g. detached): there is no
+      // range to compute, so HEAD's own subject is the best available signal.
+      row.lastCommitSubject = headSubject;
     }
     return row;
   }));

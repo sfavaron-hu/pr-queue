@@ -90,6 +90,22 @@ function parseLastCommitLog(stdout) {
   return { ts: secsStr ? Number(secsStr) * 1000 : null, subject: subject || null };
 }
 
+// Parses `git log --format=%ct%x00%s origin/<base>..HEAD`: zero or more
+// commits unique to this branch (newest first), one per line since %s is a
+// single-line subject. Splitting on the first NUL only mirrors
+// parseLastCommitLog, for the same reason. An empty range (0 commits ahead)
+// is not an error — it means the branch has made no commits of its own yet,
+// so there is no own-work subject to report; callers must not fall back to
+// HEAD's subject in that case, since HEAD may be sitting on someone else's
+// commit (e.g. a freshly created worktree on the base branch's tip).
+function parseCommitRangeLog(stdout) {
+  const lines = String(stdout).split('\n').filter(l => l !== '');
+  if (lines.length === 0) return { count: 0, subject: null };
+  const sep = lines[0].indexOf('\0');
+  const subject = sep === -1 ? '' : lines[0].slice(sep + 1);
+  return { count: lines.length, subject: subject || null };
+}
+
 // Parses `owner/name` out of a real `git remote get-url origin` value. Handles
 // the SSH form (git@github.com:Owner/Repo.git) and the HTTPS form
 // (https://github.com/Owner/Repo.git), each with or without the `.git`
@@ -106,4 +122,4 @@ function parseGithubSlug(remoteUrl) {
 }
 
 module.exports = { parseWorktrees, parseStatusShort, parseAgents, parseTranscriptTail,
-                    parseGithubSlug, parseLastCommitLog, safeHttpUrl };
+                    parseGithubSlug, parseLastCommitLog, parseCommitRangeLog, safeHttpUrl };

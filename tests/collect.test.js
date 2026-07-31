@@ -4,6 +4,12 @@ const { collect } = require('../collect.js');
 
 const NOW = 1785000000000;
 
+// Builds the stdout of `git log --format=%ct%x00%s origin/<base>..HEAD`:
+// newest commit first, one line per commit ahead of base.
+function rangeLog(...subjects) {
+  return subjects.map((s, i) => `${Math.floor((NOW - (i + 1) * 1000) / 1000)}\x00${s}`).join('\n');
+}
+
 function harness(over) {
   const calls = [];
   const base = {
@@ -31,7 +37,7 @@ function harness(over) {
       if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
       if (a.startsWith('status')) return ' M src/a.ts\n';
       if (a.includes('log -1')) return Math.floor((NOW - 3600000) / 1000) + '\x00chore: do the thing';
-      if (a.includes('rev-list')) return '2';
+      if (a.includes('..HEAD')) return rangeLog('chore: do the thing', 'earlier work');
       if (a.includes('remote get-url')) return 'git@github.com:HumandDev/humand-web.git\n';
       return '';
     },
@@ -132,7 +138,7 @@ test('collect survives claude being absent', async () => {
       if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
       if (a.startsWith('status')) return '';
       if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
-      if (a.includes('rev-list')) return '0';
+      if (a.includes('..HEAD')) return '';
       return '';
     },
     listFiles: async () => [],
@@ -203,7 +209,7 @@ test('collect de-duplicates a worktree path reported by more than one repo scan'
       if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
       if (a.startsWith('status')) return '';
       if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
-      if (a.includes('rev-list')) return '0';
+      if (a.includes('..HEAD')) return '';
       return '';
     },
     listFiles: async () => [],
@@ -230,7 +236,7 @@ test('collect drops a worktree sitting on its own base branch', async () => {
       if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop\n';
       if (a.startsWith('status')) return '';
       if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
-      if (a.includes('rev-list')) return '0';
+      if (a.includes('..HEAD')) return '';
       return '';
     },
     listFiles: async () => [],
@@ -278,7 +284,7 @@ test('collect keeps a detached worktree in a repo whose base branch is derivable
       if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
       if (a.startsWith('status')) return '';
       if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
-      if (a.includes('rev-list')) return '0';
+      if (a.includes('..HEAD')) return '';
       return '';
     },
     listFiles: async () => [],
@@ -328,6 +334,81 @@ test('collect puts lastCommitSubject, githubRepo, and baseBranch on the worktree
   assert.equal(wt.baseBranch, 'develop');
 });
 
+test('collect takes lastCommitSubject from the branch\'s own commits, not from HEAD', async () => {
+  // HEAD's subject and the range's newest subject are deliberately different
+  // here so a regression that reads HEAD's subject instead of the range's
+  // gets caught, not accidentally passed by both happening to match.
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/feat/SQSH-3851-web-ai\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return Math.floor(NOW / 1000) + '\x00chore: unrelated colleague commit';
+      if (a.includes('..HEAD')) return rangeLog('fix audience update (#11916)', 'wip');
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.lastCommitSubject, 'fix audience update (#11916)');
+  assert.equal(wt.unpushed, 2);
+});
+
+test('collect reports lastCommitSubject as null with 0 commits ahead of base, while lastCommit keeps HEAD\'s timestamp', async () => {
+  // This is the reported bug: a worktree freshly created on develop's tip,
+  // sitting on a colleague's commit with zero commits of its own. The panel
+  // must not invent a description from that commit.
+  const headTs = Math.floor(NOW / 1000);
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\n' +
+               'branch refs/heads/fix/no-ticket-groups-notifications-config\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return headTs + '\x00fix audience update (#11916)';
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.unpushed, 0);
+  assert.equal(wt.lastCommitSubject, null);
+  assert.equal(wt.lastCommit, headTs * 1000);
+});
+
+test('collect falls back to HEAD\'s subject when no base branch can be derived', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/feat/SQSH-3851-web-ai\n';
+      }
+      if (a.includes('symbolic-ref')) throw new Error('no origin/HEAD');
+      if (a.includes('for-each-ref')) return 'trunk\nrelease\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return Math.floor(NOW / 1000) + '\x00chore: only signal we have';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.baseBranch, null);
+  assert.equal(wt.lastCommitSubject, 'chore: only signal we have');
+});
+
 test('collect records a warning and sets githubRepo null when git remote throws', async () => {
   const { opts } = harness({
     run: async (cmd, args) => {
@@ -342,7 +423,7 @@ test('collect records a warning and sets githubRepo null when git remote throws'
       if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
       if (a.startsWith('status')) return '';
       if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
-      if (a.includes('rev-list')) return '0';
+      if (a.includes('..HEAD')) return '';
       if (a.includes('remote get-url')) throw new Error('No such remote origin');
       return '';
     },

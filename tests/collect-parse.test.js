@@ -1,7 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { parseWorktrees, parseStatusShort, parseAgents,
-        parseTranscriptTail, parseGithubSlug, parseLastCommitLog, safeHttpUrl } = require('../collect-parse.js');
+        parseTranscriptTail, parseGithubSlug, parseLastCommitLog, parseCommitRangeLog,
+        safeHttpUrl } = require('../collect-parse.js');
 
 const WORKTREE_FIXTURE = `worktree /w/humand-web
 HEAD 5552c1c23d5ab2a22bfd9c5cd9da130e8b86adfb
@@ -211,6 +212,33 @@ test('parseLastCommitLog returns a null subject when the subject is empty', () =
 test('parseLastCommitLog returns nulls for empty input', () => {
   const out = parseLastCommitLog('');
   assert.equal(out.ts, null);
+  assert.equal(out.subject, null);
+});
+
+test('parseCommitRangeLog takes count and subject from the newest (first) line', () => {
+  const out = parseCommitRangeLog(
+    '1700000200\x00fix audience update (#11916)\n' +
+    '1700000100\x00wip\n'
+  );
+  assert.equal(out.count, 2);
+  assert.equal(out.subject, 'fix audience update (#11916)');
+});
+
+test('parseCommitRangeLog returns count 0 and a null subject for an empty range', () => {
+  const out = parseCommitRangeLog('');
+  assert.equal(out.count, 0);
+  assert.equal(out.subject, null);
+});
+
+test('parseCommitRangeLog keeps a subject containing a literal %', () => {
+  const out = parseCommitRangeLog('1700000000\x00fix: bump coverage to 100% on module\n');
+  assert.equal(out.count, 1);
+  assert.equal(out.subject, 'fix: bump coverage to 100% on module');
+});
+
+test('parseCommitRangeLog returns a null subject when the newest line has an empty subject', () => {
+  const out = parseCommitRangeLog('1700000000\x00\n');
+  assert.equal(out.count, 1);
   assert.equal(out.subject, null);
 });
 
