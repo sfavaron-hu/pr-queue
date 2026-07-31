@@ -177,18 +177,38 @@ function escS(v) {
   return (v === null || v === undefined) ? '' : esc(String(v));
 }
 
-// The card's title line: the context subtitle. First available of the joined
-// PR's title, an attached session's aiTitle, or a worktree's last commit
-// subject — all three are free per the collector. Falls back to the process
-// key so a card never renders with an empty title.
+// The card's title line: the joined PR's title, else the branch's own last
+// commit subject, else null (procCardHTML falls back to the process key).
+//
+// A session's aiTitle used to be eligible here and that was wrong: aiTitle
+// describes what a *session* was doing, which is frequently a side errand in
+// that worktree (checking a colleague's PR, fixing an unrelated conflict) —
+// not the process itself — so it could misrepresent the card, and the same
+// aiTitle could even appear as the "title" of two unrelated cards. It still
+// appears on the card, just as a subordinate second line (see aiTitleFor).
+//
+// lastCommitSubject is the subject of the branch's own most recent commit
+// (origin/<base>..HEAD) as of commit b2ff15b, and is legitimately null when
+// the branch has no commits of its own yet — common (5 of 36 worktrees on
+// the owner's machine) and expected, not a bug; it must fall through to the
+// key, never render as an empty title.
 function subtitleFor(p, prs) {
   const pr = prs.find(x => x.title);
   if (pr) return pr.title;
-  const sess = p.sessions.find(x => x.aiTitle);
-  if (sess) return sess.aiTitle;
   const wt = p.worktrees.find(w => w.lastCommitSubject);
   if (wt) return wt.lastCommitSubject;
   return null;
+}
+
+// The secondary, visually-subordinate line under the title: the aiTitle of
+// the most recently active session attached to this process, if any. Several
+// sessions can each carry their own aiTitle; the most recently active one is
+// the most likely to still be relevant.
+function aiTitleFor(p) {
+  const withTitle = p.sessions.filter(x => x.aiTitle);
+  if (!withTitle.length) return null;
+  withTitle.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  return withTitle[0].aiTitle;
 }
 
 // The set of "owner/repo" slugs (lowercased) that already have a joined PR
@@ -307,11 +327,14 @@ function mergedSectionHTML(mergedPRs) {
   return `<div class="proc-merged"><div class="proc-merged-heading">Mergeados</div>${rows}</div>`;
 }
 
-// One `.pr-card` per process, built from the exact same class vocabulary
+// One `.pr-card` per process, built mostly from the same class vocabulary
 // renderCard() in render.js uses for a PR card — .pr-title, .pr-repo,
 // .pr-number, .pr-meta, .pr-actions, .badge(-red/-amber/-green/-gray),
-// .btn.btn-ghost.btn-sm — so a process card sits natively among PR cards
-// with no bespoke styling of its own.
+// .btn.btn-ghost.btn-sm — so a process card sits natively among PR cards.
+// A few classes are process-card-only additions, scoped under #work-list in
+// index.html's CSS so they never touch render.js's cards: .proc-ai-title
+// (the subordinate aiTitle line), .proc-identity (the wrapping key+repo
+// block), and .proc-has-pr (the PR-backed left accent).
 function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   const p = row.proc;
   const prs = row.prs;
@@ -319,15 +342,23 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   const last = lastActivity(p, prs);
   const diffs = diffLinksFor(p, prs);
 
-  // Title: PR title, else session aiTitle, else last commit subject, else
-  // the process key itself so the card never has an empty title. Linked to
-  // the PR when one exists, else the compare/diff URL, else plain text.
+  // Title: PR title, else last commit subject, else the process key itself
+  // so the card never has an empty title (see subtitleFor for why aiTitle is
+  // no longer in this chain). Linked to the PR when one exists, else the
+  // compare/diff URL, else plain text.
   const titleText = subtitleFor(p, prs) || p.key;
   const linkPr = prs.find(x => x.title) || prs[0] || null;
   const titleUrl = linkPr ? linkPr.url : (diffs[0] ? diffs[0].url : null);
   const titleInner = titleUrl
     ? safeLinkHTML(titleUrl, titleText, ' target="_blank" rel="noopener"')
     : escS(titleText);
+
+  // Secondary line under the title, visibly subordinate (smaller, dimmer) —
+  // a session's aiTitle, when one is attached. Helps read a card as "this is
+  // a PR" (or "this is still only local") plus "here's what a session was
+  // last doing here", without either being mistaken for the other.
+  const aiTitle = aiTitleFor(p);
+  const aiTitleHTML = aiTitle ? `<div class="proc-ai-title">${escS(aiTitle)}</div>` : '';
 
   const repos = [...new Set(p.worktrees.map(w => w.repo))];
   const repoLabel = repos.length ? repos.join(', ') : (p.synthetic ? 'sin worktree local' : '');
@@ -362,16 +393,13 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   if (dirty > 0) rightBadges.push(`<span class="badge badge-gray">${dirty} sin commitear</span>`);
   rightBadges.push(`<span class="badge badge-gray">${last ? timeAgo(new Date(last)) : '—'}</span>`);
 
-  // .pr-actions: every actionable link/chip. One "Open →" per PR (labeled
-  // per-repo only when the row carries more than one), then a diff chip per
-  // repo still missing a PR, then a resume chip per session, then a cd/prune
-  // chip per worktree.
+  // .pr-actions: every actionable link/chip. No "Open →" here — the title
+  // already links to the PR (or the compare diff when there is no PR), and
+  // that's what the owner actually clicks; render.js's own PR cards keep
+  // their "Open →" since that column has no such title link. So: a diff
+  // chip per repo still missing a PR, then a resume chip per session, then a
+  // cd/prune chip per worktree.
   const actions = [];
-  const multiPR = prs.length > 1;
-  prs.forEach(pr => {
-    const label = multiPR ? `Open ${pr.repo} →` : 'Open →';
-    actions.push(safeLinkHTML(pr.url, label, ' target="_blank" rel="noopener" class="btn btn-ghost btn-sm"'));
-  });
   diffs.forEach(d => {
     const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
     actions.push(safeLinkHTML(d.url, label, ' target="_blank" rel="noopener" class="btn btn-ghost btn-sm"'));
@@ -384,25 +412,38 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   });
 
   // .pr-meta left: process identity — no ticket, detached-worktree count,
-  // and (only when nothing else in the row says anything about a PR at all)
-  // the "sin PR"/"PR: —" fallback, matching the same distinction the old
-  // panel drew between "no PR data" and "genuinely zero PRs".
+  // and (only when the row truly has no joined PR) the "sin PR"/"PR: —"
+  // fallback, matching the same distinction the old panel drew between "no
+  // PR data" and "genuinely zero PRs". Keyed off `prs.length` directly, not
+  // `actions.length` — removing the "Open →" chip above means actions can
+  // legitimately be empty for a PR-backed row (a PR with no local worktree
+  // or session attached), and that must not be mistaken for "sin PR".
+  const hasPr = prs.length > 0;
   const identity = [];
   if (!p.ticket) identity.push('<span class="badge badge-gray">sin ticket</span>');
   if (detached > 0) identity.push(`<span class="badge badge-gray">${detached} detached</span>`);
-  if (actions.length === 0) {
+  if (!hasPr) {
     identity.push(prDataUnavailable
       ? '<span class="badge badge-gray">PR: —</span>'
       : '<span class="badge badge-gray">sin PR</span>');
   }
 
-  return `<div class="pr-card" data-proc-key="${esc(p.key)}">
+  // A card whose work exists as a PR reads differently from one that is
+  // still only on disk — a subtle left accent edge built from the existing
+  // --accent token, not a new badge (the state badge already carries the
+  // loud signal).
+  const cardCls = hasPr ? ' proc-has-pr' : '';
+
+  return `<div class="pr-card${cardCls}" data-proc-key="${esc(p.key)}">
     <div class="pr-top">
-      <div class="pr-title" style="margin:0;flex:1;">${titleInner}</div>
+      <div style="margin:0;flex:1;min-width:0;">
+        <div class="pr-title" style="margin:0;">${titleInner}</div>
+        ${aiTitleHTML}
+      </div>
       <div class="pr-badges">${procStateBadgeHTML(s)}</div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
-      <div style="display:flex;align-items:center;gap:6px;">
+      <div class="proc-identity">
         <span class="pr-repo">${esc(p.key)}</span>
         ${repoLabel ? `<span class="pr-number">${escS(repoLabel)}</span>` : ''}
       </div>

@@ -29,7 +29,7 @@ html, body {
 }
 
 .app {
-  max-width: 800px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 32px 16px 80px;
 }
@@ -506,8 +506,20 @@ html, body {
 /* A process key/branch name can run far longer than a repo slug ever would
    (".pr-repo" is nowrap elsewhere, sized for short repo names) — let it wrap
    instead of forcing the column wider than its 1fr share. Scoped to #work-list
-   only; PR cards elsewhere keep the original single-line behavior. */
+   only; PR cards elsewhere keep the original single-line behavior.
+
+   Wrapping .pr-repo's own text wasn't enough on its own: the sibling
+   .pr-number (the repo name) lived alongside it in a `display:flex` row,
+   which pins flex items to one line unless told otherwise, so the repo name
+   stayed squeezed next to the wrapping key instead of moving to its own
+   line. .proc-identity drops that flex row in favor of ordinary block/inline
+   flow — the same reflow any wrapping paragraph gets — so the key wraps
+   internally when it must, and the repo name (an ordinary unbreakable word)
+   flows onto whatever line has room for it, next line included. The pair
+   reads and behaves as one wrapping unit instead of two competing flex items. */
+#work-list .proc-identity { display: block; }
 #work-list .pr-repo { white-space: normal; overflow-wrap: anywhere; }
+#work-list .proc-identity .pr-number { margin-left: 6px; }
 
 /* ── Loading / empty / error ── */
 .loading {
@@ -563,6 +575,19 @@ html, body {
 
 .proc-notice { font-size: 11px; opacity: .85; padding: 5px 10px; border-radius: 6px;
   background: rgba(219,171,9,.14); border: 1px solid rgba(219,171,9,.3); margin-bottom: 6px; }
+/* The session aiTitle, shown under the card title — smaller and dimmer than
+   .pr-title so it reads as subordinate context, not a second title, and
+   incidentally helps tell "this is a PR title" from "this is still local,
+   here's what a session was doing" apart at a glance. */
+.proc-ai-title { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+/* PR-backed vs local-only: a subtle left accent built from the existing
+   --accent token (already used for .pr-repo/links/badge-blue), not a new
+   palette or a loud badge — the state badge (TU TURNO, etc.) already carries
+   the loud signal. Local-only cards keep the plain card border. */
+#work-list .pr-card.proc-has-pr {
+  border-left: 3px solid var(--accent);
+  padding-left: 13px;
+}
 .proc-meta-line { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
 .badge-dim { opacity: .6; }
 /* Loose-sessions entry: the one leftover row that isn't a process card. */
