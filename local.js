@@ -11,6 +11,14 @@
 
 const PROC_CACHE_KEY = 'prq_proc_cache';
 
+// Whether the real (unwrapped) window.renderOwnPRs has fired at least once
+// since this page load. Flipped inside mountPanel()'s wrap, never reset —
+// GitHub PR data (state.ownPRs / state.mergedPRs) arrives several seconds
+// after the local collector's payload, and this is the only signal the panel
+// has for "GitHub hasn't answered yet" vs. "GitHub answered and it's empty".
+// See prDataState() for the three-way state this feeds.
+let ownPRsFired = false;
+
 const procEl = {
   workList:    () => document.getElementById('work-list'),
   columnTitle: () => document.getElementById('own-column-title'),
@@ -363,9 +371,37 @@ function worktreeRemoveChip(w, workspaceRoot, multi) {
 // swallows fetch/enrichment failures) — that must never be confused with a
 // user who has a token and genuinely has zero open PRs, so the panel is
 // conservative and treats "token present, zero PRs" as unavailable data
-// rather than trying to tell the two apart from ownPRs.length alone.
+// rather than trying to tell the two apart from ownPRs.length alone. Only
+// shown for prDataState() === 'unavailable' — never while still loading,
+// which is not a failure and must not be reported as one.
 function prNoticeHTML() {
   return `<div class="proc-notice">No pude cargar el estado de los PRs — puede haber PRs abiertos sin reflejar en esta vista.</div>`;
+}
+
+// Three PR-data states, in order of confidence — every place in this file
+// that used to ask "do I have PR data" now asks this instead:
+//  - 'no-token'    — no token configured at all. Today's behaviour, honest:
+//                    the panel genuinely has no way to fetch PRs, ever.
+//  - 'loading'     — a token exists but window.renderOwnPRs (wrapped in
+//                    mountPanel) has not fired yet this page load. GitHub
+//                    data can be several seconds behind the collector's, and
+//                    nothing PR-shaped may be asserted as absent yet.
+//  - 'unavailable' — renderOwnPRs fired at least once and state.ownPRs is
+//                    still empty while a token exists. This is the
+//                    pre-existing case: silent loadOwnPRs failure, or a tab
+//                    that was hidden, or (rarely) a genuine zero.
+//  - 'loaded'      — renderOwnPRs fired and state.ownPRs came back non-empty.
+// The `ownPRs.length > 0` check is tested before `!ownPRsFired`, not after,
+// so that a PR list which — despite the ordering mountPanel relies on
+// (collector answers first, wrap installs, then GitHub answers) — somehow
+// still lands before the wrap ever fires is read as 'loaded' rather than
+// stuck showing 'loading' forever.
+function prDataState() {
+  const tokenConfigured = typeof state !== 'undefined' && !!state.token;
+  if (!tokenConfigured) return 'no-token';
+  const ownPRs = (typeof state !== 'undefined' && state.ownPRs) || [];
+  if (ownPRs.length > 0) return 'loaded';
+  return ownPRsFired ? 'unavailable' : 'loading';
 }
 
 // One `.pr-card` per process, built mostly from the same class vocabulary
@@ -376,7 +412,7 @@ function prNoticeHTML() {
 // index.html's CSS so they never touch render.js's cards: .proc-ai-title
 // (the subordinate aiTitle line), .proc-identity (the wrapping key+repo
 // block), and .proc-has-pr (the PR-backed left accent).
-function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
+function procCardHTML(row, now, workspaceRoot, prPending) {
   const p = row.proc;
   const prs = row.prs;
   const s = classify(p, prs, now);
@@ -505,12 +541,17 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   // `actions.length` — removing the "Open →" chip above means actions can
   // legitimately be empty for a PR-backed row (a PR with no local worktree
   // or session attached), and that must not be mistaken for "sin PR".
+  //
+  // `prPending` covers both 'loading' and 'unavailable' (see prDataState):
+  // a row must not claim "sin PR" while GitHub hasn't answered yet, exactly
+  // as it must not once GitHub has answered and come back empty — in both
+  // cases the panel simply does not know, and "PR: —" says so honestly.
   const hasPr = prs.length > 0;
   const identity = [];
   if (!p.ticket) identity.push('<span class="badge badge-gray">sin ticket</span>');
   if (detached > 0) identity.push(`<span class="badge badge-gray">${detached} detached</span>`);
   if (!hasPr) {
-    identity.push(prDataUnavailable
+    identity.push(prPending
       ? '<span class="badge badge-gray">PR: —</span>'
       : '<span class="badge badge-gray">sin PR</span>');
   }
@@ -553,12 +594,14 @@ function renderLocalPanel() {
   mergeLooseSessions(payload);
 
   const ownPRs = (typeof state !== 'undefined' && state.ownPRs) || [];
-  // "sin PR" is only honest when the panel has no token at all — it genuinely
-  // cannot know, and nobody asked it to. A token with zero PRs is ambiguous
-  // (real, or loadOwnPRs failed/skipped silently) and is treated as
-  // unavailable data rather than an empty result; see prNoticeHTML().
-  const tokenConfigured = typeof state !== 'undefined' && !!state.token;
-  const prDataUnavailable = tokenConfigured && ownPRs.length === 0;
+  // See prDataState() for the full three-way split. `prPending` covers both
+  // 'loading' and 'unavailable' — the two states where a row must not claim
+  // "sin PR" and PR-derived totals must not be asserted — while
+  // `prShowNotice` narrows to 'unavailable' alone, the only state that is
+  // actually a (possible) failure worth a notice.
+  const prState = prDataState();
+  const prPending = prState === 'loading' || prState === 'unavailable';
+  const prShowNotice = prState === 'unavailable';
   // state.mergedPRs (recent-3-day merges, populated by loadOwnPRs in
   // render.js) carries no `merged` marker of its own — render.js adds that
   // at render time for its own compact display, which this panel no longer
@@ -574,19 +617,34 @@ function renderLocalPanel() {
   // Build the entire list first. If anything here throws, nothing has been
   // mutated yet — #work-list stays exactly as it was (empty, or showing the
   // previous good paint) instead of a half-built list.
-  const listHTML = (prDataUnavailable ? prNoticeHTML() : '')
-    + sorted.map(r => procCardHTML(r, now, payload.workspaceRoot, prDataUnavailable)).join('')
+  const listHTML = (prShowNotice ? prNoticeHTML() : '')
+    + sorted.map(r => procCardHTML(r, now, payload.workspaceRoot, prPending)).join('')
     + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '');
 
   const states = sorted.map(r => classify(r.proc, r.prs, now));
   const count = st => states.filter(x => x === st).length;
 
   const warn = payload.warnings || [];
-  const metaText =
-    `${sorted.length} procesos · ${count('turno')} tu turno · ${count('esperando')} esperando · ` +
-    `${count('pausa')} en pausa · ${count('frio')} fríos (>${COLD_DAYS}d) · ${count('mergeado')} mergeados` +
-    (warn.length ? ` · ${warn.length} warnings` : '') +
-    (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
+  // While still loading, EVERY state count is provisional, not just
+  // `esperando`/`mergeado` — measured second-by-second on a real machine:
+  //   loading:  25 procesos ·  8 tu turno · 0 esperando · 6 en pausa · 11 fríos
+  //   loaded:   31 procesos · 11 tu turno · 5 esperando · 1 en pausa ·  9 fríos
+  // `turno`, `pausa` and `frio` all moved too (8→11, 6→1, 11→9): a process
+  // whose PR is unreviewed leaves `pausa`/`frio` and enters `esperando` once
+  // classify() sees its `prs`, and PR-backed synthesized rows add to
+  // `turno`. They are not "driven by the collector's own local-activity
+  // data" the way this comment used to claim — classify() reads `prs` for
+  // all four buckets, and `prs` is empty for every row until ownPRs/mergedPRs
+  // land. So no state count may be printed while loading; only the warning
+  // count and the timestamp are collector-derived and stable.
+  const metaText = prState === 'loading'
+    ? `cargando PRs…` +
+      (warn.length ? ` · ${warn.length} warnings` : '') +
+      (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '')
+    : `${sorted.length} procesos · ${count('turno')} tu turno · ${count('esperando')} esperando · ` +
+      `${count('pausa')} en pausa · ${count('frio')} fríos (>${COLD_DAYS}d) · ${count('mergeado')} mergeados` +
+      (warn.length ? ` · ${warn.length} warnings` : '') +
+      (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
 
   procEl.workList().innerHTML = listHTML;
   procEl.metaLine().textContent = metaText;
@@ -649,6 +707,11 @@ function mountPanel() {
   if (typeof window.renderOwnPRs === 'function' && !window.renderOwnPRs.__procWrapped) {
     const inner = window.renderOwnPRs;
     const wrapped = function () {
+      // Every real invocation — including this very first one — means
+      // GitHub has answered at least once this page load. Set before
+      // calling through, so the renderLocalPanel() a few lines down (and
+      // any other observer of ownPRsFired) sees the post-answer state.
+      ownPRsFired = true;
       const out = inner.apply(this, arguments);
       try { renderLocalPanel(); } catch (e) { console.warn('proc panel render failed', e); }
       return out;
