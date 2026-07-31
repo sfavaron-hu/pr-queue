@@ -2,10 +2,39 @@
 // real workspace; bin/collect.js supplies the real implementations.
 const nodePath = require('node:path');
 const { parseWorktrees, parseStatusShort, parseAgents,
-        parseTranscriptTail, parseGithubSlug, parseLastCommitLog,
-        parseCommitRangeLog } = require('./collect-parse.js');
+        parseTranscriptTail, parseGithubSlug,
+        parseLastCommitLog } = require('./collect-parse.js');
 const { resolveWorkspaceRoot, resolveClaudeDir, pickBaseBranch } = require('./collect-paths.js');
 const { groupProcesses, attachSessions } = require('./classify.js');
+
+// Splits `git log --format=%P%x00%s origin/<base>..HEAD` output (newest
+// first) into the total line count and the newest NON-merge commit's
+// subject. %P (parent hashes, space-separated) rides along in the same call
+// so a merge commit — more than one parent — can be skipped for the subject
+// without a second git invocation: the owner routinely merges the base
+// branch into feature branches, and a merge's subject (e.g. "Merge
+// remote-tracking branch 'origin/main' into <branch>") describes that merge,
+// not the owner's actual work. Splitting on the first NUL only mirrors
+// parseLastCommitLog/parseCommitRangeLog, for the same reason (a subject can
+// contain anything, including more NULs, in theory; %P never does, so it is
+// safe as the field before the split point). Count includes merges — it
+// answers "what have I not pushed", where a merge commit still counts; only
+// the subject selection skips them. A range with no non-merge commit (e.g.
+// the branch's only commits are merges) yields subject: null.
+function pickUnpushedAndSubject(stdout) {
+  const lines = String(stdout).split('\n').filter(l => l !== '');
+  let subject = null;
+  for (const line of lines) {
+    const sep = line.indexOf('\x00');
+    const parents = sep === -1 ? '' : line.slice(0, sep);
+    const isMerge = parents.trim().split(/\s+/).filter(Boolean).length > 1;
+    if (!isMerge) {
+      subject = (sep === -1 ? '' : line.slice(sep + 1)) || null;
+      break;
+    }
+  }
+  return { count: lines.length, subject };
+}
 
 async function collectRepo(repo, repoPath, run, warn) {
   let worktrees;
@@ -79,15 +108,16 @@ async function collectRepo(repo, repoPath, run, warn) {
     } catch (e) { warn(repo, 'lastCommit', e.message); }
 
     if (base && wt.branch) {
-      // One call covers both `unpushed` (line count) and `lastCommitSubject`
-      // (the newest line's subject) over the same range already used for
-      // unpushed — no second git invocation. An empty range means the branch
-      // has no commit of its own yet, so the subject is null: falling back to
-      // HEAD's subject here would describe someone else's commit as this
-      // worktree's work (the exact bug this replaced).
+      // One call covers both `unpushed` (line count, merges included) and
+      // `lastCommitSubject` (the newest NON-merge line's subject) over the
+      // same range — no second git invocation; see pickUnpushedAndSubject.
+      // An empty range, or a range containing only merges, means there is no
+      // own-work subject to report: falling back to a merge's subject or to
+      // HEAD's subject would both describe someone else's/the-merge's
+      // commit as this worktree's work (the exact bug this replaced).
       try {
-        const raw = await run('git', ['log', '--format=%ct%x00%s', `origin/${base}..HEAD`], wt.path);
-        const { count, subject } = parseCommitRangeLog(raw);
+        const raw = await run('git', ['log', '--format=%P%x00%s', `origin/${base}..HEAD`], wt.path);
+        const { count, subject } = pickUnpushedAndSubject(raw);
         row.unpushed = count;
         row.lastCommitSubject = subject;
       } catch (e) { warn(repo, 'unpushed', e.message); }

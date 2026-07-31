@@ -4,10 +4,23 @@ const { collect } = require('../collect.js');
 
 const NOW = 1785000000000;
 
-// Builds the stdout of `git log --format=%ct%x00%s origin/<base>..HEAD`:
-// newest commit first, one line per commit ahead of base.
-function rangeLog(...subjects) {
-  return subjects.map((s, i) => `${Math.floor((NOW - (i + 1) * 1000) / 1000)}\x00${s}`).join('\n');
+// Builds the stdout of `git log --format=%P%x00%s origin/<base>..HEAD`:
+// newest commit first, one line per commit ahead of base. Each entry is
+// either a plain subject string (a normal, single-parent commit) or the
+// result of merge(subject) (a merge commit — two parents), so tests can
+// express which of several commits in a range is the one that should be
+// skipped when picking lastCommitSubject.
+function rangeLog(...entries) {
+  return entries.map((e) => {
+    const isMerge = e !== null && typeof e === 'object' && e.merge === true;
+    const subject = isMerge ? e.subject : e;
+    const parents = isMerge ? 'p1 p2' : 'p1';
+    return `${parents}\x00${subject}`;
+  }).join('\n');
+}
+
+function merge(subject) {
+  return { merge: true, subject };
 }
 
 function harness(over) {
@@ -385,6 +398,68 @@ test('collect reports lastCommitSubject as null with 0 commits ahead of base, wh
   assert.equal(wt.unpushed, 0);
   assert.equal(wt.lastCommitSubject, null);
   assert.equal(wt.lastCommit, headTs * 1000);
+});
+
+test('collect skips a merge commit and takes the subject from the next non-merge commit', async () => {
+  // Real case hit on the actual machine: the newest commit in range was
+  // "Merge remote-tracking branch 'origin/main' into ..." — a genuine commit
+  // of the owner's, but not a description of their work. The owner merges the
+  // base branch into feature branches routinely, so this recurs.
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\n' +
+               'branch refs/heads/chore/no-ticket-askuserquestion-prompts\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/main';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return Math.floor(NOW / 1000) + '\x00chore: unrelated';
+      if (a.includes('..HEAD')) {
+        return rangeLog(
+          merge("Merge remote-tracking branch 'origin/main' into chore/no-ticket-askuserquestion-prompts"),
+          'add the actual prompt change',
+          'wip',
+        );
+      }
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.lastCommitSubject, 'add the actual prompt change');
+  assert.equal(wt.unpushed, 3);
+});
+
+test('collect reports lastCommitSubject as null when every commit in range is a merge, while lastCommit and unpushed are unaffected', async () => {
+  const headTs = Math.floor(NOW / 1000);
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/chore/merges-only\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/main';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return headTs + '\x00Merge remote-tracking branch \'origin/main\' into chore/merges-only';
+      if (a.includes('..HEAD')) {
+        return rangeLog(
+          merge("Merge remote-tracking branch 'origin/main' into chore/merges-only"),
+          merge('Merge remote-tracking branch \'origin/main\' into chore/merges-only (2)'),
+        );
+      }
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.lastCommitSubject, null);
+  assert.equal(wt.lastCommit, headTs * 1000);
+  assert.equal(wt.unpushed, 2);
 });
 
 test('collect falls back to HEAD\'s subject when no base branch can be derived', async () => {
