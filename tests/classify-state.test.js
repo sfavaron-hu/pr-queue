@@ -96,6 +96,38 @@ test('a process with no PR and no known activity is cold', () => {
   assert.equal(classify(proc({ lastLocalActivity: null }), [], NOW), 'frio');
 });
 
+test('a merged PR, no open PR, no recent local activity is mergeado', () => {
+  assert.equal(classify(proc({ lastLocalActivity: NOW - 5 * DAY }),
+    [pr({ merged: true })], NOW), 'mergeado');
+});
+
+test('a merged PR with humanReviews: 0 is mergeado, not esperando — ordering pin', () => {
+  assert.equal(classify(proc({ lastLocalActivity: NOW - 5 * DAY }),
+    [pr({ merged: true, humanReviews: 0 })], NOW), 'mergeado');
+});
+
+test('a merged PR plus own activity within 48h is still turno', () => {
+  assert.equal(classify(proc({ lastLocalActivity: NOW - DAY }),
+    [pr({ merged: true })], NOW), 'turno');
+});
+
+test('a merged PR plus an open PR on the same process: the open PR decides, not mergeado', () => {
+  assert.equal(classify(proc({ lastLocalActivity: NOW - 5 * DAY }),
+    [pr({ merged: true }), pr({ humanReviews: 0 })], NOW), 'esperando');
+});
+
+test('sortProcesses places mergeado after frio, newest first within it', () => {
+  const rows = [
+    { proc: proc({ key: 'merged-old', lastLocalActivity: NOW - 10 * DAY }),
+      prs: [pr({ merged: true, updatedAt: NOW - 10 * DAY })] },
+    { proc: proc({ key: 'cold', lastLocalActivity: NOW - 20 * DAY }), prs: [] },
+    { proc: proc({ key: 'merged-new', lastLocalActivity: NOW - 3 * DAY }),
+      prs: [pr({ merged: true, updatedAt: NOW - 3 * DAY })] },
+  ];
+  const keys = sortProcesses(rows, NOW).map(r => r.proc.key);
+  assert.deepEqual(keys, ['cold', 'merged-new', 'merged-old']);
+});
+
 test('sortProcesses orders turno, esperando, pausa, frio — newest first inside each', () => {
   const rows = [
     { proc: proc({ key: 'cold-new', lastLocalActivity: NOW - 15 * DAY }), prs: [] },

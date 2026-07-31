@@ -126,6 +126,16 @@ function classify(proc, prs, now) {
   var local = typeof proc.lastLocalActivity === 'number' ? proc.lastLocalActivity : null;
   if (local !== null && now - local <= TURN_WINDOW_MS) return 'turno';
 
+  // Must be checked before the waiting branch below: a merged PR typically
+  // carries humanReviews === 0 (nobody needs to review it anymore), and
+  // "esperando"'s own rule ("PR open with no human review yet") would
+  // otherwise misclassify finished work as waiting on someone. Requires no
+  // open PR on the process — an open PR alongside a merged one still means
+  // there's live work, and the open PR should decide instead.
+  var hasMerged = list.some(function (p) { return p.merged === true; });
+  var hasOpen = list.some(function (p) { return p.merged !== true; });
+  if (hasMerged && !hasOpen) return 'mergeado';
+
   var waiting = list.some(function (p) {
     return p.ci === 'pending' || (p.humanReviews || 0) === 0;
   });
@@ -161,7 +171,9 @@ function safeHttpUrl(value) {
   }
 }
 
-var STATE_ORDER = { turno: 0, esperando: 1, pausa: 2, frio: 3 };
+// mergeado sorts last: finished work, and this panel answers "what should I
+// work on" — not "what did I already finish".
+var STATE_ORDER = { turno: 0, esperando: 1, pausa: 2, frio: 3, mergeado: 4 };
 
 function sortProcesses(rows, now) {
   return rows.slice().sort(function (a, b) {

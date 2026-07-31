@@ -36,6 +36,16 @@ function safeLinkHTML(url, label, attrs) {
   return `<a href="${esc(safe)}"${attrs || ''}>${escS(label)}</a>`;
 }
 
+// A merged PR from state.mergedPRs carries no `headRef` at all (see
+// mergedSectionHTML's former caller / renderLocalPanel for the shape) — so
+// the ticket it should join on has to come from its title instead, which is
+// where a Jira ticket normally also appears. Open PRs always have `headRef`
+// and keep using that, unchanged.
+function prTicket(pr) {
+  if (pr.headRef) return extractTicket(pr.headRef);
+  return pr.title ? extractTicket(pr.title) : null;
+}
+
 // Attaches each PR in `ownPRs` to at most one process: an exact `headRef`
 // match against `proc.branches` wins if one exists; failing that, the first
 // process (in payload order) whose `ticket` equals the PR's extracted ticket,
@@ -59,7 +69,7 @@ function attachOwnPRs(processes, ownPRs) {
   });
 
   afterExact.forEach(pr => {
-    const ticket = pr.headRef ? extractTicket(pr.headRef) : null;
+    const ticket = prTicket(pr);
     const row = ticket ? rows.find(r => r.proc.ticket && r.proc.ticket === ticket) : null;
     if (row) row.prs.push(pr);
     else unmatched.push(pr);
@@ -84,8 +94,12 @@ function attachOwnPRs(processes, ownPRs) {
 function synthesizeProcesses(unmatchedPRs) {
   const map = new Map();
   unmatchedPRs.forEach(pr => {
-    const ticket = pr.headRef ? extractTicket(pr.headRef) : null;
-    const key = ticket || pr.headRef;
+    const ticket = prTicket(pr);
+    // A merged PR has no `headRef` — falling back to it here (like an open
+    // PR would) collapses every ticket-less merged PR onto one shared key.
+    // owner/repo#number is always unique per PR, so it's the fallback
+    // instead.
+    const key = ticket || pr.headRef || `${pr.owner}/${pr.repo}#${pr.number}`;
     if (!map.has(key)) {
       map.set(key, {
         proc: { key: key, ticket: ticket || null, branches: [], worktrees: [],
@@ -161,6 +175,7 @@ const PROC_STATE_BADGE = {
   esperando: ['badge-amber',      'ESPERANDO'],
   pausa:     ['badge-gray',       'EN PAUSA'],
   frio:      ['badge-gray badge-dim', 'FRÍO'],
+  mergeado:  ['badge-green',      'MERGEADO'],
 };
 
 function procStateBadgeHTML(s) {
@@ -329,6 +344,19 @@ function pushChip(w, multi) {
   return copyChip(`push${repoLabel} ⎘`, `git -C ${w.path} push -u origin ${w.branch}`);
 }
 
+// A copy-able `git worktree remove <path>` for a worktree that still exists
+// locally on a process whose only PRs are merged — the actionable insight
+// for a mergeado card: the branch is done, and the worktree is leftover local
+// state worth cleaning up. Reconstructs the repo's main checkout path the
+// same way worktreeChip's prune command does. Deliberately no `--force`: git
+// itself refuses this when the worktree has uncommitted changes, which is
+// exactly the safety net the owner relied on when doing this by hand.
+function worktreeRemoveChip(w, workspaceRoot, multi) {
+  const repoLabel = multi ? ` ${w.repo}` : '';
+  const repoPath = workspaceRoot ? `${workspaceRoot}/${w.repo}` : w.repo;
+  return copyChip(`remove${repoLabel} ⎘`, `git -C ${repoPath} worktree remove ${w.path}`);
+}
+
 // A soft first-person notice, never phrased as an accusation against GitHub:
 // state.ownPRs can legitimately end up empty while a token is configured
 // (loadOwnPRs in render.js skips while the tab is hidden, and silently
@@ -338,20 +366,6 @@ function pushChip(w, multi) {
 // rather than trying to tell the two apart from ownPRs.length alone.
 function prNoticeHTML() {
   return `<div class="proc-notice">No pude cargar el estado de los PRs — puede haber PRs abiertos sin reflejar en esta vista.</div>`;
-}
-
-// Compact "Mergeados" footer: state.mergedPRs (recent-3-day merges, populated
-// by loadOwnPRs in render.js) has nowhere to go once #own-pr-list is hidden —
-// this reproduces just enough of it, one short line per PR, so hiding the PR
-// list doesn't silently drop it. Deliberately not part of the process cards
-// or the state counts computed below: a merged PR is finished work, not
-// something waiting on a decision.
-function mergedSectionHTML(mergedPRs) {
-  if (!mergedPRs || !mergedPRs.length) return '';
-  const rows = mergedPRs.map(pr =>
-    `<div class="proc-merged-row">${safeLinkHTML(pr.url, '#' + pr.number, ' target="_blank"')} <span class="proc-detail">${escS(pr.repo)}</span></div>`
-  ).join('');
-  return `<div class="proc-merged"><div class="proc-merged-heading">Mergeados</div>${rows}</div>`;
 }
 
 // One `.pr-card` per process, built mostly from the same class vocabulary
@@ -367,7 +381,12 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   const prs = row.prs;
   const s = classify(p, prs, now);
   const last = lastActivity(p, prs);
-  const diffs = diffLinksFor(p, prs);
+  // No diff link for a mergeado card at all: comparing a merged branch
+  // against base is pointless, and its branch is usually gone from the
+  // remote anyway. (diffLinksFor would already suppress the merged PR's own
+  // repo via prRepoSlugs, but this also covers a multi-repo process where
+  // another repo's worktree has no PR of its own.)
+  const diffs = s === 'mergeado' ? [] : diffLinksFor(p, prs);
 
   // Title: PR title, else last commit subject, else the process key itself
   // so the card never has an empty title (see subtitleFor for why aiTitle is
@@ -421,7 +440,14 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
   // row, plus local worktree state and a gray timeAgo badge. No badge for
   // any of this when the row has no PR at all — there is nothing to report.
   const rightBadges = [];
-  if (prs.length) {
+  // A mergeado card's PR-status badges reduce to just "✓ Merged" — CI/Draft/
+  // Aprobado/Conflicts describe an open PR's review lifecycle, none of which
+  // still applies once the PR is merged. Matches render.js's own vocabulary
+  // for its merged cards (see renderCard's `pr.merged` branch) rather than
+  // inventing new wording or a new color.
+  if (s === 'mergeado') {
+    rightBadges.push('<span class="badge badge-green">✓ Merged</span>');
+  } else if (prs.length) {
     const ci = prs.some(x => x.ci === 'failed')  ? 'failed'
              : prs.some(x => x.ci === 'pending') ? 'pending'
              : prs.some(x => x.ci === 'green')   ? 'green' : 'unknown';
@@ -456,6 +482,16 @@ function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
     actions.push(safeLinkHTML(d.url, label, ' target="_blank" rel="noopener" class="btn btn-ghost btn-sm"'));
   });
   noOriginWorktrees.forEach(w => actions.push(pushChip(w, multiWorktree)));
+  // The leftover-cleanup actionable for a mergeado card: a worktree still on
+  // disk for a process whose PR(s) are all merged is exactly the combination
+  // worth surfacing. Skipped for a prunable worktree — its directory is
+  // already gone, so `worktree remove` has nothing to act on; `git worktree
+  // prune` below already covers that case.
+  if (s === 'mergeado') {
+    p.worktrees.forEach(w => {
+      if (w.path && !w.prunable) actions.push(worktreeRemoveChip(w, workspaceRoot, multiWorktree));
+    });
+  }
   sessionChips(p).forEach(chip => actions.push(chip));
   p.worktrees.forEach(w => {
     const chip = worktreeChip(w, workspaceRoot, multiWorktree);
@@ -523,18 +559,24 @@ function renderLocalPanel() {
   // unavailable data rather than an empty result; see prNoticeHTML().
   const tokenConfigured = typeof state !== 'undefined' && !!state.token;
   const prDataUnavailable = tokenConfigured && ownPRs.length === 0;
-  const { rows, unmatched } = attachOwnPRs(payload.processes, ownPRs);
+  // state.mergedPRs (recent-3-day merges, populated by loadOwnPRs in
+  // render.js) carries no `merged` marker of its own — render.js adds that
+  // at render time for its own compact display, which this panel no longer
+  // uses. Tag copies here (never state.mergedPRs itself) so classify() and
+  // procCardHTML can tell a merged PR from an open one once it's joined
+  // through the very same attachment path as ownPRs.
+  const mergedPRs = (typeof state !== 'undefined' && state.mergedPRs) || [];
+  const taggedMerged = mergedPRs.map(pr => Object.assign({ merged: true }, pr));
+  const { rows, unmatched } = attachOwnPRs(payload.processes, ownPRs.concat(taggedMerged));
   const allRows = rows.concat(synthesizeProcesses(unmatched));
   const sorted = sortProcesses(allRows, now);
 
   // Build the entire list first. If anything here throws, nothing has been
   // mutated yet — #work-list stays exactly as it was (empty, or showing the
   // previous good paint) instead of a half-built list.
-  const mergedPRs = (typeof state !== 'undefined' && state.mergedPRs) || [];
   const listHTML = (prDataUnavailable ? prNoticeHTML() : '')
     + sorted.map(r => procCardHTML(r, now, payload.workspaceRoot, prDataUnavailable)).join('')
-    + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '')
-    + mergedSectionHTML(mergedPRs);
+    + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '');
 
   const states = sorted.map(r => classify(r.proc, r.prs, now));
   const count = st => states.filter(x => x === st).length;
@@ -542,7 +584,7 @@ function renderLocalPanel() {
   const warn = payload.warnings || [];
   const metaText =
     `${sorted.length} procesos · ${count('turno')} tu turno · ${count('esperando')} esperando · ` +
-    `${count('pausa')} en pausa · ${count('frio')} fríos (>${COLD_DAYS}d)` +
+    `${count('pausa')} en pausa · ${count('frio')} fríos (>${COLD_DAYS}d) · ${count('mergeado')} mergeados` +
     (warn.length ? ` · ${warn.length} warnings` : '') +
     (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
 
