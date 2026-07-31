@@ -262,9 +262,12 @@ async function loadOwnPRs() {
   if (state.ownPRs.length === 0) el.ownLoading.classList.remove('hidden');
 
   try {
+    const labelQualifier = label && label.trim() ? [`label:${encodeURIComponent(label)}`] : [];
+    const openQualifiers = ['is:pr', 'is:open', ...labelQualifier, `org:${encodeURIComponent(org)}`, `author:${encodeURIComponent(state.me)}`];
+    const mergedQualifiers = ['is:pr', 'is:merged', ...labelQualifier, `org:${encodeURIComponent(org)}`, `author:${encodeURIComponent(state.me)}`, `merged:>${threeDAysAgo()}`];
     const [openData, mergedData] = await Promise.all([
-      apiFetch(`${API}/search/issues?q=is:pr+is:open+label:${encodeURIComponent(label)}+org:${encodeURIComponent(org)}+author:${encodeURIComponent(state.me)}&per_page=50&sort=created&order=desc`),
-      apiFetch(`${API}/search/issues?q=is:pr+is:merged+label:${encodeURIComponent(label)}+org:${encodeURIComponent(org)}+author:${encodeURIComponent(state.me)}+merged:>${threeDAysAgo()}&per_page=20&sort=updated&order=desc`),
+      apiFetch(`${API}/search/issues?q=${openQualifiers.join('+')}&per_page=50&sort=created&order=desc`),
+      apiFetch(`${API}/search/issues?q=${mergedQualifiers.join('+')}&per_page=20&sort=updated&order=desc`),
     ]);
 
     const items = openData.items || [];
