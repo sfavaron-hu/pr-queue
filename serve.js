@@ -36,7 +36,19 @@ function realCollect() {
 }
 
 async function handle(req, res, collectFn) {
-  const url = new URL(req.url, 'http://127.0.0.1');
+  let url;
+  try {
+    url = new URL(req.url, 'http://127.0.0.1');
+  } catch (err) {
+    // A scheme-relative target like `//` or `///` parses as `http://` with
+    // an empty (or bogus) authority and throws TypeError here — not
+    // URIError, so it doesn't hit the existing decodeURIComponent guard
+    // below. Tag it so the outer handler can tell "target failed to parse"
+    // (client's fault, 400) apart from a TypeError thrown by anything else
+    // in this function (our fault, 500) without broadening that catch-all.
+    err.isMalformedTarget = true;
+    throw err;
+  }
 
   if (url.pathname === '/api/local') {
     try {
@@ -85,7 +97,7 @@ function createServer(opts) {
       await handle(req, res, collectFn);
     } catch (err) {
       if (!res.headersSent) {
-        const bad = err instanceof URIError;
+        const bad = err instanceof URIError || err.isMalformedTarget === true;
         res.writeHead(bad ? 400 : 500, { 'content-type': 'text/plain; charset=utf-8' });
         res.end(bad ? 'bad request' : 'internal error');
       } else {
