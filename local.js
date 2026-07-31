@@ -3,17 +3,18 @@
 // Mounts ONLY if /api/local answers. On GitHub Pages that request 404s and
 // this file does nothing at all, which is what keeps the shared deploy
 // byte-for-byte unchanged for everyone else.
+//
+// Mounted, it renders one card per active process inside #own-column,
+// reusing the same .pr-card CSS the "Mis PRs" list already uses, and swaps
+// that column's heading to "Trabajo activo". Unmounted, the column is
+// exactly what it always was: PR cards under a "Mis PRs" heading.
 
-const PROC_CACHE_KEY     = 'prq_proc_cache';
-const PROC_COLLAPSED_KEY = 'prq_proc_collapsed';
+const PROC_CACHE_KEY = 'prq_proc_cache';
 
 const procEl = {
-  section: () => document.getElementById('proc-section'),
-  body:    () => document.getElementById('proc-body'),
-  count:   () => document.getElementById('proc-count'),
-  meta:    () => document.getElementById('proc-meta'),
-  caret:   () => document.getElementById('proc-caret'),
-  toggle:  () => document.getElementById('proc-toggle'),
+  workList:    () => document.getElementById('work-list'),
+  columnTitle: () => document.getElementById('own-column-title'),
+  metaLine:    () => document.getElementById('proc-meta-line'),
 };
 
 // safeHttpUrl is defined as a global by classify.js (loaded before this file
@@ -69,7 +70,7 @@ function attachOwnPRs(processes, ownPRs) {
 
 // One synthetic process per distinct ticket (or, lacking a ticket, per
 // branch) among PRs that attachOwnPRs() matched nowhere — a PR pushed
-// straight to GitHub with no local worktree still gets a row instead of
+// straight to GitHub with no local worktree still gets a card instead of
 // vanishing along with the "Mis PRs" column it used to live in.
 // `worktrees`/`sessions` stay empty and `lastLocalActivity` stays null, which
 // is what keeps this out of the 48h own-activity window: classify() falls
@@ -77,7 +78,7 @@ function attachOwnPRs(processes, ownPRs) {
 // esperando/pausa/frío branches, so no classifier change is needed. `ticket`
 // mirrors a real process's shape (non-null only when one was found) so
 // downstream code (the "sin ticket" badge) treats it identically. `synthetic`
-// is the marker procRowHTML uses to print "sin worktree local" in place of
+// is the marker procCardHTML uses to print "sin worktree local" in place of
 // the (necessarily empty) repo list. Two PRs that resolve to the same key
 // share one process, both attached to it.
 function synthesizeProcesses(unmatchedPRs) {
@@ -151,11 +152,20 @@ function looseRowHTML(sessions) {
   </div>`;
 }
 
-const PROC_STATE_LABELS = { turno: 'Tu turno', esperando: 'Esperando',
-                            pausa: 'En pausa', frio: 'Frío' };
+// Top-right state badge for a process card. FRÍO gets an extra dimming
+// modifier so it visually recedes even though it shares badge-gray with
+// EN PAUSA — a process nobody expects back for a while should read as more
+// dormant than one merely between turns.
+const PROC_STATE_BADGE = {
+  turno:     ['badge-red',        'TU TURNO'],
+  esperando: ['badge-amber',      'ESPERANDO'],
+  pausa:     ['badge-gray',       'EN PAUSA'],
+  frio:      ['badge-gray badge-dim', 'FRÍO'],
+};
 
-function procStateLabel(s) {
-  return PROC_STATE_LABELS[s] || s;
+function procStateBadgeHTML(s) {
+  const [cls, label] = PROC_STATE_BADGE[s] || ['badge-gray', s.toUpperCase()];
+  return `<span class="badge ${cls}">${label}</span>`;
 }
 
 // `lastCommitSubject` and `aiTitle` are untrusted text (a commit subject can
@@ -167,10 +177,10 @@ function escS(v) {
   return (v === null || v === undefined) ? '' : esc(String(v));
 }
 
-// Line 2: the context subtitle. First available of the joined PR's title, an
-// attached session's aiTitle, or a worktree's last commit subject — all three
-// are free per the collector. `null` when none exist, so the row omits the
-// line instead of rendering it empty.
+// The card's title line: the context subtitle. First available of the joined
+// PR's title, an attached session's aiTitle, or a worktree's last commit
+// subject — all three are free per the collector. Falls back to the process
+// key so a card never renders with an empty title.
 function subtitleFor(p, prs) {
   const pr = prs.find(x => x.title);
   if (pr) return pr.title;
@@ -218,16 +228,16 @@ function diffLinksFor(p, prs) {
   return links;
 }
 
-// A click-to-copy chip. `text` is the untrusted-ish command string copied to
-// the clipboard; both the visible label and the `data-copy` attribute go
-// through esc()/escS(), since a data- attribute is exactly the kind of
-// interpolation this feature warns about getting wrong. `title` defaults to
-// `text` (the existing chips just want the full command on hover) but a
-// caller can pass a richer tooltip — always still escaped here, not by the
-// caller.
+// A click-to-copy chip, styled like the rest of the card's actionables
+// (.btn.btn-ghost.btn-sm) with a `proc-copy` marker class the single
+// delegated listener queries for. `text` is the untrusted-ish command string
+// copied to the clipboard; both the visible label and the `data-copy`
+// attribute go through esc()/escS(). `title` defaults to `text` (the full
+// command on hover) but a caller can pass a richer tooltip — always still
+// escaped here, not by the caller.
 function copyChip(label, text, title) {
   const t = title === undefined ? text : title;
-  return `<button type="button" class="proc-chip proc-copy" data-copy="${esc(text)}" title="${esc(t)}">${escS(label)}</button>`;
+  return `<button type="button" class="btn btn-ghost btn-sm proc-copy" data-copy="${esc(text)}" title="${esc(t)}">${escS(label)}</button>`;
 }
 
 // A normalized `resume` chip per attached session, carrying its resumeCmd.
@@ -283,79 +293,10 @@ function prNoticeHTML() {
   return `<div class="proc-notice">No pude cargar el estado de los PRs — puede haber PRs abiertos sin reflejar en esta vista.</div>`;
 }
 
-function procRowHTML(row, now, workspaceRoot, prDataUnavailable) {
-  const p = row.proc;
-  const s = classify(p, row.prs, now);
-  const last = lastActivity(p, row.prs);
-
-  const bits = [];
-  row.prs.forEach(pr => {
-    const flags = [];
-    if (pr.draft) flags.push('draft');
-    if (pr.ci === 'failed') flags.push('CI roja');
-    if (pr.ci === 'pending') flags.push('CI corriendo');
-    if (pr.conflicts) flags.push('conflictos');
-    if (pr.changesReq) flags.push('cambios pedidos');
-    else if (pr.approved) flags.push('aprobado');
-    else if ((pr.humanReviews || 0) === 0) flags.push('sin review');
-    bits.push(safeLinkHTML(pr.url, '#' + pr.number, ' target="_blank"') +
-      (flags.length ? ` <span class="proc-detail">${esc(flags.join(' · '))}</span>` : ''));
-  });
-
-  // A diff link is suppressed for a repo that already has a joined PR in
-  // this row (see diffLinksFor) and shown otherwise — it is how you open a
-  // PR for a branch that has none yet.
-  const diffs = diffLinksFor(p, row.prs);
-  diffs.forEach(d => {
-    const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
-    bits.push(safeLinkHTML(d.url, label, ' class="proc-chip" target="_blank"'));
-  });
-
-  sessionChips(p).forEach(chip => bits.push(chip));
-
-  const multiWorktree = p.worktrees.length > 1;
-  p.worktrees.forEach(w => {
-    const chip = worktreeChip(w, workspaceRoot, multiWorktree);
-    if (chip) bits.push(chip);
-  });
-
-  const dirty = p.worktrees.reduce((n, w) => n + (w.dirty || 0), 0);
-  if (dirty > 0) bits.push(`<span class="proc-detail">${dirty} sin commitear</span>`);
-
-  // `unpushed` may be null (unknown, e.g. no base branch to diff against) on
-  // any given worktree — that must not silently count as 0, but a `null` in
-  // the sum must not render as NaN either. Only worktrees with a real number
-  // contribute; if none do, there is nothing to show.
-  const unpushedKnown = p.worktrees.some(w => typeof w.unpushed === 'number');
-  const unpushed = unpushedKnown
-    ? p.worktrees.reduce((n, w) => n + (typeof w.unpushed === 'number' ? w.unpushed : 0), 0)
-    : null;
-  if (unpushed > 0) bits.push(`<span class="proc-detail">${unpushed} sin pushear</span>`);
-
-  const detached = p.worktrees.filter(w => w.detached).length;
-  if (detached > 0) bits.push(`<span class="proc-detail">${detached} detached</span>`);
-
-  const repos = [...new Set(p.worktrees.map(w => w.repo))].join(', ');
-  const subtitle = subtitleFor(p, row.prs);
-
-  return `<div class="proc-row">
-    <span class="proc-state ${s}">${procStateLabel(s)}</span>
-    <span>
-      <span class="proc-key">${esc(p.key)}</span>${p.ticket ? '' : '<span class="proc-noticket">sin ticket</span>'}
-      ${repos ? `<span class="proc-detail"> · ${esc(repos)}</span>`
-        : (p.synthetic ? '<span class="proc-detail"> · sin worktree local</span>' : '')}
-      ${subtitle ? `<br><span class="proc-subtitle">${escS(subtitle)}</span>` : ''}
-      <br>${bits.join(' · ') ||
-        (prDataUnavailable ? '<span class="proc-detail">PR: —</span>' : '<span class="proc-detail">sin PR</span>')}
-    </span>
-    <span class="proc-detail">${last ? timeAgo(new Date(last)) : '—'}</span>
-  </div>`;
-}
-
 // Compact "Mergeados" footer: state.mergedPRs (recent-3-day merges, populated
-// by loadOwnPRs in render.js) has nowhere to go once #own-column is hidden —
-// this reproduces just enough of it, one short line per PR, so hiding the
-// column doesn't silently drop it. Deliberately not part of the process list
+// by loadOwnPRs in render.js) has nowhere to go once #own-pr-list is hidden —
+// this reproduces just enough of it, one short line per PR, so hiding the PR
+// list doesn't silently drop it. Deliberately not part of the process cards
 // or the state counts computed below: a merged PR is finished work, not
 // something waiting on a decision.
 function mergedSectionHTML(mergedPRs) {
@@ -364,6 +305,116 @@ function mergedSectionHTML(mergedPRs) {
     `<div class="proc-merged-row">${safeLinkHTML(pr.url, '#' + pr.number, ' target="_blank"')} <span class="proc-detail">${escS(pr.repo)}</span></div>`
   ).join('');
   return `<div class="proc-merged"><div class="proc-merged-heading">Mergeados</div>${rows}</div>`;
+}
+
+// One `.pr-card` per process, built from the exact same class vocabulary
+// renderCard() in render.js uses for a PR card — .pr-title, .pr-repo,
+// .pr-number, .pr-meta, .pr-actions, .badge(-red/-amber/-green/-gray),
+// .btn.btn-ghost.btn-sm — so a process card sits natively among PR cards
+// with no bespoke styling of its own.
+function procCardHTML(row, now, workspaceRoot, prDataUnavailable) {
+  const p = row.proc;
+  const prs = row.prs;
+  const s = classify(p, prs, now);
+  const last = lastActivity(p, prs);
+  const diffs = diffLinksFor(p, prs);
+
+  // Title: PR title, else session aiTitle, else last commit subject, else
+  // the process key itself so the card never has an empty title. Linked to
+  // the PR when one exists, else the compare/diff URL, else plain text.
+  const titleText = subtitleFor(p, prs) || p.key;
+  const linkPr = prs.find(x => x.title) || prs[0] || null;
+  const titleUrl = linkPr ? linkPr.url : (diffs[0] ? diffs[0].url : null);
+  const titleInner = titleUrl
+    ? safeLinkHTML(titleUrl, titleText, ' target="_blank" rel="noopener"')
+    : escS(titleText);
+
+  const repos = [...new Set(p.worktrees.map(w => w.repo))];
+  const repoLabel = repos.length ? repos.join(', ') : (p.synthetic ? 'sin worktree local' : '');
+
+  const dirty = p.worktrees.reduce((n, w) => n + (w.dirty || 0), 0);
+  // `unpushed` may be null (unknown, e.g. no base branch to diff against) on
+  // any given worktree — that must not silently count as 0, but a `null` in
+  // the sum must not render as NaN either. Only worktrees with a real number
+  // contribute; if none do, there is nothing to show.
+  const unpushedKnown = p.worktrees.some(w => typeof w.unpushed === 'number');
+  const unpushed = unpushedKnown
+    ? p.worktrees.reduce((n, w) => n + (typeof w.unpushed === 'number' ? w.unpushed : 0), 0)
+    : null;
+  const detached = p.worktrees.filter(w => w.detached).length;
+
+  // Second row, right: the same badge vocabulary a PR card uses (CI, Draft,
+  // ✗ Cambios / ✓ Aprobado, ⚡ Conflicts), aggregated across every PR in the
+  // row, plus local worktree state and a gray timeAgo badge. No badge for
+  // any of this when the row has no PR at all — there is nothing to report.
+  const rightBadges = [];
+  if (prs.length) {
+    const ci = prs.some(x => x.ci === 'failed')  ? 'failed'
+             : prs.some(x => x.ci === 'pending') ? 'pending'
+             : prs.some(x => x.ci === 'green')   ? 'green' : 'unknown';
+    rightBadges.push(ciBadge(ci));
+    if (prs.some(x => x.draft)) rightBadges.push('<span class="badge badge-amber" data-tip="PR en borrador, no listo para review">Draft</span>');
+    if (prs.some(x => x.changesReq)) rightBadges.push('<span class="badge badge-red" data-tip="Alguien pidió cambios">✗ Cambios</span>');
+    else if (prs.some(x => x.approved)) rightBadges.push('<span class="badge badge-green" data-tip="Tiene al menos un approve">✓ Aprobado</span>');
+    if (prs.some(x => x.conflicts)) rightBadges.push('<span class="badge badge-red">⚡ Conflicts</span>');
+  }
+  if (unpushed > 0) rightBadges.push(`<span class="badge badge-gray">${unpushed} sin pushear</span>`);
+  if (dirty > 0) rightBadges.push(`<span class="badge badge-gray">${dirty} sin commitear</span>`);
+  rightBadges.push(`<span class="badge badge-gray">${last ? timeAgo(new Date(last)) : '—'}</span>`);
+
+  // .pr-actions: every actionable link/chip. One "Open →" per PR (labeled
+  // per-repo only when the row carries more than one), then a diff chip per
+  // repo still missing a PR, then a resume chip per session, then a cd/prune
+  // chip per worktree.
+  const actions = [];
+  const multiPR = prs.length > 1;
+  prs.forEach(pr => {
+    const label = multiPR ? `Open ${pr.repo} →` : 'Open →';
+    actions.push(safeLinkHTML(pr.url, label, ' target="_blank" rel="noopener" class="btn btn-ghost btn-sm"'));
+  });
+  diffs.forEach(d => {
+    const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
+    actions.push(safeLinkHTML(d.url, label, ' target="_blank" rel="noopener" class="btn btn-ghost btn-sm"'));
+  });
+  sessionChips(p).forEach(chip => actions.push(chip));
+  const multiWorktree = p.worktrees.length > 1;
+  p.worktrees.forEach(w => {
+    const chip = worktreeChip(w, workspaceRoot, multiWorktree);
+    if (chip) actions.push(chip);
+  });
+
+  // .pr-meta left: process identity — no ticket, detached-worktree count,
+  // and (only when nothing else in the row says anything about a PR at all)
+  // the "sin PR"/"PR: —" fallback, matching the same distinction the old
+  // panel drew between "no PR data" and "genuinely zero PRs".
+  const identity = [];
+  if (!p.ticket) identity.push('<span class="badge badge-gray">sin ticket</span>');
+  if (detached > 0) identity.push(`<span class="badge badge-gray">${detached} detached</span>`);
+  if (actions.length === 0) {
+    identity.push(prDataUnavailable
+      ? '<span class="badge badge-gray">PR: —</span>'
+      : '<span class="badge badge-gray">sin PR</span>');
+  }
+
+  return `<div class="pr-card" data-proc-key="${esc(p.key)}">
+    <div class="pr-top">
+      <div class="pr-title" style="margin:0;flex:1;">${titleInner}</div>
+      <div class="pr-badges">${procStateBadgeHTML(s)}</div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="pr-repo">${esc(p.key)}</span>
+        ${repoLabel ? `<span class="pr-number">${escS(repoLabel)}</span>` : ''}
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end;">
+        ${rightBadges.join('')}
+      </div>
+    </div>
+    <div class="pr-meta">
+      <div>${identity.join(' ')}</div>
+      <div class="pr-actions">${actions.join('')}</div>
+    </div>
+  </div>`;
 }
 
 function renderLocalPanel() {
@@ -384,17 +435,17 @@ function renderLocalPanel() {
   const allRows = rows.concat(synthesizeProcesses(unmatched));
   const sorted = sortProcesses(allRows, now);
 
-  // Build the entire body first. If anything here throws, nothing has been
-  // mutated yet — the section stays exactly as it was (hidden, or showing the
-  // previous good paint) instead of a half-built header with no body.
+  // Build the entire list first. If anything here throws, nothing has been
+  // mutated yet — #work-list stays exactly as it was (empty, or showing the
+  // previous good paint) instead of a half-built list.
   const mergedPRs = (typeof state !== 'undefined' && state.mergedPRs) || [];
-  const bodyHTML = (prDataUnavailable ? prNoticeHTML() : '')
-    + sorted.map(r => procRowHTML(r, now, payload.workspaceRoot, prDataUnavailable)).join('')
+  const listHTML = (prDataUnavailable ? prNoticeHTML() : '')
+    + sorted.map(r => procCardHTML(r, now, payload.workspaceRoot, prDataUnavailable)).join('')
     + ((payload.looseSessions || []).length ? looseRowHTML(payload.looseSessions) : '')
     + mergedSectionHTML(mergedPRs);
 
   const states = sorted.map(r => classify(r.proc, r.prs, now));
-  const count = s => states.filter(x => x === s).length;
+  const count = st => states.filter(x => x === st).length;
 
   const warn = payload.warnings || [];
   const metaText =
@@ -403,30 +454,21 @@ function renderLocalPanel() {
     (warn.length ? ` · ${warn.length} warnings` : '') +
     (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
 
-  procEl.body().innerHTML = bodyHTML;
-  // The badge counts what needs a decision from you, not everything that exists.
-  procEl.count().textContent = count('turno') || '';
-  procEl.count().style.display = count('turno') > 0 ? '' : 'none';
-  procEl.meta().textContent = metaText;
+  procEl.workList().innerHTML = listHTML;
+  procEl.metaLine().textContent = metaText;
+  procEl.metaLine().classList.remove('hidden');
   // Hovering surfaces the actual warning messages — otherwise "· N warnings"
   // is a count with nowhere to see what went wrong.
-  procEl.meta().title = warn.length
+  procEl.metaLine().title = warn.length
     ? warn.map(w => `${w.repo ? w.repo + ': ' : ''}${w.step}: ${w.message}`).join('\n')
     : '';
-  // The panel absorbs "Mis PRs" while it's mounted, so the column and its
-  // 2fr/1fr grid slot need to go — as a body class, not an inline style on
-  // #own-column, because loadOwnPRs() in render.js clears any inline display
-  // on #own-column on every one of its own timer-driven runs. A class on
-  // <body> is untouched by that and keeps winning via the CSS rule in
-  // index.html.
-  document.body.classList.add('proc-panel-active');
-  procEl.section().style.display = '';
-}
 
-function applyProcCollapsed() {
-  const collapsed = localStorage.getItem(PROC_COLLAPSED_KEY) === '1';
-  procEl.body().classList.toggle('hidden', collapsed);
-  procEl.caret().textContent = collapsed ? '▸' : '▾';
+  procEl.columnTitle().textContent = 'Trabajo activo';
+  // The PR list gets hidden by class (see index.html's body.proc-panel-active
+  // rules), not inline styles — loadOwnPRs() in render.js clears any inline
+  // display on #own-pr-list/#own-empty/#own-loading on its own timer-driven
+  // runs, and a class on <body> is untouched by that.
+  document.body.classList.add('proc-panel-active');
 }
 
 // Brief visual feedback for a copy chip: swap its label to "copiado" for a
@@ -443,11 +485,11 @@ function flashCopied(btn) {
   }, 1200);
 }
 
-// One delegated listener on the panel body handles every copy chip, current
-// and future — renderLocalPanel() replaces innerHTML on every repaint, which
-// would stack a listener per row per paint if attached directly to buttons.
+// One delegated listener on #work-list handles every copy chip, current and
+// future — renderLocalPanel() replaces innerHTML on every repaint, which
+// would stack a listener per chip per paint if attached directly to buttons.
 function installCopyDelegation() {
-  procEl.body().addEventListener('click', (e) => {
+  procEl.workList().addEventListener('click', (e) => {
     const btn = e.target.closest('.proc-copy');
     if (!btn) return;
     const text = btn.dataset.copy;
@@ -461,20 +503,12 @@ function installCopyDelegation() {
 let procMounted = false;
 
 // Everything that makes the panel visible and interactive, exactly once.
-// The cached paint and the fetched paint both go through here, so the
-// collapse preference is applied from the very first frame and the toggle is
-// never rendered without its listener.
+// The cached paint and the fetched paint both go through here, so the copy
+// delegation is wired from the very first frame.
 function mountPanel() {
   renderLocalPanel();
-  applyProcCollapsed();
   if (procMounted) return;
   procMounted = true;
-
-  procEl.toggle().addEventListener('click', () => {
-    const collapsed = localStorage.getItem(PROC_COLLAPSED_KEY) === '1';
-    localStorage.setItem(PROC_COLLAPSED_KEY, collapsed ? '0' : '1');
-    applyProcCollapsed();
-  });
 
   installCopyDelegation();
 
@@ -490,24 +524,27 @@ function mountPanel() {
   }
 }
 
-// The panel must never survive a failed fetch. A stale cached payload
-// rendered as if it were current is worse than no panel at all — this
-// feature exists to say which work is actually fresh.
+// The panel must never survive a failed fetch, and a bug in it must never
+// cost the user sight of their own PRs. A stale cached payload rendered as
+// if it were current is worse than no panel at all — this restores
+// #own-column to exactly its pre-mount state: "Mis PRs" heading, empty
+// #work-list, PR list visible, 2fr/1fr grid.
 function unmountPanel() {
   window.LOCAL_STATE = null;
-  procEl.body().innerHTML = '';
-  procEl.count().textContent = '';
-  procEl.meta().textContent = '';
-  procEl.section().style.display = 'none';
+  procEl.workList().innerHTML = '';
+  procEl.metaLine().textContent = '';
+  procEl.metaLine().title = '';
+  procEl.metaLine().classList.add('hidden');
+  procEl.columnTitle().textContent = 'Mis PRs';
   // Mirrors the class added in renderLocalPanel(): the throw-safety wrapper
   // (mountPanelSafely) and the sidecar-gone path in initLocalPanel() both
-  // route here, so either one restores "Mis PRs" and the two-column grid —
-  // a bug in this file must never cost the user sight of their own PRs.
+  // route here, so either one restores "Mis PRs", the PR list, and the
+  // two-equal-column grid.
   document.body.classList.remove('proc-panel-active');
 }
 
 // mountPanel() can throw mid-build (e.g. a malformed row). Never let that
-// leave a half-mounted header on screen — fall back to a clean unmount.
+// leave a half-mounted heading/list on screen — fall back to a clean unmount.
 function mountPanelSafely() {
   try {
     mountPanel();

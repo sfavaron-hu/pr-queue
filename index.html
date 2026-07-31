@@ -499,7 +499,15 @@ html, body {
   margin-left: auto;
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
+
+/* A process key/branch name can run far longer than a repo slug ever would
+   (".pr-repo" is nowrap elsewhere, sized for short repo names) — let it wrap
+   instead of forcing the column wider than its 1fr share. Scoped to #work-list
+   only; PR cards elsewhere keep the original single-line behavior. */
+#work-list .pr-repo { white-space: normal; overflow-wrap: anywhere; }
 
 /* ── Loading / empty / error ── */
 .loading {
@@ -553,15 +561,11 @@ html, body {
   line-height: 1.5;
 }
 
-.proc-section { margin-bottom: 16px; }
-.proc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.proc-toggle { background: none; border: 0; color: inherit; font: inherit;
-  cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 0; }
-.proc-meta { font-size: 11px; opacity: .6; margin-left: auto; }
-.proc-body { display: grid; gap: 6px; }
-.proc-body.hidden { display: none; }
 .proc-notice { font-size: 11px; opacity: .85; padding: 5px 10px; border-radius: 6px;
-  background: rgba(219,171,9,.14); border: 1px solid rgba(219,171,9,.3); }
+  background: rgba(219,171,9,.14); border: 1px solid rgba(219,171,9,.3); margin-bottom: 6px; }
+.proc-meta-line { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+.badge-dim { opacity: .6; }
+/* Loose-sessions entry: the one leftover row that isn't a process card. */
 .proc-row { display: grid; grid-template-columns: 90px 1fr auto;
   gap: 10px; align-items: center; padding: 8px 10px; border-radius: 6px;
   background: rgba(127,127,127,.06); font-size: 12px; }
@@ -572,16 +576,10 @@ html, body {
 .proc-state.pausa     { background: rgba(127,127,127,.45); }
 .proc-state.frio      { background: rgba(127,127,127,.25); }
 .proc-key { font-weight: 600; }
-.proc-noticket { font-size: 10px; opacity: .55; margin-left: 6px; }
 .proc-detail { opacity: .7; font-size: 11px; }
 .proc-detail code { font-size: 10px; opacity: .8; }
 .proc-subtitle { display: inline-block; opacity: .85; font-size: 11.5px; margin-top: 1px; }
-.proc-chip { background: rgba(127,127,127,.14); border: 1px solid transparent;
-  border-radius: 4px; padding: 1px 6px; font: inherit; font-size: 11px;
-  color: inherit; cursor: pointer; }
-.proc-chip:hover { background: rgba(127,127,127,.26); }
-.proc-chip.copied { color: var(--green, #3fb950); }
-a.proc-chip { text-decoration: none; }
+.proc-copy.copied { color: var(--green, #3fb950); }
 @media (max-width: 680px) { .proc-row { grid-template-columns: 70px 1fr; } }
 
 .proc-merged { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(127,127,127,.15); }
@@ -598,13 +596,16 @@ a.proc-chip { text-decoration: none; }
 }
 @media (max-width: 680px) { .main-layout { grid-template-columns: 1fr; } }
 
-/* The active-processes panel absorbs "Mis PRs" while mounted: the column
-   disappears and the queue reclaims its slot in the grid. Class-based (not
-   inline styles from local.js) because render.js's loadOwnPRs() clears any
-   inline display on #own-column on its own timer — a class on <body> is
-   untouched by that and keeps winning. */
-body.proc-panel-active .own-column { display: none; }
-body.proc-panel-active .main-layout { grid-template-columns: 1fr; }
+/* Process cards live inside #own-column, alongside (in place of) the PR
+   cards it normally shows. Widen its slot to 1fr/1fr — process cards carry
+   more chips than PR cards and are cramped at the column's usual 1fr of
+   2fr/1fr — and hide the PR-list elements by class, not inline style,
+   because render.js's loadOwnPRs() clears any inline display on them on its
+   own timer; a class on <body> is untouched by that and keeps winning. */
+body.proc-panel-active .main-layout { grid-template-columns: 1fr 1fr; }
+body.proc-panel-active #own-pr-list,
+body.proc-panel-active #own-empty,
+body.proc-panel-active #own-loading { display: none; }
 
 /* ── Own PRs panel ── */
 .own-column-header {
@@ -620,14 +621,14 @@ body.proc-panel-active .main-layout { grid-template-columns: 1fr; }
 }
 
 
-#own-pr-list .pr-card { padding: 10px 12px; }
-#own-pr-list .pr-title { font-size: 12px; margin-bottom: 6px; }
-#own-pr-list .pr-repo  { font-size: 10px; }
-#own-pr-list .pr-number { font-size: 10px; }
-#own-pr-list .pr-meta  { font-size: 11px; }
-#own-pr-list .badge    { font-size: 10px; padding: 1px 5px; }
-#own-pr-list .btn-sm   { font-size: 11px; padding: 3px 8px; }
-#own-pr-list .pr-author img { width: 14px; height: 14px; }
+#own-pr-list .pr-card, #work-list .pr-card { padding: 10px 12px; }
+#own-pr-list .pr-title, #work-list .pr-title { font-size: 12px; margin-bottom: 6px; }
+#own-pr-list .pr-repo, #work-list .pr-repo  { font-size: 10px; }
+#own-pr-list .pr-number, #work-list .pr-number { font-size: 10px; }
+#own-pr-list .pr-meta, #work-list .pr-meta  { font-size: 11px; }
+#own-pr-list .badge, #work-list .badge    { font-size: 10px; padding: 1px 5px; }
+#own-pr-list .btn-sm, #work-list .btn-sm   { font-size: 11px; padding: 3px 8px; }
+#own-pr-list .pr-author img, #work-list .pr-author img { width: 14px; height: 14px; }
 
 /* ── Tooltip ── */
 #tip {
@@ -772,17 +773,6 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
     </div>
   </div>
 
-  <div class="proc-section" id="proc-section" style="display:none">
-    <div class="proc-header">
-      <button type="button" class="proc-toggle" id="proc-toggle">
-        <span id="proc-caret">▾</span> Procesos activos
-        <span class="count-badge" id="proc-count"></span>
-      </button>
-      <span class="proc-meta" id="proc-meta"></span>
-    </div>
-    <div class="proc-body" id="proc-body"></div>
-  </div>
-
   <div class="main-layout">
   <div class="tribe-column">
 
@@ -828,8 +818,10 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
   <!-- Own PRs -->
   <div class="own-column" id="own-column" style="display:none">
     <div class="own-column-header">
-      Mis PRs <span class="count-badge" id="own-count"></span>
+      <span id="own-column-title">Mis PRs</span> <span class="count-badge" id="own-count"></span>
     </div>
+    <div class="proc-meta-line hidden" id="proc-meta-line"></div>
+    <div id="work-list"></div>
     <div id="own-loading" class="loading hidden" style="padding:20px;font-size:12px;">
       <div class="spinner"></div>
     </div>
