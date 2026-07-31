@@ -615,3 +615,59 @@ test('collect requires exact branch-name membership: a near-miss name must not m
   const wt = out.processes[0].worktrees[0];
   assert.equal(wt.onOrigin, false);
 });
+
+test('collect matches branch membership case-insensitively', async () => {
+  // Regression test for the real case hit on this machine: a repo with
+  // core.ignorecase=true had a local refs/remotes/origin/Chore/SQSH-4074-...
+  // left over from before the remote branch settled on lowercase
+  // chore/SQSH-4074-...; git ls-remote against GitHub confirmed the real
+  // branch is lowercase and matches the worktree. A case-sensitive compare
+  // called this `onOrigin: false` — a false claim the UI would use to hide a
+  // working compare link.
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\n' +
+               'branch refs/heads/chore/SQSH-4074-web-feed-groups-color-tokens-dark-mode\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.includes('for-each-ref')) return 'Chore/SQSH-4074-web-feed-groups-color-tokens-dark-mode\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.onOrigin, true);
+  // Case-insensitive matching must not change the branch value itself.
+  assert.equal(wt.branch, 'chore/SQSH-4074-web-feed-groups-color-tokens-dark-mode');
+});
+
+test('collect keeps onOrigin false when case differs AND the name genuinely differs', async () => {
+  // Case-insensitivity must not become fuzzy matching: `Feat/X` in the set
+  // does not make `feat/x-2` a match.
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/feat/x-2\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.includes('for-each-ref')) return 'Feat/X\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.onOrigin, false);
+});

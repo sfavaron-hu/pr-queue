@@ -96,10 +96,27 @@ async function collectRepo(repo, repoPath, run, warn) {
   // mismatches measured on this machine, and the alternative — `git
   // ls-remote` per repo — is a network round-trip that would dominate this
   // collector's runtime just to cover a rare case.
+  //
+  // Membership is compared case-insensitively (lowercased on both sides,
+  // below). Real case observed on this machine: a repo with
+  // core.ignorecase=true (the macOS/APFS default) had a local
+  // refs/remotes/origin/Chore/SQSH-4074-... left over from before the remote
+  // branch settled on lowercase chore/SQSH-4074-...; `git ls-remote` against
+  // GitHub confirmed the real branch is lowercase, matching the worktree. A
+  // case-sensitive comparison called that `onOrigin: false` — a false claim
+  // the UI would have used to hide a working compare link, which is the exact
+  // failure this field exists to prevent. On a case-insensitive filesystem,
+  // two refs differing only in case cannot coexist in the local ref store, so
+  // comparing case-insensitively loses no real information there; on a
+  // genuinely case-sensitive filesystem this could in principle match the
+  // wrong same-name-different-case branch, but that only downgrades a
+  // confident false claim into a link that might 404 — the milder failure
+  // mode, chosen deliberately. This does not change `branch` in the payload,
+  // or lowercase anything else (githubRepo, etc.) — comparison only.
   let originBranches = null;
   try {
     const refs = await run('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/remotes/origin'], repoPath);
-    originBranches = new Set(refs.split('\n').map(s => s.trim()).filter(Boolean));
+    originBranches = new Set(refs.split('\n').map(s => s.trim().toLowerCase()).filter(Boolean));
   } catch (e) {
     warn(repo, 'originBranches', e.message);
   }
@@ -111,7 +128,7 @@ async function collectRepo(repo, repoPath, run, warn) {
     // needs one thing to test, not a "well, actually" case per flag).
     const onOrigin = (wt.detached || wt.prunable)
       ? false
-      : (originBranches === null ? null : originBranches.has(wt.branch));
+      : (originBranches === null ? null : originBranches.has(String(wt.branch).toLowerCase()));
     const row = { repo, path: wt.path, branch: wt.branch, detached: wt.detached,
                   prunable: wt.prunable, dirty: null, unpushed: null, lastCommit: null,
                   lastCommitSubject: null, githubRepo, baseBranch: base, onOrigin };
