@@ -80,10 +80,41 @@ async function collectRepo(repo, repoPath, run, warn) {
     warn(repo, 'githubRemote', e.message);
   }
 
+  // One `git for-each-ref` call per repo builds the set of branches that exist
+  // on origin, tested per worktree below — same shape as the base-branch
+  // fallback above, but unconditional (that call only runs when
+  // `symbolic-ref` fails) and repo-wide rather than scoped to picking a base
+  // branch. `originBranches === null` means the call failed and "is this
+  // branch on origin" is simply unknown for this repo; every other repo's
+  // worktrees are unaffected.
+  //
+  // Caveat: remote-tracking refs are a local cache. If a branch is deleted on
+  // the remote and the user has not run `git fetch --prune`, its
+  // refs/remotes/origin/<branch> can still be sitting around locally, so
+  // `onOrigin: true` can be optimistic (a stale "yes" for a branch that's
+  // actually gone). We accept that: it was accurate for all 13 real
+  // mismatches measured on this machine, and the alternative — `git
+  // ls-remote` per repo — is a network round-trip that would dominate this
+  // collector's runtime just to cover a rare case.
+  let originBranches = null;
+  try {
+    const refs = await run('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/remotes/origin'], repoPath);
+    originBranches = new Set(refs.split('\n').map(s => s.trim()).filter(Boolean));
+  } catch (e) {
+    warn(repo, 'originBranches', e.message);
+  }
+
   return Promise.all(active.map(async (wt) => {
+    // A detached worktree has no branch, and a prunable one's directory is
+    // gone — neither can have a working compare link, so both are `false`
+    // regardless of what the origin-branch set says (never `null`: the UI
+    // needs one thing to test, not a "well, actually" case per flag).
+    const onOrigin = (wt.detached || wt.prunable)
+      ? false
+      : (originBranches === null ? null : originBranches.has(wt.branch));
     const row = { repo, path: wt.path, branch: wt.branch, detached: wt.detached,
                   prunable: wt.prunable, dirty: null, unpushed: null, lastCommit: null,
-                  lastCommitSubject: null, githubRepo, baseBranch: base };
+                  lastCommitSubject: null, githubRepo, baseBranch: base, onOrigin };
     // A prunable worktree's directory is gone — running git in it would just fail.
     if (wt.prunable) return row;
 

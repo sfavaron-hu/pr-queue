@@ -510,3 +510,108 @@ test('collect records a warning and sets githubRepo null when git remote throws'
   // The run still succeeds end-to-end despite the failed remote lookup.
   assert.equal(out.processes.length, 1);
 });
+
+test('collect sets onOrigin true for a branch present in the remote-ref set, false for one absent', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/feat/on-origin\n\n' +
+               'worktree /w/humand-web-2\nHEAD def\nbranch refs/heads/feat/not-on-origin\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.includes('for-each-ref')) return 'develop\nfeat/on-origin\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees);
+  const onOriginBranch = wt.find(w => w.branch === 'feat/on-origin');
+  const notOnOriginBranch = wt.find(w => w.branch === 'feat/not-on-origin');
+  assert.equal(onOriginBranch.onOrigin, true);
+  assert.equal(notOnOriginBranch.onOrigin, false);
+});
+
+test('collect sets onOrigin false for a detached worktree and for a prunable one, even when the remote set would otherwise match', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web-detached\nHEAD def\ndetached\n\n' +
+               'worktree /w/humand-web-gone\nHEAD ghi\nbranch refs/heads/feat/gone\n' +
+               'prunable gitdir file points to non-existent location\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      // feat/gone IS in the remote set — proves prunable forces false rather
+      // than falling through to a set-membership check.
+      if (a.includes('for-each-ref')) return 'develop\nfeat/gone\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees);
+  const detached = wt.find(w => w.path === '/w/humand-web-detached');
+  const gone = wt.find(w => w.path === '/w/humand-web-gone');
+  assert.equal(detached.onOrigin, false);
+  assert.equal(gone.onOrigin, false);
+});
+
+test('collect sets onOrigin null and records a warning when for-each-ref fails, without failing the run', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/feat/x\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.includes('for-each-ref')) throw new Error('fatal: not a git repository');
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.onOrigin, null);
+  assert.ok(out.warnings.some(w => w.repo === 'humand-web' && w.step === 'originBranches'));
+  // The run still succeeds end-to-end despite the failed for-each-ref call.
+  assert.equal(out.processes.length, 1);
+});
+
+test('collect requires exact branch-name membership: a near-miss name must not match', async () => {
+  // Remote has `feat/x`; the worktree is on `feat/x-2`. A prefix/substring
+  // match here would be a false "onOrigin: true" for a branch that isn't
+  // actually on the remote.
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web\nHEAD abc\nbranch refs/heads/feat/x-2\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop';
+      if (a.includes('for-each-ref')) return 'feat/x\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes[0].worktrees[0];
+  assert.equal(wt.onOrigin, false);
+});
