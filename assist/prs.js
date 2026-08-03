@@ -50,16 +50,17 @@ function buildPR(item, view) {
 const SEARCH_FIELDS = 'number,title,url,repository,state';
 const VIEW_FIELDS = 'headRefName,isDraft,reviewDecision,mergeable,statusCheckRollup,reviews,updatedAt';
 
-// Open PRs plus PRs merged in the last 3 days (matching the browser's window),
+// Open PRs plus PRs merged in the last 3 days (sorted by most recently updated),
 // each enriched by a per-PR `gh pr view`. `run(cmd, args, cwd)` → stdout.
-async function fetchOwnPRs({ run }) {
+async function fetchOwnPRs({ run, now }) {
+  const cutoff = new Date(now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const warnings = [];
   let items = [];
   try {
     const open = JSON.parse(await run('gh',
       ['search', 'prs', '--author', '@me', '--state', 'open', '--limit', '60', '--json', SEARCH_FIELDS]));
     const merged = JSON.parse(await run('gh',
-      ['search', 'prs', '--author', '@me', '--merged', '--limit', '20', '--json', SEARCH_FIELDS]))
+      ['search', 'prs', '--author', '@me', '--merged', '--merged-at', `>=${cutoff}`, '--sort', 'updated', '--limit', '20', '--json', SEARCH_FIELDS]))
       .map(x => ({ ...x, state: 'MERGED' }));
     items = open.concat(merged);
   } catch (e) {
