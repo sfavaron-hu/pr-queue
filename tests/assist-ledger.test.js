@@ -57,3 +57,8 @@ test('ledger() wires collect + fetchOwnPRs and stays degraded when gh fails', as
   assert.equal(doc.processes.length, 2);
   assert.ok(doc.warnings.some(w => w.step === 'gh-search'));
 });
+
+test('the bin module exposes main and does not run on require', () => {
+  const mod = require('../assist/bin/ledger.js');
+  assert.equal(typeof mod.main, 'function');
+});
