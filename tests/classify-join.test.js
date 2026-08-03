@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { prTicket, attachOwnPRs, synthesizeProcesses } = require('../classify.js');
+const { prTicket, attachOwnPRs, synthesizeProcesses, PR_CONTRACT_FIELDS } = require('../classify.js');
 
 const proc = (key, ticket, branches) => ({
   key, ticket: ticket || null, branches: branches || [],
@@ -56,4 +56,28 @@ test('synthesizeProcesses keys a ticketless merged PR by owner/repo#number, not 
   const out = synthesizeProcesses(prs);
   assert.equal(out.length, 1);
   assert.equal(out[0].proc.key, 'o/r#42');
+});
+
+test('PR_CONTRACT_FIELDS is exactly the documented field set', () => {
+  assert.deepEqual([...PR_CONTRACT_FIELDS].sort(), [
+    'approved', 'changesReq', 'ci', 'conflicts', 'draft', 'headRef',
+    'humanReviews', 'merged', 'newComments', 'number', 'owner', 'repo',
+    'title', 'updatedAt', 'url',
+  ]);
+});
+
+test('the join works with a PR carrying ONLY the contract fields', () => {
+  // Proves attachOwnPRs/synthesizeProcesses never read a field outside the
+  // contract — the real protection behind assist/prs.js emitting just those.
+  const onlyContract = {};
+  for (const f of PR_CONTRACT_FIELDS) onlyContract[f] = f === 'headRef' ? 'feat/SQSH-7' : null;
+  onlyContract.headRef = 'feat/SQSH-7'; onlyContract.title = 'x';
+  onlyContract.owner = 'o'; onlyContract.repo = 'r'; onlyContract.number = 1;
+  const processes = [proc('SQSH-7', 'SQSH-7', ['feat/SQSH-7'])];
+  const { rows, unmatched } = attachOwnPRs(processes, [onlyContract]);
+  assert.equal(rows[0].prs.length, 1);
+  assert.equal(unmatched.length, 0);
+  // and a synthetic path over the same shape
+  const syn = synthesizeProcesses([{ ...onlyContract, headRef: 'feat/SQSH-8' }]);
+  assert.equal(syn.length, 1);
 });

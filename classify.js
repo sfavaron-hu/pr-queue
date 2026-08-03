@@ -3,6 +3,15 @@
 
 var COLD_DAYS = 14;
 
+// Every field the local↔PR join and classify() read off a PR. It is the
+// contract assist/prs.js must emit and the browser's enrichOwnPR already
+// emits (as a superset). Frozen so a typo'd push can't mutate it.
+var PR_CONTRACT_FIELDS = Object.freeze([
+  'owner', 'repo', 'number', 'title', 'url', 'headRef', 'draft', 'merged',
+  'ci', 'approved', 'changesReq', 'conflicts', 'newComments',
+  'humanReviews', 'updatedAt',
+]);
+
 var TICKET_RE = /\b([A-Z]{3,5}-\d+)\b/;
 
 function extractTicket(branch) {
@@ -349,5 +358,6 @@ if (typeof module !== 'undefined' && module.exports) {
                      filterRowsByPR: filterRowsByPR,
                      filterRowsByPRStatus: filterRowsByPRStatus,
                      prTicket: prTicket, attachOwnPRs: attachOwnPRs,
-                     synthesizeProcesses: synthesizeProcesses };
+                     synthesizeProcesses: synthesizeProcesses,
+                     PR_CONTRACT_FIELDS: PR_CONTRACT_FIELDS };
 }
