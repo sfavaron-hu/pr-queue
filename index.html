@@ -595,8 +595,13 @@ html, body {
    own-column, right above the cards. Only one can be on; neither on means
    todos. They render disabled while GitHub's PR data hasn't landed, because
    until it does every card looks "sin PR" (see prPending in local.js) and
-   either chip would be filtering on data the panel doesn't have yet. */
-.proc-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+   either chip would be filtering on data the panel doesn't have yet.
+   The second row (abierto / draft) only exists while "con PR" is on — asking
+   which PR status to keep has no answer for a row with no PR — and is indented
+   to read as subordinate to the chip that opened it. */
+.proc-filter { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.proc-filter-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.proc-filter-sub { margin-left: 14px; }
 .proc-chip {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 10px; border-radius: 999px;
@@ -604,9 +609,15 @@ html, body {
   color: var(--muted); font-size: 11px; font-family: var(--font);
   cursor: pointer; transition: border-color .15s, color .15s, background .15s;
 }
-.proc-chip:hover:not([disabled]) { border-color: var(--border-hover); color: var(--text); }
+/* Hover must never overwrite the selected look: `:hover:not([disabled])`
+   out-specifies `.selected` on its own, which had a lit chip drop back to the
+   muted border and text colour the moment the pointer landed on it — so the
+   one chip you were pointing at was the one that stopped saying it was on.
+   Unselected chips lighten; a selected one deepens its accent fill instead. */
+.proc-chip:hover:not([disabled]):not(.selected) { border-color: var(--border-hover); color: var(--text); }
 .proc-chip.selected { border-color: var(--accent); color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.proc-chip.selected:hover:not([disabled]) { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .proc-chip[disabled] { opacity: .45; cursor: default; }
 .proc-chip-count { opacity: .6; font-variant-numeric: tabular-nums; }
 .badge-dim { opacity: .6; }
@@ -862,8 +873,14 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
     </div>
     <div class="proc-meta-line hidden" id="proc-meta-line"></div>
     <div class="proc-filter hidden" id="proc-filter">
-      <button type="button" class="proc-chip" data-pr-filter="con">con PR<span class="proc-chip-count"></span></button>
-      <button type="button" class="proc-chip" data-pr-filter="sin">sin PR<span class="proc-chip-count"></span></button>
+      <div class="proc-filter-row">
+        <button type="button" class="proc-chip" data-pr-filter="con">con PR<span class="proc-chip-count"></span></button>
+        <button type="button" class="proc-chip" data-pr-filter="sin">sin PR<span class="proc-chip-count"></span></button>
+      </div>
+      <div class="proc-filter-row proc-filter-sub hidden" id="proc-filter-status">
+        <button type="button" class="proc-chip" data-pr-status="abierto">abierto<span class="proc-chip-count"></span></button>
+        <button type="button" class="proc-chip" data-pr-status="draft">draft<span class="proc-chip-count"></span></button>
+      </div>
     </div>
     <div id="work-list"></div>
     <div id="own-loading" class="loading hidden" style="padding:20px;font-size:12px;">

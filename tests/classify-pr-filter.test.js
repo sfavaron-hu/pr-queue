@@ -1,6 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { PR_FILTER_ALL, rowHasPR, nextPRFilter, filterRowsByPR } = require('../classify.js');
+const { PR_FILTER_ALL, rowHasPR, rowHasOpenPR, rowHasDraftPR, nextChipFilter,
+        filterRowsByPR, filterRowsByPRStatus } = require('../classify.js');
+
+const MODES = ['con', 'sin'];
+const STATUS = ['abierto', 'draft'];
 
 // A row is what attachOwnPRs/synthesizeProcesses produce: { proc, prs }.
 const row = (key, prs) => ({ proc: { key: key, prs: undefined }, prs: prs });
@@ -26,25 +30,25 @@ test('a merged PR still counts as having a PR', () => {
   assert.equal(rowHasPR(row('a', [{ number: 1, merged: true }])), true);
 });
 
-test('nextPRFilter turns a chip on from the off state', () => {
-  assert.equal(nextPRFilter(PR_FILTER_ALL, 'con'), 'con');
-  assert.equal(nextPRFilter(PR_FILTER_ALL, 'sin'), 'sin');
+test('nextChipFilter turns a chip on from the off state', () => {
+  assert.equal(nextChipFilter(PR_FILTER_ALL, 'con', MODES), 'con');
+  assert.equal(nextChipFilter(PR_FILTER_ALL, 'sin', MODES), 'sin');
 });
 
-test('nextPRFilter turns the selected chip off — back to todos', () => {
-  assert.equal(nextPRFilter('con', 'con'), PR_FILTER_ALL);
-  assert.equal(nextPRFilter('sin', 'sin'), PR_FILTER_ALL);
+test('nextChipFilter turns the selected chip off — back to todos', () => {
+  assert.equal(nextChipFilter('con', 'con', MODES), PR_FILTER_ALL);
+  assert.equal(nextChipFilter('sin', 'sin', MODES), PR_FILTER_ALL);
 });
 
-test('nextPRFilter switching chips turns the previous one off', () => {
-  assert.equal(nextPRFilter('con', 'sin'), 'sin');
-  assert.equal(nextPRFilter('sin', 'con'), 'con');
+test('nextChipFilter switching chips turns the previous one off', () => {
+  assert.equal(nextChipFilter('con', 'sin', MODES), 'sin');
+  assert.equal(nextChipFilter('sin', 'con', MODES), 'con');
 });
 
-test('nextPRFilter ignores an unknown mode instead of clearing the selection', () => {
-  assert.equal(nextPRFilter('con', 'todos'), 'con');
-  assert.equal(nextPRFilter('con', null), 'con');
-  assert.equal(nextPRFilter(PR_FILTER_ALL, undefined), PR_FILTER_ALL);
+test('nextChipFilter ignores an unknown mode instead of clearing the selection', () => {
+  assert.equal(nextChipFilter('con', 'todos', MODES), 'con');
+  assert.equal(nextChipFilter('con', null, MODES), 'con');
+  assert.equal(nextChipFilter(PR_FILTER_ALL, undefined, MODES), PR_FILTER_ALL);
 });
 
 const rows = [
@@ -93,4 +97,75 @@ test('the two chips partition the list — no row is lost or double-counted', ()
   const sin = filterRowsByPR(rows, 'sin');
   assert.equal(con.length + sin.length, rows.length);
   assert.equal(con.filter(r => sin.includes(r)).length, 0);
+});
+
+// ── second row: abierto / draft ──
+
+test('rowHasOpenPR is true for an open PR that is not a draft', () => {
+  assert.equal(rowHasOpenPR(row('a', [{ number: 1 }])), true);
+  assert.equal(rowHasOpenPR(row('b', [{ number: 1, draft: false }])), true);
+});
+
+test('rowHasOpenPR is false for a draft-only or merged-only row', () => {
+  assert.equal(rowHasOpenPR(row('a', [{ number: 1, draft: true }])), false);
+  assert.equal(rowHasOpenPR(row('b', [{ number: 1, merged: true }])), false);
+  assert.equal(rowHasOpenPR(row('c', [])), false);
+  assert.equal(rowHasOpenPR(null), false);
+});
+
+test('rowHasDraftPR is true only for a draft that is still open', () => {
+  assert.equal(rowHasDraftPR(row('a', [{ number: 1, draft: true }])), true);
+  assert.equal(rowHasDraftPR(row('b', [{ number: 1 }])), false);
+  // Nothing produces this pair, but a merged PR must never read as a draft.
+  assert.equal(rowHasDraftPR(row('c', [{ number: 1, draft: true, merged: true }])), false);
+  assert.equal(rowHasDraftPR(null), false);
+});
+
+test('a multi-repo row with a draft and a ready PR is both', () => {
+  // Same `some` semantics procCardHTML uses for its Draft badge: the process
+  // genuinely has both, so it shows up under either chip instead of being
+  // forced into one.
+  const r = row('SQSH-9', [{ number: 1, draft: true }, { number: 2 }]);
+  assert.equal(rowHasOpenPR(r), true);
+  assert.equal(rowHasDraftPR(r), true);
+});
+
+const prRows = [
+  row('SQSH-1', [{ number: 1 }]),                                // abierto
+  row('SQSH-2', [{ number: 2, draft: true }]),                    // draft
+  row('SQSH-3', [{ number: 3, merged: true }]),                   // mergeado
+  row('SQSH-4', [{ number: 4, draft: true }, { number: 5 }]),     // ambos
+];
+
+test('filterRowsByPRStatus keeps rows with a ready PR for "abierto"', () => {
+  assert.deepEqual(filterRowsByPRStatus(prRows, 'abierto').map(r => r.proc.key),
+                   ['SQSH-1', 'SQSH-4']);
+});
+
+test('filterRowsByPRStatus keeps rows with a draft for "draft"', () => {
+  assert.deepEqual(filterRowsByPRStatus(prRows, 'draft').map(r => r.proc.key),
+                   ['SQSH-2', 'SQSH-4']);
+});
+
+test('a mergeado row is neither abierto nor draft', () => {
+  // Which is why the two counts can sum to less than the "con PR" total —
+  // documented behaviour, not a lost row.
+  assert.equal(filterRowsByPRStatus(prRows, 'abierto').some(r => r.proc.key === 'SQSH-3'), false);
+  assert.equal(filterRowsByPRStatus(prRows, 'draft').some(r => r.proc.key === 'SQSH-3'), false);
+});
+
+test('filterRowsByPRStatus with no chip selected returns every row', () => {
+  assert.equal(filterRowsByPRStatus(prRows, PR_FILTER_ALL).length, 4);
+  assert.equal(filterRowsByPRStatus(prRows, 'cualquiera').length, 4);
+  assert.notEqual(filterRowsByPRStatus(prRows, PR_FILTER_ALL), prRows);
+  assert.deepEqual(filterRowsByPRStatus(null, 'draft'), []);
+});
+
+test('nextChipFilter drives the second row with the same semantics', () => {
+  assert.equal(nextChipFilter(PR_FILTER_ALL, 'draft', STATUS), 'draft');
+  assert.equal(nextChipFilter('draft', 'abierto', STATUS), 'abierto');
+  assert.equal(nextChipFilter('abierto', 'abierto', STATUS), PR_FILTER_ALL);
+  // The rows can't leak into each other: a first-row mode is unknown here.
+  assert.equal(nextChipFilter('draft', 'con', STATUS), 'draft');
+  assert.equal(nextChipFilter('con', 'draft', MODES), 'con');
 });

@@ -26,11 +26,21 @@ let ownPRsFired = false;
 // and dropped whenever PR data is unavailable (see renderLocalPanel).
 let prFilter = PR_FILTER_ALL;
 
+// The second row's selection: 'abierto', 'draft', or PR_FILTER_ALL. Only ever
+// meaningful while prFilter === 'con' — renderLocalPanel() clears it whenever
+// that stops being true, so it can never keep filtering from behind a hidden
+// row.
+let prStatusFilter = PR_FILTER_ALL;
+
+const PR_MODES = ['con', 'sin'];
+const PR_STATUS_MODES = ['abierto', 'draft'];
+
 const procEl = {
   workList:    () => document.getElementById('work-list'),
   columnTitle: () => document.getElementById('own-column-title'),
   metaLine:    () => document.getElementById('proc-meta-line'),
   filterRow:   () => document.getElementById('proc-filter'),
+  statusRow:   () => document.getElementById('proc-filter-status'),
 };
 
 // safeHttpUrl is defined as a global by classify.js (loaded before this file
@@ -390,27 +400,67 @@ function prNoticeHTML() {
 // trabajo": a filter is on and nothing matched it. Without this the column
 // goes blank and reads as a broken panel — the same failure mode the "sin PR"
 // badge avoids by never being silent.
-function filterEmptyHTML(mode) {
-  return `<div class="proc-notice">Ningún proceso ${mode === 'con' ? 'con' : 'sin'} PR — los ${mode === 'con' ? 'sin' : 'con'} PR están escondidos por el filtro.</div>`;
+function filterEmptyHTML(label) {
+  return `<div class="proc-notice">Ningún proceso ${escS(label)} — el resto está escondido por el filtro.</div>`;
 }
 
-// Paints the two chips to match `prFilter`, with the row count each one would
-// show. `disabled` mirrors prPending: with no PR data the counts would read
-// "0 con PR" for a machine full of open PRs, so the numbers are blanked rather
-// than printed as facts — the same rule the meta line follows while loading.
-// Only ever updates existing nodes (never innerHTML), so the delegated click
-// listener installed once in mountPanel() keeps working across every repaint.
-function renderFilterChips(counts, disabled) {
-  const row = procEl.filterRow();
-  if (!row) return;
-  row.classList.remove('hidden');
-  row.querySelectorAll('.proc-chip[data-pr-filter]').forEach(chip => {
-    const mode = chip.dataset.prFilter;
-    chip.classList.toggle('selected', prFilter === mode);
+// What the active filter is keeping, as one phrase: 'con PR', 'sin PR',
+// 'con PR abierto', 'con PR draft'. Used by both the empty-result notice and
+// the meta line, so the two can never describe the same filter differently.
+function filterLabel() {
+  if (prFilter === PR_FILTER_ALL) return '';
+  const base = `${prFilter} PR`;
+  return prStatusFilter === PR_FILTER_ALL ? base : `${base} ${prStatusFilter}`;
+}
+
+// Paints one row of chips against `selected`, with the row count each chip
+// would show. `disabled` mirrors prPending: with no PR data the counts would
+// read "0 con PR" for a machine full of open PRs, so the numbers are blanked
+// rather than printed as facts — the same rule the meta line follows while
+// loading. Only ever updates existing nodes (never innerHTML), so the single
+// delegated listener installed in mountPanel() keeps working across repaints.
+function paintChipRow(row, selector, dataKey, selected, counts, disabled) {
+  row.querySelectorAll(selector).forEach(chip => {
+    const mode = chip.dataset[dataKey];
+    chip.classList.toggle('selected', selected === mode);
     chip.disabled = !!disabled;
     chip.title = disabled ? 'Esperando el estado de los PRs de GitHub' : '';
     const countEl = chip.querySelector('.proc-chip-count');
     if (countEl) countEl.textContent = disabled ? '' : String(counts[mode]);
+  });
+}
+
+// Both rows. The second one is only shown while "con PR" is the active
+// filter — its counts are over the con-PR rows alone, since that's the set it
+// narrows — and is hidden (not merely emptied) otherwise, so it can never
+// suggest a choice that wouldn't apply to anything.
+function renderFilterChips(counts, statusCounts, disabled) {
+  const row = procEl.filterRow();
+  if (!row) return;
+  row.classList.remove('hidden');
+  paintChipRow(row, '.proc-chip[data-pr-filter]', 'prFilter', prFilter, counts, disabled);
+
+  const statusRow = procEl.statusRow();
+  if (!statusRow) return;
+  const showStatus = prFilter === 'con' && !disabled;
+  statusRow.classList.toggle('hidden', !showStatus);
+  if (showStatus) {
+    paintChipRow(statusRow, '.proc-chip[data-pr-status]', 'prStatus', prStatusFilter, statusCounts, false);
+  } else {
+    resetChipRow(statusRow);
+  }
+}
+
+// Back to how index.html ships a row: nothing selected, nothing disabled, no
+// counts, no tooltip. Used both when the status row goes away and by
+// unmountPanel(), so a re-mount can never inherit a stale-looking chip.
+function resetChipRow(row) {
+  row.querySelectorAll('.proc-chip').forEach(chip => {
+    chip.classList.remove('selected');
+    chip.disabled = false;
+    chip.title = '';
+    const countEl = chip.querySelector('.proc-chip-count');
+    if (countEl) countEl.textContent = '';
   });
 }
 
@@ -656,10 +706,24 @@ function renderLocalPanel() {
   // later repaint ('unavailable'); the initial 'loading' paint happens before
   // there is anything to click.
   if (prPending) prFilter = PR_FILTER_ALL;
+  // The status row only narrows "con PR". The moment that stops being the
+  // active filter its selection is dropped, so a hidden row can never keep
+  // filtering the list from behind the scenes.
+  if (prFilter !== 'con') prStatusFilter = PR_FILTER_ALL;
   const filterActive = prFilter !== PR_FILTER_ALL;
-  const visible = filterRowsByPR(sorted, prFilter);
+  const withPR = filterRowsByPR(sorted, prFilter);
+  const visible = filterRowsByPRStatus(withPR, prStatusFilter);
   const conCount = sorted.filter(rowHasPR).length;
   const filterCounts = { con: conCount, sin: sorted.length - conCount };
+  // Counted over the con-PR rows, which is the set these chips narrow. They
+  // can sum to less than `con` (a mergeado row is neither abierto nor draft)
+  // and can overlap (a multi-repo process with a draft in one repo and a ready
+  // PR in another is both) — the numbers on the chips are what make that
+  // legible instead of surprising.
+  const statusCounts = {
+    abierto: withPR.filter(rowHasOpenPR).length,
+    draft:   withPR.filter(rowHasDraftPR).length,
+  };
 
   // Build the entire list first. If anything here throws, nothing has been
   // mutated yet — #work-list stays exactly as it was (empty, or showing the
@@ -669,7 +733,7 @@ function renderLocalPanel() {
   // process and has no joined PR, so filing it under either chip would be a
   // claim the panel can't back.
   const listHTML = (prShowNotice ? prNoticeHTML() : '')
-    + (filterActive && !visible.length ? filterEmptyHTML(prFilter) : '')
+    + (filterActive && !visible.length ? filterEmptyHTML(filterLabel()) : '')
     + visible.map(r => procCardHTML(r, now, payload.workspaceRoot, prPending)).join('')
     + ((!filterActive && (payload.looseSessions || []).length) ? looseRowHTML(payload.looseSessions) : '');
 
@@ -700,12 +764,12 @@ function renderLocalPanel() {
       // silently recomputing them over a filtered subset would turn the same
       // line into a different question. The filter says what's on screen
       // instead.
-      (filterActive ? ` · mostrando ${visible.length} ${prFilter} PR` : '') +
+      (filterActive ? ` · mostrando ${visible.length} ${filterLabel()}` : '') +
       (warn.length ? ` · ${warn.length} warnings` : '') +
       (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
 
   procEl.workList().innerHTML = listHTML;
-  renderFilterChips(filterCounts, prPending);
+  renderFilterChips(filterCounts, statusCounts, prPending);
   procEl.metaLine().textContent = metaText;
   procEl.metaLine().classList.remove('hidden');
   // Hovering surfaces the actual warning messages — otherwise "· N warnings"
@@ -751,16 +815,21 @@ function installCopyDelegation() {
   });
 }
 
-// One delegated listener on #proc-filter, for the same reason the copy chips
-// get one: the chips themselves are only repainted (never rebuilt), but
-// delegating keeps the wiring in one place and immune to any future rebuild.
-// nextPRFilter() owns the toggle semantics — clicking the on chip turns it
-// off (todos), clicking the other one turns the previous one off.
+// One delegated listener on #proc-filter covering both rows, for the same
+// reason the copy chips get one: the chips themselves are only repainted
+// (never rebuilt), but delegating keeps the wiring in one place and immune to
+// any future rebuild. nextChipFilter() owns the toggle semantics for both
+// rows — clicking the lit chip turns it off (todos), clicking another one
+// turns the previous one off.
 function installFilterDelegation() {
   procEl.filterRow().addEventListener('click', (e) => {
-    const chip = e.target.closest('.proc-chip[data-pr-filter]');
+    const chip = e.target.closest('.proc-chip[data-pr-filter], .proc-chip[data-pr-status]');
     if (!chip || chip.disabled) return;
-    prFilter = nextPRFilter(prFilter, chip.dataset.prFilter);
+    if (chip.dataset.prFilter) {
+      prFilter = nextChipFilter(prFilter, chip.dataset.prFilter, PR_MODES);
+    } else {
+      prStatusFilter = nextChipFilter(prStatusFilter, chip.dataset.prStatus, PR_STATUS_MODES);
+    }
     renderLocalPanel();
   });
 }
@@ -810,17 +879,14 @@ function unmountPanel() {
   // unmounted column — back to hidden, unselected, enabled and countless,
   // exactly as index.html ships them.
   prFilter = PR_FILTER_ALL;
+  prStatusFilter = PR_FILTER_ALL;
   const filterRow = procEl.filterRow();
   if (filterRow) {
     filterRow.classList.add('hidden');
-    filterRow.querySelectorAll('.proc-chip[data-pr-filter]').forEach(chip => {
-      chip.classList.remove('selected');
-      chip.disabled = false;
-      chip.title = '';
-      const countEl = chip.querySelector('.proc-chip-count');
-      if (countEl) countEl.textContent = '';
-    });
+    resetChipRow(filterRow);
   }
+  const statusRow = procEl.statusRow();
+  if (statusRow) statusRow.classList.add('hidden');
   procEl.columnTitle().textContent = 'Mis PRs';
   // Mirrors the class added in renderLocalPanel(): the throw-safety wrapper
   // (mountPanelSafely) and the sidecar-gone path in initLocalPanel() both

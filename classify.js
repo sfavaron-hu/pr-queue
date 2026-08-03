@@ -207,12 +207,36 @@ function rowHasPR(row) {
   return !!(row && row.prs && row.prs.length > 0);
 }
 
-// Radio-with-an-off-state: clicking the selected chip clears the filter,
-// clicking the other one replaces it (the previous one turns off). Returns the
-// next value so the caller holds no toggle logic of its own. An unknown mode
-// leaves the current selection alone rather than silently clearing it.
-function nextPRFilter(current, clicked) {
-  if (clicked !== 'con' && clicked !== 'sin') return current;
+// Whether a row has a PR that is open and not a draft, and whether it has a
+// draft one. Deliberately `some`, matching how procCardHTML aggregates its
+// badges across a multi-repo row (`prs.some(x => x.draft)`) — a process with a
+// draft in one repo and a ready PR in another genuinely is both, and shows up
+// under either chip rather than being forced into one.
+//
+// A merged PR is neither: it isn't open, and `draft` on a merged PR is a
+// contradiction the GitHub API doesn't produce. So a mergeado row disappears
+// under either of these chips — which is why they carry counts that can sum to
+// less than the "con PR" total, and why nothing here silently reinterprets
+// "abierto" as "open including drafts". Draft is the distinction being drawn.
+function rowHasOpenPR(row) {
+  return !!(row && row.prs && row.prs.some(function (p) {
+    return p.merged !== true && p.draft !== true;
+  }));
+}
+
+function rowHasDraftPR(row) {
+  return !!(row && row.prs && row.prs.some(function (p) {
+    return p.merged !== true && p.draft === true;
+  }));
+}
+
+// Radio-with-an-off-state, shared by both chip rows: clicking the selected
+// chip clears the filter, clicking another one replaces it (the previous one
+// turns off). Returns the next value so callers hold no toggle logic of their
+// own. A mode outside `allowed` leaves the current selection alone rather than
+// silently clearing it.
+function nextChipFilter(current, clicked, allowed) {
+  if ((allowed || []).indexOf(clicked) === -1) return current;
   return current === clicked ? PR_FILTER_ALL : clicked;
 }
 
@@ -225,12 +249,25 @@ function filterRowsByPR(rows, mode) {
   return list.filter(function (r) { return rowHasPR(r) === want; });
 }
 
+// The second row's filter: which PR *status* to keep. Only ever applied to
+// rows that already passed `con PR` (see local.js) — asking "abierto o draft"
+// of a row with no PR at all has no answer.
+var PR_STATUS_TESTS = { abierto: rowHasOpenPR, draft: rowHasDraftPR };
+
+function filterRowsByPRStatus(rows, mode) {
+  var list = rows || [];
+  var test = PR_STATUS_TESTS[mode];
+  return test ? list.filter(test) : list.slice();
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { COLD_DAYS: COLD_DAYS, extractTicket: extractTicket,
                      processKey: processKey, groupProcesses: groupProcesses,
                      attachSessions: attachSessions, lastActivity: lastActivity,
                      classify: classify, sortProcesses: sortProcesses,
                      safeHttpUrl: safeHttpUrl, PR_FILTER_ALL: PR_FILTER_ALL,
-                     rowHasPR: rowHasPR, nextPRFilter: nextPRFilter,
-                     filterRowsByPR: filterRowsByPR };
+                     rowHasPR: rowHasPR, rowHasOpenPR: rowHasOpenPR,
+                     rowHasDraftPR: rowHasDraftPR, nextChipFilter: nextChipFilter,
+                     filterRowsByPR: filterRowsByPR,
+                     filterRowsByPRStatus: filterRowsByPRStatus };
 }

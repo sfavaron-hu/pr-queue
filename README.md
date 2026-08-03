@@ -67,7 +67,16 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   printed as zeros, same rule the meta line follows. That line keeps reporting totals
   over *every* process, filter or not, and says separately how many are on screen. The
   "Sesiones sin worktree" row only appears with the filter off: it isn't a process and
-  has no PR to file it under.
+  has no PR to file it under. In a background tab the chips can stay disabled for a
+  while: `loadOwnPRs` skips hidden tabs, so PR data only lands once you look at it.
+- **`abierto` / `draft` is a second row, and only under `con PR`.** Asking which PR
+  status to keep has no answer for a row with no PR, so the row appears when `con PR`
+  lights up and its selection is dropped when that chip goes off — a hidden row never
+  keeps filtering from behind. `abierto` means open **and not a draft**: draft is the
+  distinction being drawn, so the two are a split, not a superset. Their counts can sum
+  to less than `con PR` (a *mergeado* row is neither) and can overlap (a multi-repo
+  process with a draft in one repo and a ready PR in another is both) — the numbers on
+  the chips are what make that legible.
 - **Session liveness is not activity.** An open terminal only means a terminal was left
   open. Activity is the newest of: last session message, last commit, last PR update.
 - **Transcript file mtime is not last activity, and this bites.** Claude Code appends
