@@ -60,6 +60,14 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   unreviewed PR or CI in flight — not your move, however old. *En pausa* is neither:
   typically no PR yet, just a worktree that was set down — calling it "esperando" would
   claim someone is blocking work when no one is. *Frío* is nothing from anyone in 14 days.
+- **`con PR` / `sin PR` is a filter with an off state.** Neither chip selected means
+  *todos*; clicking the lit chip turns it off, clicking the other one replaces it. The
+  chips stay **disabled until GitHub's PR data lands** — until then every card looks
+  "sin PR", so either chip would hide real work; their counts are blanked rather than
+  printed as zeros, same rule the meta line follows. That line keeps reporting totals
+  over *every* process, filter or not, and says separately how many are on screen. The
+  "Sesiones sin worktree" row only appears with the filter off: it isn't a process and
+  has no PR to file it under.
 - **Session liveness is not activity.** An open terminal only means a terminal was left
   open. Activity is the newest of: last session message, last commit, last PR update.
 - **Transcript file mtime is not last activity, and this bites.** Claude Code appends

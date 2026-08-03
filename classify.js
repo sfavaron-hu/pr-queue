@@ -191,10 +191,46 @@ function sortProcesses(rows, now) {
   });
 }
 
+// ── The "con PR / sin PR" chips ──
+//
+// Two chips, three states. No chip selected means *todos*: the filter is
+// opt-in and its off state is the whole list, so a fresh load can never be
+// hiding work you don't know about.
+var PR_FILTER_ALL = null;
+
+// Whether a row's work exists as a PR. Deliberately the very same test
+// procCardHTML already uses for the blue `proc-has-pr` left edge and the
+// "sin PR" badge (`prs.length > 0`) — the chips have to partition the list
+// exactly the way the cards already look, or a card wearing the blue edge
+// could survive a "sin PR" filter.
+function rowHasPR(row) {
+  return !!(row && row.prs && row.prs.length > 0);
+}
+
+// Radio-with-an-off-state: clicking the selected chip clears the filter,
+// clicking the other one replaces it (the previous one turns off). Returns the
+// next value so the caller holds no toggle logic of its own. An unknown mode
+// leaves the current selection alone rather than silently clearing it.
+function nextPRFilter(current, clicked) {
+  if (clicked !== 'con' && clicked !== 'sin') return current;
+  return current === clicked ? PR_FILTER_ALL : clicked;
+}
+
+// Anything that isn't one of the two known modes — `null` included — means
+// *todos* and returns every row. Always a copy, never the caller's array.
+function filterRowsByPR(rows, mode) {
+  var list = rows || [];
+  if (mode !== 'con' && mode !== 'sin') return list.slice();
+  var want = mode === 'con';
+  return list.filter(function (r) { return rowHasPR(r) === want; });
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { COLD_DAYS: COLD_DAYS, extractTicket: extractTicket,
                      processKey: processKey, groupProcesses: groupProcesses,
                      attachSessions: attachSessions, lastActivity: lastActivity,
                      classify: classify, sortProcesses: sortProcesses,
-                     safeHttpUrl: safeHttpUrl };
+                     safeHttpUrl: safeHttpUrl, PR_FILTER_ALL: PR_FILTER_ALL,
+                     rowHasPR: rowHasPR, nextPRFilter: nextPRFilter,
+                     filterRowsByPR: filterRowsByPR };
 }

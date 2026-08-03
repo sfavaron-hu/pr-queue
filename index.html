@@ -590,6 +590,25 @@ html, body {
   padding-left: 13px;
 }
 .proc-meta-line { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+/* "con PR / sin PR" chips. Same visual language as the config .repo-chip
+   pills, a size down and fully rounded — these live inside the narrower
+   own-column, right above the cards. Only one can be on; neither on means
+   todos. They render disabled while GitHub's PR data hasn't landed, because
+   until it does every card looks "sin PR" (see prPending in local.js) and
+   either chip would be filtering on data the panel doesn't have yet. */
+.proc-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.proc-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 11px; font-family: var(--font);
+  cursor: pointer; transition: border-color .15s, color .15s, background .15s;
+}
+.proc-chip:hover:not([disabled]) { border-color: var(--border-hover); color: var(--text); }
+.proc-chip.selected { border-color: var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.proc-chip[disabled] { opacity: .45; cursor: default; }
+.proc-chip-count { opacity: .6; font-variant-numeric: tabular-nums; }
 .badge-dim { opacity: .6; }
 /* Loose-sessions entry: the one leftover row that isn't a process card. */
 .proc-row { display: grid; grid-template-columns: 90px 1fr auto;
@@ -842,6 +861,10 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
       <span id="own-column-title">Mis PRs</span> <span class="count-badge" id="own-count"></span>
     </div>
     <div class="proc-meta-line hidden" id="proc-meta-line"></div>
+    <div class="proc-filter hidden" id="proc-filter">
+      <button type="button" class="proc-chip" data-pr-filter="con">con PR<span class="proc-chip-count"></span></button>
+      <button type="button" class="proc-chip" data-pr-filter="sin">sin PR<span class="proc-chip-count"></span></button>
+    </div>
     <div id="work-list"></div>
     <div id="own-loading" class="loading hidden" style="padding:20px;font-size:12px;">
       <div class="spinner"></div>
