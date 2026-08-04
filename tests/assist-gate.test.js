@@ -75,3 +75,12 @@ test('buildGate folds pr-babysit notifications in through the injected io', () =
   // and now there IS work (a notify), so the exit code is 10
   assert.equal(gateExitCode(g, []), 10);
 });
+
+test('the bin module exposes main and babysitStateDir, and does not run on require', () => {
+  const mod = require('../assist/bin/gate.js');
+  assert.equal(typeof mod.main, 'function');
+  assert.equal(typeof mod.babysitStateDir, 'function');
+  // babysitStateDir derives from an injected env/home, never a hardcoded path
+  assert.match(mod.babysitStateDir({ }, '/home/x'), /\/home\/x\/\.claude\/skills\/pr-babysit\/state$/);
+  assert.match(mod.babysitStateDir({ CLAUDE_CONFIG_DIR: '/cfg' }, '/home/x'), /^\/cfg\/skills\/pr-babysit\/state$/);
+});
