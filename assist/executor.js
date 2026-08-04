@@ -149,4 +149,4 @@ async function runCli(argv, deps) {
   };
 }
 
-module.exports = { runAction, drainActions, applyAnswer, runCli };
+module.exports = { runAction, drainActions, applyAnswer, runCli, DECLINE_LABEL };

@@ -1,7 +1,8 @@
 // tests/assist-executor-answers.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { applyAnswer } = require('../assist/executor.js');
+const { applyAnswer, DECLINE_LABEL } = require('../assist/executor.js');
+const { questionFor } = require('../assist/gate.js');
 const { queuePaths, itemId, syncItems, writeAnswer } = require('../assist/queue.js');
 
 function memIo(nowMs) {
@@ -73,4 +74,14 @@ test('applyAnswer: an { other } free-text answer is needs-model', () => {
   const r = applyAnswer(io, paths, { id, item: coldItem(), answer: { other: 'dale pero primero rebasealo' } });
   assert.equal(r.status, 'needs-model');
   assert.equal(r.done, false);
+});
+
+// Ties the executor's DECLINE_LABEL to the gate's actual emitted label — if
+// either side is renamed without the other, this breaks instead of the two
+// hardcoded 'Dejar' literals silently drifting apart.
+test('DECLINE_LABEL matches the label the gate emits for a cold question', () => {
+  const coldProc = { key: 'p1', flags: { cold: true },
+    worktrees: [{ repo: 'r', branch: 'b', unpushed: 9, onOrigin: true }], prs: [] };
+  const q = questionFor(coldProc, { _coldDays: 14 });
+  assert.ok(q.options.some(o => o.label === DECLINE_LABEL));
 });
