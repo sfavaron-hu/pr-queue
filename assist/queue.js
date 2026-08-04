@@ -110,5 +110,39 @@ function syncItems(io, paths, items) {
   return { written, skipped, removed };
 }
 
+// Record an answer, but only a valid one. `{ value }` must equal one of the
+// item's own option labels — the queue reads items/<id>.json for them, so the
+// browser endpoint can never smuggle a value the question didn't offer.
+// `{ other: text }` is free text a model will interpret, and is accepted only
+// when the caller (the skill, never the browser) passes allowOther.
+function writeAnswer(io, paths, id, answer, opts) {
+  const item = readItem(io, paths, id);
+  if (!item) return { ok: false, reason: 'no-item' };
+  const allowOther = !!(opts && opts.allowOther);
+
+  if (answer && typeof answer.value === 'string') {
+    const labels = (item.options || []).map(o => o.label);
+    if (labels.indexOf(answer.value) === -1) return { ok: false, reason: 'bad-value' };
+    writeAtomic(io, paths, answerPath(paths, id), { value: answer.value });
+    return { ok: true };
+  }
+
+  if (answer && typeof answer.other === 'string') {
+    if (!allowOther) return { ok: false, reason: 'other-not-allowed' };
+    if (answer.other.trim() === '') return { ok: false, reason: 'empty-other' };
+    writeAtomic(io, paths, answerPath(paths, id), { other: answer.other });
+    return { ok: true };
+  }
+
+  return { ok: false, reason: 'malformed' };
+}
+
+function readAnswer(io, paths, id) {
+  const p = answerPath(paths, id);
+  if (!io.exists(p)) return null;
+  try { return JSON.parse(io.read(p)); } catch { return null; }
+}
+
 module.exports = { queuePaths, itemId, writeAtomic,
-                   decline, isDeclined, pruneDeclined, readItem, syncItems };
+                   decline, isDeclined, pruneDeclined, readItem, syncItems,
+                   writeAnswer, readAnswer };
