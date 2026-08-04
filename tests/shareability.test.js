@@ -9,7 +9,8 @@ const CODE = ['classify.js', 'collect.js', 'collect-parse.js', 'collect-paths.js
               'assist/prs.js', 'assist/ledger.js', 'assist/bin/ledger.js',
               'assist/gate.js', 'assist/bin/gate.js',
               'assist/queue.js', 'assist/bin/queue.js',
-              'assist/executor.js', 'assist/bin/run.js'];
+              'assist/executor.js', 'assist/bin/run.js',
+              'scripts/install-skill.sh', 'scripts/install-heartbeat-check.sh'];
 
 test('no committed code contains a hardcoded home directory', () => {
   for (const f of CODE) {
@@ -32,4 +33,19 @@ test('the README documents the localStorage gotcha and both env vars', () => {
   assert.match(src, /PRQ_WORKSPACE/);
   assert.match(src, /PRQ_PORT/);
   assert.match(src, /localStorage/);
+});
+
+test('the skill installer derives its paths and prints an uninstall', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts/install-skill.sh'), 'utf8');
+  assert.match(src, /BASH_SOURCE/);
+  assert.match(src, /CLAUDE_CONFIG_DIR/);
+  assert.match(src, /[Uu]ninstall/);
+});
+
+test('the heartbeat-check installer derives its paths and prints an uninstall', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts/install-heartbeat-check.sh'), 'utf8');
+  assert.match(src, /BASH_SOURCE/);
+  assert.match(src, /CLAUDE_CONFIG_DIR/);
+  assert.match(src, /run\.js/);            // the gate execs the executor
+  assert.match(src, /[Uu]ninstall/);
 });

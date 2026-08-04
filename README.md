@@ -87,6 +87,25 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   Their `cwd` belongs to no worktree, so there is nothing to attach them to. If such a
   session has recorded a `pr-link`, it gets moved into that PR's process automatically.
 
+## Work assistant (opt-in)
+
+A `/work-assistant` skill (Task 4) that digests your own branches/PRs, asks you the
+decisions that need a human via one `AskUserQuestion`, then executes your answers
+through `assist/bin/run.js` — argv only, never a shell. Neither installer below is
+required to use the panel.
+
+- **`./scripts/install-skill.sh`** symlinks the skill into
+  `${CLAUDE_CONFIG_DIR:-~/.claude}/skills/work-assistant`, so `/work-assistant` is
+  available from any workspace, not just this checkout. `Uninstall: rm` the printed
+  symlink path.
+- **`./scripts/install-heartbeat-check.sh`** registers a `work` heartbeat check,
+  disabled by default, exactly like the `prs` check registers pr-babysit. Its gate is
+  the mechanical drain (`assist/bin/run.js`) — no model runs on a clean pass. The drain
+  only pushes/prunes/drafts your own branches (reversible actions); it never answers a
+  queued question — those always wait for `/work-assistant`. It escalates to a model
+  session only when the pass came back degraded (gh unavailable mid-run). `Uninstall:
+  rm -rf` the printed check directory.
+
 ## Tests
 
 ```bash
