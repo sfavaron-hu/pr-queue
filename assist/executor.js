@@ -9,7 +9,9 @@
 // human-readable display only. A branch name can carry shell metacharacters,
 // so `cmd` must never be interpolated into a shell — there is no sh -c path.
 
-const { decline, markDone } = require('./queue.js');
+const {
+  decline, markDone, syncItems, writeAnswer, listOpenItems, pruneDeclined, pruneDone,
+} = require('./queue.js');
 
 // The exec contract: exec(argv: string[]) => { code, stdout, stderr }.
 // Never throws on a non-zero exit; a non-zero code is a value, not an exception.
@@ -53,4 +55,98 @@ function applyAnswer(io, paths, entry) {
   return { id: entry.id, done: false, status: 'needs-model' };
 }
 
-module.exports = { runAction, drainActions, applyAnswer };
+// True when the ledger's PR half is untrustworthy — a gh step failed, so any
+// action that keys off "has no PR" (open-draft-pr) could fire against a branch
+// that actually has one. On a degraded pass the drain touches no worktree.
+function isDegraded(warnings) {
+  return (warnings || []).some(w => w.step && String(w.step).startsWith('gh'));
+}
+
+// Parse the tiny flag set the CLI needs. --value/--other/--resolution take a
+// value; --dry-run is boolean. Positionals are the subcommand and its id.
+function parseArgs(argv) {
+  const out = { _: [], dryRun: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--dry-run') out.dryRun = true;
+    else if (a === '--value' || a === '--other' || a === '--resolution') out[a.slice(2)] = argv[++i];
+    else out._.push(a);
+  }
+  return out;
+}
+
+// A recorder exec that never spawns anything — the --dry-run safety valve.
+// Named (not a self-referencing const initializer) so it never trips strict
+// mode; its own .calls list is inert bookkeeping the caller doesn't inspect.
+function dryExec(a) {
+  dryExec.calls = dryExec.calls || [];
+  dryExec.calls.push(a);
+  return { code: 0, stdout: '', stderr: '' };
+}
+
+// The executor CLI. Async because a fresh gate requires the (network) ledger.
+// deps: { io, exec, paths, loadGate: async () => ({gate,warnings}), now }.
+async function runCli(argv, deps) {
+  const { io, paths, loadGate } = deps;
+  const args = parseArgs(argv);
+  const [cmd, id] = args._;
+  // On a dry run, no argv ever reaches the real world.
+  const exec = args.dryRun ? dryExec : deps.exec;
+
+  if (cmd === 'list') {
+    const open = listOpenItems(io, paths).map(o => ({ id: o.id, item: o.item, answered: o.answer !== null }));
+    return { exit: 0, output: open };
+  }
+
+  if (cmd === 'answer') {
+    const answer = args.value !== undefined ? { value: args.value }
+                 : args.other !== undefined ? { other: args.other } : null;
+    const res = writeAnswer(io, paths, id, answer, { allowOther: true });   // only the skill reaches this path
+    return { exit: res.ok ? 0 : 1, output: res };
+  }
+
+  if (cmd === 'done') {
+    markDone(io, paths, id, { resolution: args.resolution || 'done-by-skill' });
+    return { exit: 0, output: { ok: true, id } };
+  }
+
+  // The remaining commands need a fresh gate.
+  const { gate, warnings } = await loadGate();
+
+  if (cmd === 'action') {
+    const action = (gate.actions || []).find(a => a.id === id);
+    if (!action) return { exit: 3, output: { ok: false, reason: 'no-such-action', id } };
+    const r = runAction(exec, action);
+    return { exit: r.ok ? 0 : 1, output: r };
+  }
+
+  // Default: DRAIN (unattended).
+  const degraded = isDegraded(warnings);
+  if (args.dryRun) {
+    return { exit: 0, output: { dryRun: true, wouldRun: (gate.actions || []).map(a => a.argv), degraded } };
+  }
+  if (degraded) {
+    const declinedPruned = pruneDeclined(io, paths);
+    const donePruned = pruneDone(io, paths, 30);
+    return { exit: 4, output: { degraded: true, actions: { ran: 0 }, questions: { synced: 0 }, prune: { declinedPruned, donePruned } } };
+  }
+
+  const drained = drainActions(exec, gate.actions || []);
+  const synced = syncItems(io, paths, gate.questions || []);
+  let declined = 0;
+  for (const entry of listOpenItems(io, paths)) {
+    if (applyAnswer(io, paths, entry).status === 'declined') declined++;
+  }
+  const declinedPruned = pruneDeclined(io, paths);
+  const donePruned = pruneDone(io, paths, 30);
+  return {
+    exit: 0,
+    output: {
+      actions: { ran: drained.ran, failed: drained.failed, results: drained.results.map(r => ({ id: r.id, kind: r.kind, ok: r.ok, code: r.code })) },
+      questions: { synced: synced.written.length, skipped: synced.skipped.length, removed: synced.removed.length, declined },
+      prune: { declinedPruned, donePruned },
+    },
+  };
+}
+
+module.exports = { runAction, drainActions, applyAnswer, runCli };
