@@ -84,3 +84,15 @@ test('syncItems does NOT remove a stale item that has a pending answer', () => {
   assert.equal(res.removed.includes(itemId(item)), false);
   assert.equal(io.exists(`${paths.items}/${itemId(item)}.json`), true);
 });
+
+test('a declined item already in items/ is swept out and reported in skipped', () => {
+  const io = memIo(1000); const paths = queuePaths('/s');
+  const item = q('dirty:x');
+  const id = itemId(item);
+  syncItems(io, paths, [item]);
+  assert.equal(io.exists(`${paths.items}/${id}.json`), true);
+  decline(io, paths, id, 30);
+  const res = syncItems(io, paths, [item]);
+  assert.deepEqual(res.skipped, [id]);
+  assert.equal(io.exists(`${paths.items}/${id}.json`), false);
+});
