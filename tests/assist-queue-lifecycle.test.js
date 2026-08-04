@@ -50,3 +50,14 @@ test('pruneDone removes records past retention and keeps recent ones', () => {
   assert.equal(pruneDone(io, paths, 30), 1);      // only 'a' (40d old) pruned
   assert.equal(io.exists(`${paths.done}/${itemId(b)}.json`), true);
 });
+
+test('the bin module exposes main, fsIo and stateRoot, and does not run on require', () => {
+  const mod = require('../assist/bin/queue.js');
+  assert.equal(typeof mod.main, 'function');
+  assert.equal(typeof mod.stateRoot, 'function');
+  // stateRoot derives from the checkout dir, never a hardcoded path
+  assert.match(mod.stateRoot('/repo'), /^\/repo\/state$/);
+  // fsIo is the real-fs adapter with the injected-io shape
+  ['read', 'write', 'rename', 'remove', 'exists', 'list', 'mkdirp', 'now'].forEach(k =>
+    assert.equal(typeof mod.fsIo[k], 'function', `fsIo.${k}`));
+});
