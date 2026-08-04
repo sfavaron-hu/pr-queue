@@ -155,4 +155,66 @@ function buildItems(ledger, actions, babysitNotifications) {
   return { questions, notify: (babysitNotifications || []).slice() };
 }
 
-module.exports = { buildActions, actionId, repoPath, questionFor, buildItems, QUESTION_BUDGET };
+// pr-babysit integration by aggregation: read only its STABLE surface — the
+// filenames — never its internal line formats (those carry postmortems and are
+// its own contract to change). Emit one notify per non-empty pending file and
+// one per needs-human-<repo>-<pr>.txt. Never act on them, never claim they are
+// handled. All file access is injected so this stays testable and the gate does
+// no IO of its own.
+function readBabysitNotifications(babysitDir, io) {
+  if (!babysitDir || !io || !io.exists(babysitDir)) return [];
+  const notify = [];
+
+  const countLines = (file) => {
+    try { return io.readText(file).split('\n').filter(l => l.trim()).length; }
+    catch { return 0; }
+  };
+  const comments = countLines(`${babysitDir}/pending-comments.txt`);
+  if (comments > 0) {
+    notify.push({ type: 'notify', key: 'babysit:comments',
+      message: `pr-babysit: ${comments} comentario(s) de review sin responder`, source: 'pr-babysit' });
+  }
+  const conflicts = countLines(`${babysitDir}/pending-conflicts.txt`);
+  if (conflicts > 0) {
+    notify.push({ type: 'notify', key: 'babysit:conflicts',
+      message: `pr-babysit: ${conflicts} conflicto(s) sin resolver`, source: 'pr-babysit' });
+  }
+
+  let files = [];
+  try { files = io.listFiles(babysitDir); } catch { files = []; }
+  files.filter(f => /^needs-human-.+-\d+\.txt$/.test(f)).forEach(f => {
+    const m = f.match(/^needs-human-(.+)-(\d+)\.txt$/);
+    const repo = m ? m[1] : f;
+    const pr = m ? m[2] : '';
+    notify.push({ type: 'notify', key: `babysit:needs-human:${f}`,
+      message: `pr-babysit: ${repo}#${pr} necesita intervención humana`, source: 'pr-babysit' });
+  });
+
+  return notify;
+}
+
+// The whole gate for one pass. `opts` carries the pr-babysit dir and the
+// injected io; both optional (absent dir → no notify). Actions are computed once
+// and passed to buildItems so a question's unblock score is real.
+function buildGate(ledger, now, opts) {
+  const o = opts || {};
+  const babysit = readBabysitNotifications(o.babysitDir, o.io);
+  const actions = buildActions(ledger);
+  const { questions, notify } = buildItems(ledger, actions, babysit);
+  return { version: 1, generatedAt: now, actions, questions, notify };
+}
+
+// The heartbeat's exit contract. A gh failure makes the whole PR half
+// untrustworthy, so it degrades (4) regardless of what was found — a clean-
+// looking 0 there would be the platform's founding bug. Otherwise 10 if
+// anything surfaced, 0 if genuinely nothing. `3` (could not check) and `5`
+// (lock) are the bin wrapper's / shell gate's concerns, not this pure function.
+function gateExitCode(gate, ledgerWarnings) {
+  const degraded = (ledgerWarnings || []).some(w => w.step && String(w.step).startsWith('gh'));
+  if (degraded) return 4;
+  const hasWork = gate.actions.length > 0 || gate.questions.length > 0 || gate.notify.length > 0;
+  return hasWork ? 10 : 0;
+}
+
+module.exports = { buildActions, actionId, repoPath, questionFor, buildItems, QUESTION_BUDGET,
+                   readBabysitNotifications, buildGate, gateExitCode };
