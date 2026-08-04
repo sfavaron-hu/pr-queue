@@ -88,4 +88,71 @@ function buildActions(ledger) {
   return actions;
 }
 
-module.exports = { buildActions, actionId, repoPath };
+// One AskUserQuestion call per pass holds at most 4 questions; that ceiling is
+// the whole defence against approval fatigue, so over-budget questions are
+// dropped (re-derived next pass), never queued to be drained.
+const QUESTION_BUDGET = 4;
+
+// At most one question per process. Dirty beats cold: uncommitted changes are a
+// concrete "what do I do with this" the assistant genuinely cannot resolve
+// (committing is a decision, removing is data loss), whereas cold is a nudge.
+// The `review` type is intentionally not produced in v1 — its actions
+// (ready-for-review, merge) are out of the blast radius, and drafts already show
+// in the panel's chip.
+function questionFor(proc, ledger) {
+  const f = proc.flags || {};
+  const wts = proc.worktrees || [];
+
+  if (f.dirty) {
+    const w = wts.find(x => (x.dirty || 0) > 0) || wts[0];
+    return {
+      type: 'question', key: `dirty:${proc.key}`, processKey: proc.key,
+      question: `${w.branch} tiene ${w.dirty} archivo(s) sin commitear. ¿Qué hago?`,
+      header: 'Sin commit',
+      options: [
+        { label: 'Commitear', description: `Genero un commit en ${w.repo}/${w.branch} con esos cambios y sigo.` },
+        { label: 'Dejar', description: 'Lo dejo como está; no vuelvo a preguntar por 30 días.' },
+      ],
+    };
+  }
+
+  if (f.cold) {
+    const w = wts[0];
+    const commits = w ? (w.unpushed || 0) : 0;
+    const onOrigin = w ? w.onOrigin !== false : false;
+    const hasPr = (proc.prs || []).length > 0;
+    const days = (ledger && ledger._coldDays) || 14;
+    return {
+      type: 'question', key: `cold:${proc.key}`, processKey: proc.key,
+      question: `${proc.key} no se toca hace más de ${days} días. ¿Qué hago?`,
+      header: 'Frío',
+      options: [
+        { label: 'Retomar', description: `${commits} commits sobre base${onOrigin ? ', rama en origin' : ''}${hasPr ? '' : ', sin PR'}. Lo retomo.` },
+        { label: 'Dejar', description: 'Lo dejo dormido; no vuelvo a preguntar por 30 días.' },
+        { label: 'Archivar', description: w ? 'git worktree remove — el branch queda en origin.' : 'Archivo el proceso.' },
+      ],
+    };
+  }
+
+  return null;
+}
+
+// Questions (budgeted, ordered) plus notify (pass-through). The `actions` array
+// is only used to score how much each question unblocks — a question on a
+// process with pending actions is worth surfacing before one on a dead-end.
+function buildItems(ledger, actions, babysitNotifications) {
+  const acts = actions || [];
+  const scoreOf = (key) => acts.filter(a => a.processKey === key).length;
+
+  const candidates = [];
+  for (const p of ledger.processes) {
+    const q = questionFor(p, ledger);
+    if (q) candidates.push({ q, score: scoreOf(p.key), recency: p.lastLocalActivity || 0 });
+  }
+  candidates.sort((a, b) => (b.score - a.score) || (b.recency - a.recency));
+  const questions = candidates.slice(0, QUESTION_BUDGET).map(c => c.q);
+
+  return { questions, notify: (babysitNotifications || []).slice() };
+}
+
+module.exports = { buildActions, actionId, repoPath, questionFor, buildItems, QUESTION_BUDGET };
