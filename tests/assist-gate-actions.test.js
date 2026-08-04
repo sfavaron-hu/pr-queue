@@ -17,6 +17,8 @@ test('push fires for a branch absent from origin and not consumed', () => {
   assert.deepEqual(kinds(acts), ['push']);
   assert.match(acts[0].cmd, /git -C \/w\/humand-web push -u origin feat\/SQSH-1/);
   assert.equal(acts[0].reversibility, 'reversible-unconsumed');
+  assert.deepEqual(acts[0].argv, ['git', '-C', '/w/humand-web', 'push', '-u', 'origin', 'feat/SQSH-1']);
+  assert.equal(acts[0].argv.join(' '), acts[0].cmd);
 });
 
 test('push does NOT fire when a PR references the branch (consumed)', () => {
@@ -32,6 +34,9 @@ test('open-draft-pr fires for an on-origin branch with commits above base, no PR
   const acts = buildActions(ledger([proc({ worktrees: [wt({ unpushed: 3 })], prs: [] })]));
   assert.deepEqual(kinds(acts), ['open-draft-pr']);
   assert.match(acts[0].cmd, /gh pr create --draft --fill -R HumandDev\/humand-web --head feat\/SQSH-1 --base develop/);
+  assert.deepEqual(acts[0].argv,
+    ['gh', 'pr', 'create', '--draft', '--fill', '-R', 'HumandDev/humand-web', '--head', 'feat/SQSH-1', '--base', 'develop']);
+  assert.equal(acts[0].argv.join(' '), acts[0].cmd);
 });
 
 test('a dirty worktree suppresses open-draft-pr (no autonomous resolution)', () => {
@@ -70,6 +75,8 @@ test('prune-worktree fires for a worktree whose directory is gone', () => {
   const acts = buildActions(ledger([proc({ worktrees: [wt({ prunable: true })] })]));
   assert.deepEqual(kinds(acts), ['prune-worktree']);
   assert.match(acts[0].cmd, /git -C \/w\/humand-web worktree prune/);
+  assert.deepEqual(acts[0].argv, ['git', '-C', '/w/humand-web', 'worktree', 'prune']);
+  assert.equal(acts[0].argv.join(' '), acts[0].cmd);
 });
 
 test('a detached worktree produces no action', () => {
