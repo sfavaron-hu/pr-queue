@@ -143,6 +143,46 @@ function readAnswer(io, paths, id) {
   try { return JSON.parse(io.read(p)); } catch { return null; }
 }
 
+function donePath(paths, id) { return `${paths.done}/${id}.json`; }
+
+// The item is handled: record what happened (retained in done/ as the digest of
+// unattended work) and clear it out of items/ and answers/. The caller supplies
+// `record` — typically the item, the answer, and what the executor did.
+function markDone(io, paths, id, record) {
+  writeAtomic(io, paths, donePath(paths, id), Object.assign({ doneAt: io.now() }, record));
+  io.remove(itemPath(paths, id));
+  io.remove(answerPath(paths, id));
+}
+
+// Every open item paired with its answer (or null), so a caller can tell an
+// answered-but-not-yet-executed item from one still awaiting the owner.
+function listOpenItems(io, paths) {
+  const out = [];
+  for (const name of io.list(paths.items)) {
+    if (!name.endsWith('.json')) continue;
+    const id = name.slice(0, -5);
+    const item = readItem(io, paths, id);
+    if (!item) continue;
+    out.push({ id, item, answer: readAnswer(io, paths, id) });
+  }
+  return out;
+}
+
+// Keep the unattended-work record bounded: drop done/ entries older than the
+// retention window (default 30 days).
+function pruneDone(io, paths, retentionDays) {
+  const days = typeof retentionDays === 'number' ? retentionDays : 30;
+  const cutoff = io.now() - days * DAY_MS;
+  let removed = 0;
+  for (const name of io.list(paths.done)) {
+    if (!name.endsWith('.json')) continue;
+    let doneAt = 0;
+    try { doneAt = JSON.parse(io.read(donePath(paths, name.slice(0, -5)))).doneAt || 0; } catch { doneAt = 0; }
+    if (doneAt < cutoff) { io.remove(donePath(paths, name.slice(0, -5))); removed++; }
+  }
+  return removed;
+}
+
 module.exports = { queuePaths, itemId, writeAtomic,
                    decline, isDeclined, pruneDeclined, readItem, syncItems,
-                   writeAnswer, readAnswer };
+                   writeAnswer, readAnswer, markDone, listOpenItems, pruneDone };
