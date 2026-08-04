@@ -80,3 +80,24 @@ test('notify items pass through untouched and unbudgeted', () => {
   const { notify: out } = buildItems(ledger([]), [], notify);
   assert.deepEqual(out, notify);
 });
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+test('cold question pluralizes commits correctly (1 commit, 2 commits)', () => {
+  const { questionFor } = require('../assist/gate.js');
+  const proc = (unpushed) => ({ key: 'p1', flags: { cold: true },
+    worktrees: [{ repo: 'r', branch: 'b', unpushed, onOrigin: true }], prs: [] });
+  const q1 = questionFor(proc(1), { _coldDays: 14 });
+  const q2 = questionFor(proc(2), { _coldDays: 14 });
+  assert.match(q1.options[0].description, /\b1 commit\b/);   // singular, no trailing s
+  assert.match(q2.options[0].description, /\b2 commits\b/);
+});
+
+test('the work-assistant skill states its load-bearing invariants', () => {
+  const md = fs.readFileSync(path.join(__dirname, '..', '.claude', 'skills', 'work-assistant', 'SKILL.md'), 'utf8');
+  assert.match(md, /AskUserQuestion/);           // uses the one-call tool
+  assert.match(md, /assist\/bin\/run\.js/);      // acts via the executor CLI, not ad-hoc shell
+  assert.match(md, /subagent|Task tool/i);       // idle work → subagent
+  assert.match(md, /--resume/);                  // explicitly names what NOT to do
+});

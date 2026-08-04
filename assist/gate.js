@@ -131,7 +131,7 @@ function questionFor(proc, ledger) {
       question: `${proc.key} no se toca hace más de ${days} días. ¿Qué hago?`,
       header: 'Frío',
       options: [
-        { label: 'Retomar', description: `${commits} commits sobre base${onOrigin ? ', rama en origin' : ''}${hasPr ? '' : ', sin PR'}. Lo retomo.` },
+        { label: 'Retomar', description: `${commits} commit${commits === 1 ? '' : 's'} sobre base${onOrigin ? ', rama en origin' : ''}${hasPr ? '' : ', sin PR'}. Lo retomo.` },
         { label: 'Dejar', description: 'Lo dejo dormido; no vuelvo a preguntar por 30 días.' },
         { label: 'Archivar', description: w ? 'git worktree remove — el branch queda en origin.' : 'Archivo el proceso.' },
       ],
