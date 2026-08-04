@@ -9,6 +9,8 @@
 // human-readable display only. A branch name can carry shell metacharacters,
 // so `cmd` must never be interpolated into a shell — there is no sh -c path.
 
+const { decline, markDone } = require('./queue.js');
+
 // The exec contract: exec(argv: string[]) => { code, stdout, stderr }.
 // Never throws on a non-zero exit; a non-zero code is a value, not an exception.
 function runAction(exec, action) {
@@ -28,4 +30,27 @@ function drainActions(exec, actions) {
   return { results, ran: results.length, failed: results.filter(r => !r.ok).length };
 }
 
-module.exports = { runAction, drainActions };
+// The value the gate uses for "leave it" in every question it emits
+// (assist/gate.js questionFor). The only answer the executor resolves without a
+// model — a declined item must stop being re-asked, and that is pure bookkeeping.
+const DECLINE_LABEL = 'Dejar';
+const DECLINE_TTL_DAYS = 30;
+
+// Resolve one open queue entry (the shape listOpenItems returns). Returns the
+// disposition; only "Dejar" is acted on here (decline + markDone). Everything
+// else — a value that needs judgment or a worktree mutation, or free text —
+// is reported needs-model and left in the queue for the on-demand skill.
+function applyAnswer(io, paths, entry) {
+  const answer = entry && entry.answer;
+  if (!answer) return { id: entry && entry.id, done: false, status: 'unanswered' };
+
+  if (answer.value === DECLINE_LABEL) {
+    decline(io, paths, entry.id, DECLINE_TTL_DAYS);
+    markDone(io, paths, entry.id, { resolution: 'declined', item: entry.item, answer });
+    return { id: entry.id, done: true, status: 'declined' };
+  }
+
+  return { id: entry.id, done: false, status: 'needs-model' };
+}
+
+module.exports = { runAction, drainActions, applyAnswer };
