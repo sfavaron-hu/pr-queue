@@ -92,7 +92,7 @@ function syncItems(io, paths, items) {
   for (const item of items) {
     const id = itemId(item);
     present.add(id);
-    if (isDeclined(io, paths, id)) { skipped.push(id); continue; }
+    if (isDeclined(io, paths, id)) { io.remove(itemPath(paths, id)); skipped.push(id); continue; }
     writeAtomic(io, paths, itemPath(paths, id), item);
     written.push(id);
   }
