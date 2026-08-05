@@ -176,3 +176,59 @@ test('--dry-run never calls exec even in drain', async () => {
   assert.equal(exec.calls.length, 0);
   assert.equal(res.output.dryRun, true);
 });
+
+// --- `ask` is the one place the budget lives ---------------------------------
+// The skill used to cap `list` itself, but `list` is a directory read with no
+// order, so "the top 4" was arbitrary. `ask` hands back the gate's own ordered
+// slice, already paired with the queue id each answer is written against.
+
+const q = (k) => ({ type: 'question', key: `cold:${k}`, processKey: k,
+  question: `${k} no se toca hace más de 14 días. ¿Qué hago?`, header: 'Frío',
+  options: [{ label: 'Retomar', description: '…' }, { label: 'Dejar', description: '…' }] });
+
+test('ask returns the budgeted slice with queue ids, in the gate order', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const all = ['a', 'b', 'c', 'd', 'e', 'f'].map(q);
+  const res = await runCli(['ask'], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ questions: all, ask: all.slice(0, 4) }), warnings: [] }),
+  }));
+  assert.equal(res.exit, 0);
+  assert.equal(res.output.length, 4);
+  assert.deepEqual(res.output.map(e => e.item.processKey), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(res.output.map(e => e.id), all.slice(0, 4).map(itemId));
+});
+
+test('ask drops a question the owner already answered', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const all = ['a', 'b'].map(q);
+  const paths = queuePaths('/s');
+  syncItems(io, paths, all);
+  io.write(`${paths.answers}/${itemId(all[0])}.json`, JSON.stringify({ value: 'Dejar' }));
+  const res = await runCli(['ask'], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ questions: all, ask: all }), warnings: [] }),
+  }));
+  assert.deepEqual(res.output.map(e => e.item.processKey), ['b']);
+});
+
+test('ask on a gate with no budgeted questions returns an empty batch', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const res = await runCli(['ask'], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ questions: [], ask: [] }), warnings: [] }),
+  }));
+  assert.deepEqual(res.output, []);
+});
+
+// The persistence bug, at the drain level: everything the gate emits is stored,
+// even though only the budgeted slice is asked. Storing only the slice deleted
+// items the owner had already answered.
+test('the drain persists every emitted question, not just the asked ones', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const paths = queuePaths('/s');
+  const all = ['a', 'b', 'c', 'd', 'e', 'f'].map(q);
+  const res = await runCli([], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ actions: [], questions: all, ask: all.slice(0, 4) }), warnings: [] }),
+  }));
+  assert.equal(res.output.questions.synced, 6, 'all six stored');
+  assert.equal(res.output.questions.deferred, 2, 'two persisted but not asked');
+  for (const item of all) assert.ok(io.exists(`${paths.items}/${itemId(item)}.json`));
+});

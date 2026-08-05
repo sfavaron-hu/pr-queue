@@ -109,6 +109,31 @@ test('the work-assistant skill states its load-bearing invariants', () => {
   assert.match(md, /--resume/);                  // explicitly names what NOT to do
 });
 
+// Each of these is a mistake the skill actually made on its first real run, and
+// each was possible because the instruction was absent rather than wrong.
+test('the skill documents what went wrong on the first real run', () => {
+  const md = fs.readFileSync(path.join(__dirname, '..', '.claude', 'skills', 'work-assistant', 'SKILL.md'), 'utf8');
+  // The batch comes from `ask`, not from capping `list` (which has no ordering).
+  assert.match(md, /run\.js"? ask/);
+  // A main working tree cannot be removed; 128 is the symptom to recognize.
+  assert.match(md, /128/);
+  assert.match(md, /Ir a la base/);
+  // The drain isolates failures, so a success exit can still mean nothing worked.
+  assert.match(md, /actions\.results/);
+  // Every exit code the drain can return, not just the degraded one.
+  for (const code of ['`0`', '`10`', '`4`', '`3`']) assert.ok(md.includes(code), `exit ${code} undocumented`);
+  // Drafts must be vetted: a PR may exist in any state, or the work may have
+  // landed from a different branch.
+  assert.match(md, /--state all/);
+  // origin can be ahead of the local worktree; never push the stale local.
+  assert.match(md, /BEHIND origin|behind origin/i);
+  // A lone modified file is as likely to be a local-testing hack as real work.
+  assert.match(md, /DO NOT COMMIT/);
+  // --force is never the answer, including for a node_modules symlink.
+  assert.match(md, /--force/);
+  assert.match(md, /symlink/i);
+});
+
 // --- questions must carry enough evidence to be answerable -------------------
 // The complaint that produced these: "no me sirve el nombre para tomar una
 // decisión". A process key is a branch name, and a branch name says nothing about

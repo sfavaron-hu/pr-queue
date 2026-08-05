@@ -11,7 +11,7 @@
 
 const {
   decline, markDone, syncItems, writeAnswer, readItem, readAnswer, writeAtomic,
-  listOpenItems, pruneDeclined, pruneDone,
+  listOpenItems, pruneDeclined, pruneDone, itemId,
 } = require('./queue.js');
 
 // The exec contract: exec(argv: string[]) => { code, stdout, stderr }.
@@ -133,6 +133,20 @@ async function runCli(argv, deps) {
     return { exit: r.ok ? 0 : 1, output: r };
   }
 
+  if (cmd === 'ask') {
+    // The exact batch to put in front of the owner: the gate's budgeted slice
+    // (`gate.ask`), already ordered most-unblocking first, paired with the queue id
+    // each answer must be written against, and with anything already answered
+    // dropped. The skill must NOT re-derive this — it used to cap `list` itself,
+    // but `list` is a directory read with no order, so "the top 4" was arbitrary.
+    // Keeping the budget in one place is also what stops it drifting from
+    // QUESTION_BUDGET, which is the whole defence against approval fatigue.
+    const batch = (gate.ask || [])
+      .map(q => ({ id: itemId(q), item: q }))
+      .filter(e => readAnswer(io, paths, e.id) === null);
+    return { exit: 0, output: batch };
+  }
+
   if (cmd === 'drafts') {
     // The branches the drain deliberately did NOT open a PR for — /work-assistant
     // opens each with a model-authored body.
@@ -154,6 +168,10 @@ async function runCli(argv, deps) {
   }
 
   const drained = drainActions(exec, mechanical);
+  // `gate.questions` (ALL of them), never `gate.ask` — syncItems reads absence
+  // from this list as "the situation is gone" and deletes the file. See its
+  // contract note: handing it the budgeted slice silently destroyed items the
+  // owner had already answered.
   const synced = syncItems(io, paths, gate.questions || []);
   let declined = 0;
   for (const entry of listOpenItems(io, paths)) {
@@ -190,8 +208,13 @@ async function runCli(argv, deps) {
       actions: { ran: drained.ran, failed: drained.failed, results: drained.results.map(r => ({ id: r.id, kind: r.kind, ok: r.ok, code: r.code })) },
       draftsPending: draftsPending.length,   // left for /work-assistant (model-authored body)
       questions: {
-        synced: synced.written.length, skipped: synced.skipped.length, removed: synced.removed.length, declined,
+        synced: synced.written.length, skipped: synced.skipped.length,
+        removed: synced.removed.length, kept: synced.kept.length, declined,
         open: openUnanswered.length, new: newIds.length,
+        // Budget is a presentation limit: everything above it is persisted and
+        // will be asked on a later pass. Reported so a deferred question is
+        // visibly deferred rather than looking dropped.
+        deferred: Math.max(0, openUnanswered.length - (gate.ask || []).length),
         // Generic surface for the escalation to list — headers/keys only, no evidence.
         waiting: openUnanswered.map(o => ({ header: o.item.header, key: o.item.key, question: o.item.question })),
       },

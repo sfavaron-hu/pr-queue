@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { collect } = require('../../collect.js');
-const { fetchOwnPRs } = require('../prs.js');
+const { fetchOwnPRs, fetchPRsForBranches } = require('../prs.js');
 const { ledger } = require('../ledger.js');
 const { buildGate } = require('../gate.js');
 const { babysitStateDir } = require('./gate.js');
@@ -28,7 +28,7 @@ async function main() {
   const checkoutDir = path.resolve(__dirname, '..', '..');
   const loadGate = async () => {
     const doc = await ledger({
-      collect, fetchOwnPRs,
+      collect, fetchOwnPRs, fetchPRsForBranches,
       ioForCollect: { env: process.env, homeDir: os.homedir(), checkoutDir, run, listDirs, listFiles, readTail, now: () => Date.now() },
       run, now: () => Date.now(),
     });
