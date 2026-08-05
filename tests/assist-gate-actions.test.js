@@ -90,3 +90,75 @@ test('action ids are stable and unique per (kind, process, repo, branch)', () =>
   assert.equal(a1[0].id, a2[0].id);
   assert.equal(a1[0].id, 'push:SQSH-1:humand-web:feat/SQSH-1');
 });
+
+// --- the main working tree cannot be removed ---------------------------------
+// `git worktree remove <main>` exits 128, forever. Emitting it produced a failed
+// action on every single pass (observed on hu-translations and material-hu, whose
+// main checkouts both sat on merged feature branches).
+
+test('a merged PRIMARY checkout switches to base instead of being removed', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ repo: 'hu-translations', path: '/w/hu-translations', isPrimary: true,
+                     branch: 'feat/SQSH-3954-translations', baseBranch: 'develop' })],
+    prs: [{ merged: true, closed: false }] })]));
+  assert.deepEqual(kinds(acts), ['switch-primary-to-base']);
+  assert.deepEqual(acts[0].argv, ['git', '-C', '/w/hu-translations', 'switch', 'develop']);
+  assert.equal(acts[0].argv.join(' '), acts[0].cmd);
+  assert.equal(acts[0].reversibility, 'reversible-local');
+});
+
+test('a merged non-primary worktree is still removed', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ isPrimary: false, path: '/w/humand-web/.worktrees/x' })],
+    prs: [{ merged: true, closed: false }] })]));
+  assert.deepEqual(kinds(acts), ['remove-merged-worktree']);
+});
+
+// A worktree with no isPrimary field at all (an older payload) must not be
+// treated as primary — that would silently stop cleaning up real worktrees.
+test('an absent isPrimary is treated as not primary', () => {
+  const w = wt({ path: '/w/x' });
+  delete w.isPrimary;
+  const acts = buildActions(ledger([proc({ worktrees: [w], prs: [{ merged: true, closed: false }] })]));
+  assert.deepEqual(kinds(acts), ['remove-merged-worktree']);
+});
+
+test('a primary checkout with no derivable base emits nothing rather than a bad switch', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ isPrimary: true, baseBranch: null })],
+    prs: [{ merged: true, closed: false }] })]));
+  assert.deepEqual(kinds(acts), []);
+});
+
+test('a dirty primary checkout is never switched out from under uncommitted work', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ isPrimary: true, dirty: 2 })],
+    prs: [{ merged: true, closed: false }] })]));
+  assert.deepEqual(kinds(acts), []);
+});
+
+// --- "consumed" is merged-and-nothing-open, not every-PR-merged ---------------
+
+test('a closed attempt alongside the merged PR does not block cleanup', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ isPrimary: false })],
+    prs: [{ merged: false, closed: true }, { merged: true, closed: false }] })]));
+  assert.deepEqual(kinds(acts), ['remove-merged-worktree']);
+});
+
+test('an open PR alongside a merged one keeps the worktree', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ isPrimary: false })],
+    prs: [{ merged: true, closed: false }, { merged: false, closed: false }] })]));
+  assert.deepEqual(kinds(acts), []);
+});
+
+// --- a rejected PR must not be offered a fresh draft -------------------------
+// react-workflows#6 was closed unmerged. Before `closed` existed the branch read
+// as PR-less, and the gate proposed opening a draft for work already rejected.
+test('a branch whose only PR was closed unmerged gets no draft action', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ unpushed: 1 })],
+    prs: [{ number: 6, merged: false, closed: true, headRef: 'feat/SQSH-1' }] })]));
+  assert.deepEqual(kinds(acts), []);
+});
