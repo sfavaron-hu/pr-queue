@@ -24,7 +24,7 @@ mkdir -p "$CHECK_DIR"
 
 cat > "$CHECK_DIR/check.json" <<JSON
 {
-  "description": "Drains reversible local git actions (push, prune, draft PRs via --fill) on my own branches and queues the decisions that need me. Never answers its own questions — it pings me on Slack when a new one is waiting so I run /work-assistant.",
+  "description": "Drains reversible local git actions (push, prune, remove merged worktrees) on my own branches and queues the decisions that need me. Does NOT open draft PRs — those wait for /work-assistant, where a model writes a proper body. Never answers its own questions; pings me on Slack when a new one is waiting so I run /work-assistant.",
   "enabled": false,
   "interval_minutes": 20,
   "model": "claude-sonnet-5",

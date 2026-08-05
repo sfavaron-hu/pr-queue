@@ -21,6 +21,10 @@ function fakeExec(script) {
 }
 const pushAction = { id: 'push:p1:r:b', kind: 'push', processKey: 'p1', repo: 'r',
   cmd: 'git -C /w/r push -u origin b', argv: ['git', '-C', '/w/r', 'push', '-u', 'origin', 'b'] };
+const draftAction = { id: 'open-draft-pr:p2:r2:b2', kind: 'open-draft-pr', processKey: 'p2', repo: 'r2',
+  githubRepo: 'Org/r2', head: 'b2', base: 'develop', why: 'commits sobre base', evidence: 'r2/b2: 3 commits',
+  cmd: 'gh pr create --draft --fill -R Org/r2 --head b2 --base develop',
+  argv: ['gh', 'pr', 'create', '--draft', '--fill', '-R', 'Org/r2', '--head', 'b2', '--base', 'develop'] };
 const coldItem = { type: 'question', key: 'cold:p1', processKey: 'p1',
   question: 'p1 no se toca hace más de 14 días. ¿Qué hago?', header: 'Frío',
   options: [{ label: 'Retomar', description: '…' }, { label: 'Dejar', description: '…' }] };
@@ -39,6 +43,30 @@ test('drain runs reversible actions, syncs questions, and prunes; a new question
   assert.equal(io.exists(`${queuePaths('/s').items}/${itemId(coldItem)}.json`), true);   // question queued
   assert.equal(res.output.actions.ran, 1);
   assert.equal(res.output.questions.synced, 1);
+});
+
+test('drain runs the push but does NOT open draft PRs (left for /work-assistant)', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const res = await runCli([], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ actions: [pushAction, draftAction] }), warnings: [] }),
+  }));
+  assert.ok(exec.calls.some(c => c[0] === 'git' && c.includes('push')), 'push should run');
+  assert.ok(!exec.calls.some(c => c[0] === 'gh' && c.includes('create')), 'draft PR must NOT be created mechanically');
+  assert.equal(res.output.actions.ran, 1);       // only the push
+  assert.equal(res.output.draftsPending, 1);      // the draft is deferred to the skill
+});
+
+test('drafts lists pending draft PRs with semantic fields, read-only', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const res = await runCli(['drafts'], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ actions: [pushAction, draftAction] }), warnings: [] }),
+  }));
+  assert.equal(res.exit, 0);
+  assert.equal(exec.calls.length, 0);             // reads a gate, spawns nothing
+  assert.deepEqual(res.output, [{
+    id: 'open-draft-pr:p2:r2:b2', githubRepo: 'Org/r2', head: 'b2', base: 'develop',
+    repo: 'r2', why: 'commits sobre base', evidence: 'r2/b2: 3 commits',
+  }]);
 });
 
 test('drain does NOT re-notify a question already notified last pass (exit 0)', async () => {

@@ -80,6 +80,11 @@ function buildActions(ledger) {
         actions.push({
           id: actionId('open-draft-pr', p.key, w.repo, w.branch),
           kind: 'open-draft-pr', processKey: p.key, repo: w.repo,
+          // Semantic fields so a consumer can open a well-formatted PR without
+          // re-parsing argv. The --fill argv stays as a mechanical fallback, but
+          // the drain no longer runs this kind — a model writes the body in
+          // /work-assistant (see assist/bin/run.js `drafts`).
+          githubRepo: w.githubRepo, head: w.branch, base: w.baseBranch,
           cmd: `gh pr create --draft --fill -R ${w.githubRepo} --head ${w.branch} --base ${w.baseBranch}`,
           argv: ['gh', 'pr', 'create', '--draft', '--fill', '-R', w.githubRepo, '--head', w.branch, '--base', w.baseBranch],
           reversibility: 'reversible-draft',

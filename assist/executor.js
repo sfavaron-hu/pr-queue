@@ -119,6 +119,13 @@ async function runCli(argv, deps) {
   // The remaining commands need a fresh gate.
   const { gate, warnings } = await loadGate();
 
+  // A draft PR is NOT a mechanical drain action: --fill would use commit messages
+  // as the body. The drain pushes the branch (so it is ready) but leaves draft
+  // creation to /work-assistant, where a model writes a well-formatted body. The
+  // drain runs everything EXCEPT this kind; `drafts` lists them for the skill.
+  const isDraft = (a) => a.kind === 'open-draft-pr';
+  const draftPending = (a) => ({ id: a.id, githubRepo: a.githubRepo, head: a.head, base: a.base, repo: a.repo, why: a.why, evidence: a.evidence });
+
   if (cmd === 'action') {
     const action = (gate.actions || []).find(a => a.id === id);
     if (!action) return { exit: 3, output: { ok: false, reason: 'no-such-action', id } };
@@ -126,10 +133,19 @@ async function runCli(argv, deps) {
     return { exit: r.ok ? 0 : 1, output: r };
   }
 
+  if (cmd === 'drafts') {
+    // The branches the drain deliberately did NOT open a PR for — /work-assistant
+    // opens each with a model-authored body.
+    const drafts = (gate.actions || []).filter(isDraft).map(draftPending);
+    return { exit: 0, output: drafts };
+  }
+
   // Default: DRAIN (unattended).
+  const mechanical = (gate.actions || []).filter(a => !isDraft(a));
+  const draftsPending = (gate.actions || []).filter(isDraft).map(draftPending);
   const degraded = isDegraded(warnings);
   if (args.dryRun) {
-    return { exit: 0, output: { dryRun: true, wouldRun: (gate.actions || []).map(a => a.argv), degraded } };
+    return { exit: 0, output: { dryRun: true, wouldRun: mechanical.map(a => a.argv), draftsPending, degraded } };
   }
   if (degraded) {
     const declinedPruned = pruneDeclined(io, paths);
@@ -137,7 +153,7 @@ async function runCli(argv, deps) {
     return { exit: 4, output: { degraded: true, actions: { ran: 0 }, questions: { synced: 0 }, prune: { declinedPruned, donePruned } } };
   }
 
-  const drained = drainActions(exec, gate.actions || []);
+  const drained = drainActions(exec, mechanical);
   const synced = syncItems(io, paths, gate.questions || []);
   let declined = 0;
   for (const entry of listOpenItems(io, paths)) {
@@ -172,6 +188,7 @@ async function runCli(argv, deps) {
     exit: notify ? 10 : 0,   // 10 escalates a model session that only sends the heads-up
     output: {
       actions: { ran: drained.ran, failed: drained.failed, results: drained.results.map(r => ({ id: r.id, kind: r.kind, ok: r.ok, code: r.code })) },
+      draftsPending: draftsPending.length,   // left for /work-assistant (model-authored body)
       questions: {
         synced: synced.written.length, skipped: synced.skipped.length, removed: synced.removed.length, declined,
         open: openUnanswered.length, new: newIds.length,

@@ -37,6 +37,10 @@ test('open-draft-pr fires for an on-origin branch with commits above base, no PR
   assert.deepEqual(acts[0].argv,
     ['gh', 'pr', 'create', '--draft', '--fill', '-R', 'HumandDev/humand-web', '--head', 'feat/SQSH-1', '--base', 'develop']);
   assert.equal(acts[0].argv.join(' '), acts[0].cmd);
+  // Semantic fields so /work-assistant can open a well-formatted PR without re-parsing argv.
+  assert.equal(acts[0].githubRepo, 'HumandDev/humand-web');
+  assert.equal(acts[0].head, 'feat/SQSH-1');
+  assert.equal(acts[0].base, 'develop');
 });
 
 test('a dirty worktree suppresses open-draft-pr (no autonomous resolution)', () => {
