@@ -129,8 +129,14 @@ async function collectRepo(repo, repoPath, run, warn) {
     const onOrigin = (wt.detached || wt.prunable)
       ? false
       : (originBranches === null ? null : originBranches.has(String(wt.branch).toLowerCase()));
+    // `isPrimary` rides along from the parser (position in `git worktree list`),
+    // not from anything measured here: the base-branch filter above drops main
+    // checkouts sitting on `main`/`develop`, but one parked on a feature branch
+    // survives — and that is the row a consumer must not try to `worktree
+    // remove`. See parseWorktrees for why position is the only available signal.
     const row = { repo, path: wt.path, branch: wt.branch, detached: wt.detached,
-                  prunable: wt.prunable, dirty: null, unpushed: null, lastCommit: null,
+                  prunable: wt.prunable, isPrimary: wt.isPrimary === true,
+                  dirty: null, unpushed: null, lastCommit: null,
                   lastCommitSubject: null, githubRepo, baseBranch: base, onOrigin };
     // A prunable worktree's directory is gone — running git in it would just fail.
     if (wt.prunable) return row;
