@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { queuePaths, itemId, syncItems, decline, isDeclined, pruneDeclined, readItem } = require('../assist/queue.js');
+const { queuePaths, itemId, syncItems, decline, isDeclined, pruneDeclined, readItem,
+        writeAnswer } = require('../assist/queue.js');
 
 function memIo(nowMs) {
   const files = new Map(); let clock = nowMs || 0;
@@ -95,4 +96,37 @@ test('a declined item already in items/ is swept out and reported in skipped', (
   const res = syncItems(io, paths, [item]);
   assert.deepEqual(res.skipped, [id]);
   assert.equal(io.exists(`${paths.items}/${id}.json`), false);
+});
+
+// The persistence bug in one test: items/ is reconciled against the FULL question
+// set, so an item must never disappear merely because it is not being asked this
+// pass. Deleting it made the owner's answer come back `no-item`.
+test('an item not in the asked slice survives as long as the gate still emits it', () => {
+  const io = memIo(1); const paths = queuePaths('/s');
+  const q = (k) => ({ type: 'question', processKey: k, key: `dirty:${k}`,
+    question: '¿Qué hago?', header: 'H', options: [{ label: 'Dejar', description: 'd' }] });
+  const all = ['a', 'b', 'c', 'd', 'e', 'f'].map(q);
+
+  syncItems(io, paths, all);
+  assert.equal(io.list(paths.items).length, 6);
+
+  // A later pass emits the same six in a different order (only the top 4 would be
+  // asked). Every file must still be there.
+  syncItems(io, paths, [all[5], all[4], all[3], all[2], all[1], all[0]]);
+  assert.equal(io.list(paths.items).length, 6);
+  for (const item of all) assert.ok(io.exists(`${paths.items}/${itemId(item)}.json`));
+});
+
+test('an item the gate stopped emitting is removed, but not one with a pending answer', () => {
+  const io = memIo(1); const paths = queuePaths('/s');
+  const q = (k) => ({ type: 'question', processKey: k, key: `dirty:${k}`,
+    question: '¿Qué hago?', header: 'H', options: [{ label: 'Dejar', description: 'd' }] });
+  const [gone, answered] = [q('gone'), q('answered')];
+  syncItems(io, paths, [gone, answered]);
+  writeAnswer(io, paths, itemId(answered), { value: 'Dejar' }, {});
+
+  const res = syncItems(io, paths, []);
+  assert.deepEqual(res.removed, [itemId(gone)]);
+  assert.deepEqual(res.kept, [itemId(answered)]);
+  assert.ok(io.exists(`${paths.items}/${itemId(answered)}.json`));
 });
