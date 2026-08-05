@@ -260,6 +260,35 @@ test('collect drops a worktree sitting on its own base branch', async () => {
   assert.equal(wt[0].path, '/w/humand-web-feat');
 });
 
+// The base-branch filter above is what usually hides a main checkout, but it
+// only fires when that checkout sits on `main`/`develop`. Parked on a feature
+// branch it survives into the payload — and it is the one row that cannot be
+// `git worktree remove`d (exit 128). Real case: hu-translations' and
+// material-hu's main checkouts, both left on merged feature branches.
+test('collect marks a primary checkout on a feature branch as isPrimary', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/hu-translations\nHEAD abc\nbranch refs/heads/feat/SQSH-3954-translations\n\n' +
+               'worktree /w/hu-translations/.worktrees/other\nHEAD def\nbranch refs/heads/fix/CSBM-5716-heic\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const byPath = new Map(out.processes.flatMap(p => p.worktrees).map(w => [w.path, w]));
+  assert.equal(byPath.size, 2);
+  assert.equal(byPath.get('/w/hu-translations').isPrimary, true);
+  assert.equal(byPath.get('/w/hu-translations/.worktrees/other').isPrimary, false);
+});
+
 test('collect keeps every worktree when the base branch cannot be derived', async () => {
   const { opts } = harness({
     run: async (cmd, args) => {

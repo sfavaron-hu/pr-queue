@@ -6,6 +6,15 @@
 // existing tests can keep importing it from here.
 const { safeHttpUrl } = require('./classify.js');
 
+// `isPrimary` marks the repo's main working tree, which `git worktree list`
+// always reports FIRST and never labels — the porcelain format has no marker
+// for it (checked against git 2.50.1), so position is the only signal there is.
+// It matters because the main working tree cannot be removed: `git worktree
+// remove <main>` exits 128 ("is a main working tree"). Without this field a
+// main checkout parked on a merged branch is indistinguishable from a
+// disposable worktree, and the gate emits a removal that fails 128 on every
+// single pass (observed on hu-translations and material-hu, both of whose main
+// checkouts sat on merged branches).
 function parseWorktrees(stdout) {
   const out = [];
   let cur = null;
@@ -13,7 +22,7 @@ function parseWorktrees(stdout) {
     if (line.startsWith('worktree ')) {
       if (cur) out.push(cur);
       cur = { path: line.slice('worktree '.length), branch: null, head: null,
-              detached: false, prunable: false };
+              detached: false, prunable: false, isPrimary: out.length === 0 };
     } else if (!cur) {
       continue;
     } else if (line.startsWith('HEAD ')) {
