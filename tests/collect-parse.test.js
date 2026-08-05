@@ -52,6 +52,18 @@ test('parseStatusShort returns 0 for a clean tree', () => {
   assert.equal(parseStatusShort('\n'), 0);
 });
 
+test('parseStatusShort ignores untracked worktree-container dirs (not real work)', () => {
+  // A merged worktree with only `?? .worktrees/` must read as clean (0), so it
+  // is eligible for autonomous removal and produces no spurious commit question.
+  assert.equal(parseStatusShort('?? .worktrees/\n'), 0);
+  assert.equal(parseStatusShort('?? .claude/worktrees/\n'), 0);
+  // Mixed: the container is dropped, the real modified file still counts.
+  assert.equal(parseStatusShort(' M package.json\n?? .worktrees/\n'), 1);
+  // A real untracked file named similarly is NOT dropped — only exact containers.
+  assert.equal(parseStatusShort('?? .worktrees-notes.md\n'), 1);
+  assert.equal(parseStatusShort('?? src/.worktrees/thing.ts\n'), 1);
+});
+
 test('parseAgents normalizes status from status or state', () => {
   const fixture = JSON.stringify([
     { id: '50f65449', cwd: '/w', kind: 'background', startedAt: 1782329044156,

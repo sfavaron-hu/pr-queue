@@ -101,6 +101,18 @@ test('done <id> marks the item done', async () => {
   assert.equal(io.exists(`${paths.items}/${itemId(coldItem)}.json`), false);
 });
 
+test('done <id> records the question and answer, not just the resolution', async () => {
+  const io = memIo(1000); const paths = queuePaths('/s');
+  syncItems(io, paths, [coldItem]);
+  await runCli(['answer', itemId(coldItem), '--other', 'ya está merged'], deps(io, fakeExec()));
+  await runCli(['done', itemId(coldItem), '--resolution', 'merged: PR #2258'], deps(io, fakeExec()));
+  // done/ is the only surviving trace; it must carry "asked X, answered Y, did Z".
+  const rec = JSON.parse(io.read(`${paths.done}/${itemId(coldItem)}.json`));
+  assert.equal(rec.resolution, 'merged: PR #2258');
+  assert.equal(rec.item.key, coldItem.key);          // the question is preserved
+  assert.deepEqual(rec.answer, { other: 'ya está merged' });  // and the owner's answer
+});
+
 test('list prints open items with their answered flag', async () => {
   const io = memIo(1000); const paths = queuePaths('/s');
   syncItems(io, paths, [coldItem]);

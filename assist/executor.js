@@ -10,7 +10,8 @@
 // so `cmd` must never be interpolated into a shell — there is no sh -c path.
 
 const {
-  decline, markDone, syncItems, writeAnswer, listOpenItems, pruneDeclined, pruneDone,
+  decline, markDone, syncItems, writeAnswer, readItem, readAnswer,
+  listOpenItems, pruneDeclined, pruneDone,
 } = require('./queue.js');
 
 // The exec contract: exec(argv: string[]) => { code, stdout, stderr }.
@@ -106,7 +107,12 @@ async function runCli(argv, deps) {
   }
 
   if (cmd === 'done') {
-    markDone(io, paths, id, { resolution: args.resolution || 'done-by-skill' });
+    // Capture the question and the owner's answer BEFORE markDone clears them,
+    // so done/ (the only surviving trace, and the digest of unattended work)
+    // reads as "asked X, answered Y, did Z" — not just the resolution string.
+    const item = readItem(io, paths, id);
+    const answer = readAnswer(io, paths, id);
+    markDone(io, paths, id, { resolution: args.resolution || 'done-by-skill', item, answer });
     return { exit: 0, output: { ok: true, id } };
   }
 

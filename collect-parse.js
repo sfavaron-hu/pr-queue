@@ -30,8 +30,19 @@ function parseWorktrees(stdout) {
   return out;
 }
 
+// Untracked worktree-container dirs are tooling artifacts, not the owner's
+// uncommitted work: git surfaces `?? .worktrees/` (or `?? .claude/worktrees/`)
+// whenever worktrees are nested under the repo. Counting it as "dirty" both
+// hides a merged worktree from autonomous cleanup and emits a spurious
+// "¿commiteo?" question. Drop only these known containers — every other
+// untracked entry (a real new file) still counts.
+const WORKTREE_CONTAINERS = new Set(['.worktrees/', '.claude/worktrees/']);
 function parseStatusShort(stdout) {
-  return String(stdout).split('\n').filter(l => l.trim() !== '').length;
+  return String(stdout).split('\n').filter(l => {
+    if (l.trim() === '') return false;
+    if (l.startsWith('?? ') && WORKTREE_CONTAINERS.has(l.slice(3).trim())) return false;
+    return true;
+  }).length;
 }
 
 function parseAgents(stdout) {
