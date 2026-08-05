@@ -260,6 +260,35 @@ test('collect drops a worktree sitting on its own base branch', async () => {
   assert.equal(wt[0].path, '/w/humand-web-feat');
 });
 
+// The base-branch filter above is what usually hides a main checkout, but it
+// only fires when that checkout sits on `main`/`develop`. Parked on a feature
+// branch it survives into the payload — and it is the one row that cannot be
+// `git worktree remove`d (exit 128). Real case: hu-translations' and
+// material-hu's main checkouts, both left on merged feature branches.
+test('collect marks a primary checkout on a feature branch as isPrimary', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/hu-translations\nHEAD abc\nbranch refs/heads/feat/SQSH-3954-translations\n\n' +
+               'worktree /w/hu-translations/.worktrees/other\nHEAD def\nbranch refs/heads/fix/CSBM-5716-heic\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop\n';
+      if (a.startsWith('status')) return '';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const byPath = new Map(out.processes.flatMap(p => p.worktrees).map(w => [w.path, w]));
+  assert.equal(byPath.size, 2);
+  assert.equal(byPath.get('/w/hu-translations').isPrimary, true);
+  assert.equal(byPath.get('/w/hu-translations/.worktrees/other').isPrimary, false);
+});
+
 test('collect keeps every worktree when the base branch cannot be derived', async () => {
   const { opts } = harness({
     run: async (cmd, args) => {
@@ -670,4 +699,50 @@ test('collect keeps onOrigin false when case differs AND the name genuinely diff
   const out = await collect(opts);
   const wt = out.processes[0].worktrees[0];
   assert.equal(wt.onOrigin, false);
+});
+
+// The payload must carry WHAT is uncommitted, not only how much: a consumer that
+// asks "commit this?" is unanswerable with a bare count.
+test('collect carries a sample of the dirty paths alongside the count', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web-feat\nHEAD abc\nbranch refs/heads/feat/SQSH-3954\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop\n';
+      if (a.startsWith('status')) return ' M src/hooks/useCommunityFeature.ts\n?? scratch.md\n';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees)[0];
+  assert.equal(wt.dirty, 2);
+  assert.deepEqual(wt.dirtyFiles, [
+    { code: 'M', path: 'src/hooks/useCommunityFeature.ts' },
+    { code: '??', path: 'scratch.md' },
+  ]);
+});
+
+test('collect leaves dirtyFiles empty for a prunable worktree', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/gone\nHEAD abc\nbranch refs/heads/feat/x\nprunable gitdir missing\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop\n';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees)[0];
+  assert.deepEqual(wt.dirtyFiles, []);
+  assert.equal(wt.dirty, null);
 });

@@ -169,3 +169,19 @@ test('nextChipFilter drives the second row with the same semantics', () => {
   assert.equal(nextChipFilter('draft', 'con', STATUS), 'draft');
   assert.equal(nextChipFilter('con', 'draft', MODES), 'con');
 });
+
+// GitHub keeps `isDraft: true` on a draft that was closed. Testing only `draft`
+// files abandoned drafts under the "draft" chip as if they still awaited work —
+// real case: react-workflows#6.
+test('a closed draft counts under neither the abierto nor the draft chip', () => {
+  const row = { prs: [{ merged: false, closed: true, draft: true }] };
+  assert.equal(rowHasOpenPR(row), false);
+  assert.equal(rowHasDraftPR(row), false);
+  assert.equal(rowHasPR(row), true);
+});
+
+test('a closed non-draft PR counts under neither chip either', () => {
+  const row = { prs: [{ merged: false, closed: true, draft: false }] };
+  assert.equal(rowHasOpenPR(row), false);
+  assert.equal(rowHasDraftPR(row), false);
+});

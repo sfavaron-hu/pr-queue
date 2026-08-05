@@ -60,7 +60,7 @@ test('synthesizeProcesses keys a ticketless merged PR by owner/repo#number, not 
 
 test('PR_CONTRACT_FIELDS is exactly the documented field set', () => {
   assert.deepEqual([...PR_CONTRACT_FIELDS].sort(), [
-    'approved', 'changesReq', 'ci', 'conflicts', 'draft', 'headRef',
+    'approved', 'changesReq', 'ci', 'closed', 'conflicts', 'draft', 'headRef',
     'humanReviews', 'merged', 'newComments', 'number', 'owner', 'repo',
     'title', 'updatedAt', 'url',
   ]);

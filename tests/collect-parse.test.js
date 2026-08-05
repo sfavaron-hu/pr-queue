@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseWorktrees, parseStatusShort, parseAgents,
+const { parseWorktrees, parseStatusShort, parseStatusFiles, parseAgents,
         parseTranscriptTail, parseGithubSlug, parseLastCommitLog, parseCommitRangeLog,
         safeHttpUrl } = require('../collect-parse.js');
 
@@ -41,6 +41,25 @@ test('parseWorktrees flags detached worktrees with a null branch', () => {
 
 test('parseWorktrees returns empty array for empty input', () => {
   assert.deepEqual(parseWorktrees(''), []);
+});
+
+// The main working tree is the one `git worktree remove` refuses with exit 128,
+// and `git worktree list` never labels it — it is simply first. Everything else
+// must come back false, or a consumer would skip removing a real worktree.
+test('parseWorktrees marks only the first worktree as primary', () => {
+  const out = parseWorktrees(WORKTREE_FIXTURE);
+  assert.equal(out[0].isPrimary, true);
+  assert.equal(out[1].isPrimary, false);
+  assert.equal(out[2].isPrimary, false);
+});
+
+// Leading blank lines are the trap: keying off "have I seen a `worktree` line
+// yet" rather than a raw line counter is what keeps the first real entry primary.
+test('parseWorktrees marks the first entry primary despite leading blank lines', () => {
+  const out = parseWorktrees(`\n\n${WORKTREE_FIXTURE}`);
+  assert.equal(out.length, 3);
+  assert.equal(out[0].isPrimary, true);
+  assert.equal(out[1].isPrimary, false);
 });
 
 test('parseStatusShort counts changed files', () => {
@@ -314,4 +333,30 @@ test('parseTranscriptTail nulls out a javascript: prUrl but keeps number and rep
   assert.equal(prLink.number, 42);
   assert.equal(prLink.repo, 'HumandDev/humand-web');
   assert.equal(prLink.url, null);
+});
+
+// The count alone cannot be acted on. Asked "1 file uncommitted, commit it?" the
+// honest answer is "depends what it is" — and the motivating real case was a
+// single modified file holding a `// TEMP — DO NOT COMMIT` flag override, where
+// the count pointed at exactly the wrong answer.
+test('parseStatusFiles returns status code and path per entry', () => {
+  const out = parseStatusFiles(' M src/hooks/useCommunityFeature.ts\n?? node_modules\n');
+  assert.deepEqual(out, [
+    { code: 'M', path: 'src/hooks/useCommunityFeature.ts' },
+    { code: '??', path: 'node_modules' },
+  ]);
+});
+
+test('parseStatusFiles caps the sample and ignores blank lines', () => {
+  const many = Array.from({ length: 9 }, (_, i) => ` M f${i}.ts`).join('\n') + '\n\n';
+  assert.equal(parseStatusFiles(many).length, 5);
+  assert.equal(parseStatusFiles(many, 2).length, 2);
+  assert.deepEqual(parseStatusFiles(''), []);
+});
+
+// Renames arrive as `R  old -> new`; keeping the arrow intact is more useful than
+// half-parsing it, and the code already says it is a rename.
+test('parseStatusFiles keeps a rename readable', () => {
+  assert.deepEqual(parseStatusFiles('R  a.ts -> b.ts\n'),
+    [{ code: 'R', path: 'a.ts -> b.ts' }]);
 });

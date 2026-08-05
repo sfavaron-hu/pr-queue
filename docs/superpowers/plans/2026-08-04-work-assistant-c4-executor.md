@@ -100,7 +100,7 @@ test('runAction executes action.argv verbatim and never touches action.cmd', () 
   assert.equal(exec.calls.length, 1);
   assert.deepEqual(exec.calls[0], ['git', '-C', '/w/r', 'push', '-u', 'origin', 'b']);
   // The injection payload from cmd never reaches exec, in any argument, in any form.
-  const flat = exec.calls[0].join(' ');
+  const flat = exec.calls[0].join('\u0000');
   assert.ok(!flat.includes('rm -rf'), 'cmd payload must not reach exec');
 });
 

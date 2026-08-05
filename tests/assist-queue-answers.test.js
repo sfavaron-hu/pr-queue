@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { queuePaths, itemId, syncItems, writeAnswer, readAnswer } = require('../assist/queue.js');
+const { queuePaths, itemId, syncItems, writeAnswer, readAnswer,
+        decline, markDone } = require('../assist/queue.js');
 
 function memIo(nowMs) {
   const files = new Map(); let clock = nowMs || 0;
@@ -53,4 +54,29 @@ test('an empty or malformed answer is rejected', () => {
 test('readAnswer returns null when none exists', () => {
   const { io, paths, id } = seed();
   assert.equal(readAnswer(io, paths, id), null);
+});
+
+
+// A bare `no-item` on an id the owner had just been shown reads like a bug in the
+// id, when the real cause is an item removed underneath a decision already made.
+// The three causes need different handling, so they get different reasons.
+test('writeAnswer reports never-existed as no-item', () => {
+  const io = memIo(1); const paths = queuePaths('/s');
+  assert.deepEqual(writeAnswer(io, paths, itemId(item), { value: 'Dejar' }, {}),
+    { ok: false, reason: 'no-item' });
+});
+
+test('writeAnswer reports a suppressed item as declined, not missing', () => {
+  const { io, paths, id } = seed();
+  decline(io, paths, id, 30);
+  io.remove(`${paths.items}/${id}.json`);
+  assert.deepEqual(writeAnswer(io, paths, id, { value: 'Dejar' }, {}),
+    { ok: false, reason: 'declined' });
+});
+
+test('writeAnswer reports an answer that arrived after the fact as already-done', () => {
+  const { io, paths, id } = seed();
+  markDone(io, paths, id, { resolution: 'done' });
+  assert.deepEqual(writeAnswer(io, paths, id, { value: 'Dejar' }, {}),
+    { ok: false, reason: 'already-done' });
 });

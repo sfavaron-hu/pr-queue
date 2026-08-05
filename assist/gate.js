@@ -2,6 +2,7 @@
 // that splits mechanical actions from human decisions. No model, no execution,
 // no IO except the injected pr-babysit reads. The gate only *identifies* work;
 // running it is a later increment.
+const { prIsOpen } = require('../classify.js');
 
 function repoPath(workspaceRoot, repo) {
   return workspaceRoot ? `${workspaceRoot}/${repo}` : repo;
@@ -59,7 +60,32 @@ function buildActions(ledger) {
       }
 
       const clean = (w.dirty || 0) === 0;
-      if (prs.length > 0 && prs.every(pr => pr.merged === true) && clean) {
+      // "Consumed" is `merged and nothing still open` — not `every PR merged`.
+      // A branch can carry a closed attempt alongside the PR that actually
+      // landed; the closed one is not a reason to keep local state around, but
+      // an open one always is.
+      const consumedWork = prs.some(pr => pr.merged === true) && !prs.some(prIsOpen);
+
+      if (consumedWork && clean && w.isPrimary === true && w.baseBranch) {
+        // The repo's MAIN working tree cannot be removed — `git worktree remove`
+        // on it exits 128, every pass, forever (observed on hu-translations and
+        // material-hu). The equivalent cleanup is to park it back on its base
+        // branch: same intent (stop holding consumed work), and reversible with
+        // `git switch -`. The local branch is deliberately left alone; it is
+        // still on origin and deleting it is not this action's business.
+        actions.push({
+          id: actionId('switch-primary-to-base', p.key, w.repo, w.branch),
+          kind: 'switch-primary-to-base', processKey: p.key, repo: w.repo,
+          cmd: `git -C ${w.path} switch ${w.baseBranch}`,
+          argv: ['git', '-C', w.path, 'switch', w.baseBranch],
+          reversibility: 'reversible-local',
+          why: 'El checkout principal quedó parado en trabajo ya mergeado; no se puede remover, se vuelve a la base',
+          evidence: `${w.repo}/${w.branch}: checkout principal, PR mergeado, limpio → ${w.baseBranch}`,
+        });
+        continue;
+      }
+
+      if (consumedWork && clean && w.isPrimary !== true) {
         actions.push({
           id: actionId('remove-merged-worktree', p.key, w.repo, w.branch),
           kind: 'remove-merged-worktree', processKey: p.key, repo: w.repo,
@@ -98,9 +124,57 @@ function buildActions(ledger) {
 }
 
 // One AskUserQuestion call per pass holds at most 4 questions; that ceiling is
-// the whole defence against approval fatigue, so over-budget questions are
-// dropped (re-derived next pass), never queued to be drained.
+// the whole defence against approval fatigue.
+//
+// It is a PRESENTATION limit, not a persistence one. Truncating the emitted list
+// was a real bug: the queue reconciles items/ against what the gate emits and
+// deletes anything absent, so a question that merely fell out of the top 4 on a
+// later pass had its file removed — and an answer written against its id came
+// back `no-item`, silently losing a decision the owner had already made. (Hit
+// exactly that on `dirty:fix/no-ticket-groups-notifications-config`.)
+//
+// So `questions` is now every question the situation warrants, and `ask` is the
+// budgeted slice to put in front of the owner. The queue persists the former; the
+// skill asks the latter.
 const QUESTION_BUDGET = 4;
+
+// A process key is a branch name, and a branch name does not say which repo it
+// is in, where on disk, or how stale. Asked "<branch> no se toca hace 14 días,
+// ¿qué hago?" the honest answer is "that name tells me nothing" — so every
+// question below carries the evidence needed to decide without going to look.
+function repoAndPath(w) {
+  if (!w) return '';
+  return w.isPrimary === true ? `${w.repo} (checkout principal)` : `${w.repo}`;
+}
+
+// Days since the branch's own last commit. `lastCommit` is ms (parseLastCommitLog
+// multiplies %ct by 1000); `null` for a prunable worktree, so the caller omits it.
+function daysSince(ts, now) {
+  if (!ts || !now) return null;
+  return Math.floor((now - ts) / 86400000);
+}
+
+// The single most decision-changing fact about a stale branch: does it already
+// have a PR, and in what state. A merged or closed PR usually means the answer is
+// "nothing to resume" — which is invisible from the branch name alone.
+function prSummary(prs) {
+  const list = prs || [];
+  if (list.length === 0) return 'sin PR';
+  return list.map(p => {
+    const state = p.merged === true ? 'mergeado' : p.closed === true ? 'cerrado sin mergear' : 'abierto';
+    return `#${p.number} ${state}`;
+  }).join(', ');
+}
+
+// `M src/x.ts, ?? scratch.md` — the codes matter as much as the paths (modified
+// vs untracked vs deleted is most of what decides "commit it?").
+function dirtySummary(w) {
+  const files = (w && w.dirtyFiles) || [];
+  if (files.length === 0) return '';
+  const shown = files.map(f => `${f.code} ${f.path}`).join(', ');
+  const rest = (w.dirty || 0) - files.length;
+  return rest > 0 ? `${shown}, +${rest} más` : shown;
+}
 
 // At most one question per process. Dirty beats cold: uncommitted changes are a
 // concrete "what do I do with this" the assistant genuinely cannot resolve
@@ -111,16 +185,19 @@ const QUESTION_BUDGET = 4;
 function questionFor(proc, ledger) {
   const f = proc.flags || {};
   const wts = proc.worktrees || [];
+  const now = ledger && ledger.generatedAt;
 
   if (f.dirty) {
     const w = wts.find(x => (x.dirty || 0) > 0) || wts[0];
+    const what = dirtySummary(w);
     return {
       type: 'question', key: `dirty:${proc.key}`, processKey: proc.key,
-      question: `${w.branch} tiene ${w.dirty} archivo(s) sin commitear. ¿Qué hago?`,
+      question: `${w.repo}/${w.branch} tiene ${w.dirty} archivo(s) sin commitear${what ? `: ${what}` : ''}. ¿Qué hago?`,
       header: 'Sin commit',
       options: [
-        { label: 'Commitear', description: `Genero un commit en ${w.repo}/${w.branch} con esos cambios y sigo.` },
-        { label: 'Dejar', description: 'Lo dejo como está; no vuelvo a preguntar por 30 días.' },
+        { label: 'Commitear',
+          description: `Genero un commit en ${repoAndPath(w)} con esos cambios y sigo. Estado del PR: ${prSummary(proc.prs)}.` },
+        { label: 'Dejar', description: `Lo dejo como está en ${w.path}; no vuelvo a preguntar por 30 días.` },
       ],
     };
   }
@@ -129,16 +206,31 @@ function questionFor(proc, ledger) {
     const w = wts[0];
     const commits = w ? (w.unpushed || 0) : 0;
     const onOrigin = w ? w.onOrigin !== false : false;
-    const hasPr = (proc.prs || []).length > 0;
     const days = (ledger && ledger._coldDays) || 14;
+    const stale = w ? daysSince(w.lastCommit, now) : null;
+    const subject = (w && w.lastCommitSubject) ? ` Último commit propio: "${w.lastCommitSubject}".` : '';
+    const age = stale === null ? '' : ` Último commit hace ${stale} día(s).`;
+
+    // `Archivar` means `git worktree remove`, which the main working tree refuses
+    // with exit 128 — offering it there would hand back an option that cannot
+    // work. The equivalent for a primary checkout is to park it on its base.
+    const archive = !w
+      ? { label: 'Archivar', description: 'Archivo el proceso.' }
+      : w.isPrimary === true
+        ? { label: 'Ir a la base',
+            description: `Es el checkout principal de ${w.repo}: no hay worktree que remover (git worktree remove da exit 128). Lo paso a ${w.baseBranch || 'su base'}; el branch queda en origin.` }
+        : { label: 'Archivar',
+            description: `git worktree remove ${w.path} — el branch queda en origin.` };
+
     return {
       type: 'question', key: `cold:${proc.key}`, processKey: proc.key,
-      question: `${proc.key} no se toca hace más de ${days} días. ¿Qué hago?`,
+      question: `${w ? `${w.repo}/${w.branch}` : proc.key} no se toca hace más de ${days} días. ¿Qué hago?`,
       header: 'Frío',
       options: [
-        { label: 'Retomar', description: `${commits} commit${commits === 1 ? '' : 's'} sobre base${onOrigin ? ', rama en origin' : ''}${hasPr ? '' : ', sin PR'}. Lo retomo.` },
+        { label: 'Retomar',
+          description: `${commits} commit${commits === 1 ? '' : 's'} sobre ${w && w.baseBranch ? w.baseBranch : 'base'}${onOrigin ? ', rama en origin' : ', rama sólo local'}. PR: ${prSummary(proc.prs)}.${age}${subject}` },
         { label: 'Dejar', description: 'Lo dejo dormido; no vuelvo a preguntar por 30 días.' },
-        { label: 'Archivar', description: w ? 'git worktree remove — el branch queda en origin.' : 'Archivo el proceso.' },
+        archive,
       ],
     };
   }
@@ -146,9 +238,14 @@ function questionFor(proc, ledger) {
   return null;
 }
 
-// Questions (budgeted, ordered) plus notify (pass-through). The `actions` array
-// is only used to score how much each question unblocks — a question on a
-// process with pending actions is worth surfacing before one on a dead-end.
+// `questions` is every question the situation warrants, ordered most-unblocking
+// first; `ask` is the budgeted slice to actually put in front of the owner. Both
+// come back so persistence (which needs all of them — see QUESTION_BUDGET) and
+// presentation (which needs at most 4) stop being the same list.
+//
+// The `actions` array is only used to score how much each question unblocks — a
+// question on a process with pending actions is worth surfacing before one on a
+// dead-end.
 function buildItems(ledger, actions, babysitNotifications) {
   const acts = actions || [];
   const scoreOf = (key) => acts.filter(a => a.processKey === key).length;
@@ -159,9 +256,10 @@ function buildItems(ledger, actions, babysitNotifications) {
     if (q) candidates.push({ q, score: scoreOf(p.key), recency: p.lastLocalActivity || 0 });
   }
   candidates.sort((a, b) => (b.score - a.score) || (b.recency - a.recency));
-  const questions = candidates.slice(0, QUESTION_BUDGET).map(c => c.q);
+  const questions = candidates.map(c => c.q);
 
-  return { questions, notify: (babysitNotifications || []).slice() };
+  return { questions, ask: questions.slice(0, QUESTION_BUDGET),
+           notify: (babysitNotifications || []).slice() };
 }
 
 // pr-babysit integration by aggregation: read only its STABLE surface — the
@@ -209,8 +307,11 @@ function buildGate(ledger, now, opts) {
   const o = opts || {};
   const babysit = readBabysitNotifications(o.babysitDir, o.io);
   const actions = buildActions(ledger);
-  const { questions, notify } = buildItems(ledger, actions, babysit);
-  return { version: 1, generatedAt: now, actions, questions, notify };
+  const { questions, ask, notify } = buildItems(ledger, actions, babysit);
+  // `questions` is the full set (what the queue must persist); `ask` is the
+  // budgeted slice (what the owner is shown). See QUESTION_BUDGET for why
+  // collapsing the two silently destroyed answered decisions.
+  return { version: 1, generatedAt: now, actions, questions, ask, notify };
 }
 
 // The heartbeat's exit contract. A gh failure makes the whole PR half

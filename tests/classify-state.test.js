@@ -163,3 +163,33 @@ test('sortProcesses maintains stable order for rows with no lastActivity in same
     ['has-activity', 'null-first', 'null-second', 'null-third'],
     'rows with no activity maintain input order; rows with activity sort first');
 });
+
+// A closed-unmerged PR is "not open" exactly like a merged one. Before `closed`
+// existed, every check spelled that `merged !== true`, so a PR you deliberately
+// closed read as open — and a process holding only that PR classified
+// 'esperando', i.e. "someone owes you a review" on a PR nobody will reopen.
+test('a process whose only PR was closed unmerged is frio, not esperando', () => {
+  const closedPR = { owner: 'o', repo: 'r', number: 6, headRef: 'feat/dropped',
+    draft: true, merged: false, closed: true, ci: 'unknown', humanReviews: 0 };
+  const proc = { key: 'feat/dropped', ticket: null, branches: ['feat/dropped'],
+                 worktrees: [{ repo: 'r', branch: 'feat/dropped' }], sessions: [],
+                 lastLocalActivity: null };
+  assert.equal(classify(proc, [closedPR], 2000), 'frio');
+});
+
+test('a merged PR alongside a closed one still classifies mergeado', () => {
+  const closedPR = { merged: false, closed: true, humanReviews: 0 };
+  const mergedPR = { merged: true, closed: false, humanReviews: 0 };
+  const proc = { key: 'k', ticket: null, branches: ['b'], worktrees: [], sessions: [],
+                 lastLocalActivity: null };
+  assert.equal(classify(proc, [closedPR, mergedPR], 2000), 'mergeado');
+});
+
+// The regression guard for producers that never fetch closed PRs (github.js):
+// `closed` absent must behave exactly as before.
+test('a PR with no closed field is still treated as open', () => {
+  const openPR = { merged: false, ci: 'pending', humanReviews: 0 };
+  const proc = { key: 'k', ticket: null, branches: ['b'], worktrees: [], sessions: [],
+                 lastLocalActivity: null };
+  assert.equal(classify(proc, [openPR], 2000), 'esperando');
+});

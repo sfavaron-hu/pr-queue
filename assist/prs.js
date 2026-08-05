@@ -21,11 +21,19 @@ function ciFromRollup(rollup) {
   return 'green';
 }
 
+// `gh` is not consistent about case: `gh search prs --json state` yields
+// lowercase ("open", "merged"), `gh pr list --json state` yields uppercase
+// ("OPEN", "MERGED", "CLOSED"). Both feed buildPR, so normalize once here rather
+// than trusting either producer — a missed case silently makes a merged PR look
+// open, which is the single most consequential misread in this file.
+function normState(state) { return String(state || '').toUpperCase(); }
+
 // One search item (gh search prs) + its detail view (gh pr view) → a contract
 // pr. `url` is re-validated through safeHttpUrl even though it comes from gh,
 // matching local.js's rule of trusting no href.
 function buildPR(item, view) {
   const [owner, repo] = item.repository.nameWithOwner.split('/');
+  const state = normState(item.state);
   return {
     owner, repo,
     number: item.number,
@@ -33,7 +41,8 @@ function buildPR(item, view) {
     url: safeHttpUrl(item.url),
     headRef: view.headRefName || null,
     draft: view.isDraft === true,
-    merged: item.state === 'MERGED',
+    merged: state === 'MERGED',
+    closed: state === 'CLOSED',
     ci: ciFromRollup(view.statusCheckRollup),
     approved: view.reviewDecision === 'APPROVED',
     changesReq: view.reviewDecision === 'CHANGES_REQUESTED',
@@ -90,4 +99,47 @@ async function fetchOwnPRs({ run, now }) {
   return { prs, warnings };
 }
 
-module.exports = { ciFromRollup, buildPR, fetchOwnPRs };
+// `gh pr list --json` returns every field buildPR needs in ONE call, so the
+// search+view two-step above is unnecessary here. The shapes are reconciled by
+// passing the same object as both `item` and `view`.
+const LIST_FIELDS = `number,title,url,state,${VIEW_FIELDS}`;
+
+// Exact PR state for specific branches, unbounded in time. This exists because
+// the broad search above is bounded twice over — by `--limit` and by the merged
+// window — and both bounds fail the same way: a branch whose PR is invisible
+// reads as "has no PR", which is what makes the gate offer to open a draft for
+// work that is already merged, or already rejected.
+//
+// Two real misreads this fixes, neither reachable by widening the window:
+//   - humand-product-workflow#22, merged months ago: outside any sane window.
+//   - react-workflows#6, closed unmerged: `--state open` and `--merged` between
+//     them never return a closed-unmerged PR at all, at any window size.
+//
+// Cost is one `gh pr list` (~0.5s) per branch, so callers must pass only the
+// branches they could not resolve from the broad search — see assist/ledger.js.
+// A per-branch failure is a warning, never fatal: the pass degrades to what the
+// broad search knew, and `isDegraded` keeps the drain off worktrees.
+async function fetchPRsForBranches({ run, branches }) {
+  const warnings = [];
+  const prs = [];
+  for (const { githubRepo, branch } of (branches || [])) {
+    if (!githubRepo || !branch) continue;
+    try {
+      const found = JSON.parse(await run('gh',
+        ['pr', 'list', '-R', githubRepo, '--head', branch, '--state', 'all', '--limit', '10', '--json', LIST_FIELDS]));
+      const [owner, repo] = githubRepo.split('/');
+      for (const p of found) {
+        // buildPR expects the search shape (`repository.nameWithOwner`); the
+        // list shape carries neither owner nor repo, so they come from the slug
+        // the caller already had to know in order to ask.
+        prs.push(buildPR({ ...p, repository: { nameWithOwner: `${owner}/${repo}` } }, p));
+      }
+    } catch (e) {
+      warnings.push({ repo: githubRepo, step: 'gh-pr-list',
+        message: `gh pr list --head ${branch} failed: ${e.message}` });
+    }
+  }
+  return { prs, warnings };
+}
+
+module.exports = { ciFromRollup, buildPR, fetchOwnPRs, fetchPRsForBranches, normState };

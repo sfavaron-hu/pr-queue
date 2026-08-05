@@ -82,8 +82,18 @@ function readItem(io, paths, id) {
 // Reconcile a gate pass into items/. Write every incoming item (idempotent — the
 // id is content-addressed) unless it is currently declined. Then remove any
 // items/ file the gate no longer emits, EXCEPT one with a pending answer (the
-// executor still owes it an action). Returns the three id lists for the caller
-// to log.
+// executor still owes it an action).
+//
+// CONTRACT: `items` must be the gate's FULL question set (`gate.questions`),
+// never the budgeted slice (`gate.ask`). Absence from this list is read as "the
+// situation is gone" and deletes the file — so handing it a truncated list
+// deletes items that are merely not being asked right now. That was a real bug:
+// a question that fell out of the top 4 on a later pass had its file removed, and
+// an answer written against its id came back `no-item`, losing a decision the
+// owner had already made. The budget belongs to the asking, not to the storing.
+//
+// Returns the id lists for the caller to log; `kept` is the ones that survived
+// removal only because an answer is pending, which is worth seeing.
 function syncItems(io, paths, items) {
   io.mkdirp(paths.items);
   const written = [], skipped = [];
@@ -97,17 +107,17 @@ function syncItems(io, paths, items) {
     written.push(id);
   }
 
-  const removed = [];
+  const removed = [], kept = [];
   for (const name of io.list(paths.items)) {
     if (!name.endsWith('.json')) continue;
     const id = name.slice(0, -5);
     if (present.has(id)) continue;
-    if (io.exists(answerPath(paths, id))) continue;   // pending answer — keep
+    if (io.exists(answerPath(paths, id))) { kept.push(id); continue; }   // pending answer — keep
     io.remove(itemPath(paths, id));
     removed.push(id);
   }
 
-  return { written, skipped, removed };
+  return { written, skipped, removed, kept };
 }
 
 // Record an answer, but only a valid one. `{ value }` must equal one of the
@@ -115,9 +125,20 @@ function syncItems(io, paths, items) {
 // browser endpoint can never smuggle a value the question didn't offer.
 // `{ other: text }` is free text a model will interpret, and is accepted only
 // when the caller (the skill, never the browser) passes allowOther.
+//
+// A missing item is reported with its CAUSE, not as a bare `no-item`. The three
+// causes are genuinely different and the caller must not have to guess: the
+// question was already resolved (done/), it is currently suppressed (declined/),
+// or the id never existed. A bare `no-item` on an id the owner had just been
+// shown looked like a bug in the id rather than what it was — an item removed
+// underneath a decision already made.
 function writeAnswer(io, paths, id, answer, opts) {
   const item = readItem(io, paths, id);
-  if (!item) return { ok: false, reason: 'no-item' };
+  if (!item) {
+    if (io.exists(donePath(paths, id))) return { ok: false, reason: 'already-done' };
+    if (isDeclined(io, paths, id)) return { ok: false, reason: 'declined' };
+    return { ok: false, reason: 'no-item' };
+  }
   const allowOther = !!(opts && opts.allowOther);
 
   if (answer && typeof answer.value === 'string') {
