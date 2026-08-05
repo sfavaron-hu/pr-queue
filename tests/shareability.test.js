@@ -32,3 +32,21 @@ test('the README documents the localStorage gotcha and both env vars', () => {
   assert.match(src, /PRQ_PORT/);
   assert.match(src, /localStorage/);
 });
+
+// A raw NUL byte anywhere in a source file makes git classify it as binary, and
+// every later merge of that file degrades to an unresolvable whole-file conflict
+// — which in a stacked branch series means the stack simply cannot be merged
+// down. This happened once, in assist/ledger.js, where a NUL separator meant as
+// a source escape was written as a literal byte. Escapes are fine; bytes are not.
+test('no committed source file contains a raw NUL byte', () => {
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    if (e.name === 'node_modules' || e.name === '.git' || e.name === 'state') return [];
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) return walk(full);
+    return /\.(js|json|md|sh|html|css)$/.test(e.name) ? [full] : [];
+  });
+  for (const full of walk(ROOT)) {
+    assert.ok(!fs.readFileSync(full).includes(0),
+      `${path.relative(ROOT, full)} contains a raw NUL byte — write it as an escape`);
+  }
+});

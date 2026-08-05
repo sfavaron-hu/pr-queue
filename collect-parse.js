@@ -6,6 +6,15 @@
 // existing tests can keep importing it from here.
 const { safeHttpUrl } = require('./classify.js');
 
+// `isPrimary` marks the repo's main working tree, which `git worktree list`
+// always reports FIRST and never labels — the porcelain format has no marker
+// for it (checked against git 2.50.1), so position is the only signal there is.
+// It matters because the main working tree cannot be removed: `git worktree
+// remove <main>` exits 128 ("is a main working tree"). Without this field a
+// main checkout parked on a merged branch is indistinguishable from a
+// disposable worktree, and the gate emits a removal that fails 128 on every
+// single pass (observed on hu-translations and material-hu, both of whose main
+// checkouts sat on merged branches).
 function parseWorktrees(stdout) {
   const out = [];
   let cur = null;
@@ -13,7 +22,7 @@ function parseWorktrees(stdout) {
     if (line.startsWith('worktree ')) {
       if (cur) out.push(cur);
       cur = { path: line.slice('worktree '.length), branch: null, head: null,
-              detached: false, prunable: false };
+              detached: false, prunable: false, isPrimary: out.length === 0 };
     } else if (!cur) {
       continue;
     } else if (line.startsWith('HEAD ')) {
@@ -32,6 +41,26 @@ function parseWorktrees(stdout) {
 
 function parseStatusShort(stdout) {
   return String(stdout).split('\n').filter(l => l.trim() !== '').length;
+}
+
+// The first few changed paths, with their status codes, so a consumer can say
+// WHAT is uncommitted rather than only how much. A bare count cannot be acted on:
+// asked "1 file uncommitted, commit it?", the honest answer is "depends what it
+// is" — and it genuinely does. The real case that motivated this was a single
+// modified file holding a `// TEMP — DO NOT COMMIT` feature-flag override, where
+// the count alone pointed at exactly the wrong answer.
+//
+// Capped because this rides in a question's description, not in a diff view;
+// past a handful of paths the shape of the change is what matters, not the list.
+const DIRTY_SAMPLE = 5;
+function parseStatusFiles(stdout, limit) {
+  const max = typeof limit === 'number' ? limit : DIRTY_SAMPLE;
+  return String(stdout).split('\n')
+    .filter(l => l.trim() !== '')
+    // `XY path` — keep both, trimmed: the code says modified vs untracked vs
+    // deleted, which is most of what makes the decision.
+    .map(l => ({ code: l.slice(0, 2).trim(), path: l.slice(2).trim() }))
+    .slice(0, max);
 }
 
 function parseAgents(stdout) {
@@ -121,5 +150,5 @@ function parseGithubSlug(remoteUrl) {
   return null;
 }
 
-module.exports = { parseWorktrees, parseStatusShort, parseAgents, parseTranscriptTail,
+module.exports = { parseWorktrees, parseStatusShort, parseStatusFiles, parseAgents, parseTranscriptTail,
                     parseGithubSlug, parseLastCommitLog, parseCommitRangeLog, safeHttpUrl };

@@ -6,11 +6,22 @@ var COLD_DAYS = 14;
 // Every field the local↔PR join and classify() read off a PR. It is the
 // contract assist/prs.js must emit and the browser's enrichOwnPR already
 // emits (as a superset). Frozen so a typo'd push can't mutate it.
+// `closed` means closed WITHOUT merging — a deliberate "no, not this". It is
+// separate from `merged` because the two demand opposite handling: merged work is
+// consumed (its worktree is disposable), whereas closed work was rejected and
+// must simply stop being offered. Both are equally "not open", and every
+// predicate below that used to spell that `merged !== true` was silently reading
+// a closed PR as open. Producers that never fetch closed PRs (github.js, the
+// browser path) leave it undefined, which every check treats as today.
 var PR_CONTRACT_FIELDS = Object.freeze([
   'owner', 'repo', 'number', 'title', 'url', 'headRef', 'draft', 'merged',
-  'ci', 'approved', 'changesReq', 'conflicts', 'newComments',
+  'closed', 'ci', 'approved', 'changesReq', 'conflicts', 'newComments',
   'humanReviews', 'updatedAt',
 ]);
+
+// The one place "this PR is neither merged nor abandoned" is decided, so a new
+// terminal state cannot be added without every caller inheriting it.
+function prIsOpen(pr) { return pr.merged !== true && pr.closed !== true; }
 
 var TICKET_RE = /\b([A-Z]{3,5}-\d+)\b/;
 
@@ -142,8 +153,15 @@ function classify(proc, prs, now) {
   // open PR on the process — an open PR alongside a merged one still means
   // there's live work, and the open PR should decide instead.
   var hasMerged = list.some(function (p) { return p.merged === true; });
-  var hasOpen = list.some(function (p) { return p.merged !== true; });
+  var hasOpen = list.some(prIsOpen);
   if (hasMerged && !hasOpen) return 'mergeado';
+
+  // Every PR on the process was closed without merging: the work was dropped on
+  // purpose. Falling through would land on 'esperando' (a closed PR has
+  // humanReviews === 0), which reads as "someone owes you a review" for a PR
+  // nobody will ever look at again. 'frio' is the honest state — it is dormant
+  // work, and the gate offers to archive it rather than to chase a review.
+  if (list.length > 0 && !hasMerged && !hasOpen) return 'frio';
 
   var waiting = list.some(function (p) {
     return p.ci === 'pending' || (p.humanReviews || 0) === 0;
@@ -227,15 +245,20 @@ function rowHasPR(row) {
 // under either of these chips — which is why they carry counts that can sum to
 // less than the "con PR" total, and why nothing here silently reinterprets
 // "abierto" as "open including drafts". Draft is the distinction being drawn.
+//
+// A closed-unmerged PR is excluded on the same grounds, via prIsOpen. GitHub
+// keeps `isDraft: true` on a draft that was closed, so testing only `draft`
+// would file abandoned drafts under the "draft" chip as if they were still
+// awaiting work — real case: react-workflows#6, a draft closed unmerged.
 function rowHasOpenPR(row) {
   return !!(row && row.prs && row.prs.some(function (p) {
-    return p.merged !== true && p.draft !== true;
+    return prIsOpen(p) && p.draft !== true;
   }));
 }
 
 function rowHasDraftPR(row) {
   return !!(row && row.prs && row.prs.some(function (p) {
-    return p.merged !== true && p.draft === true;
+    return prIsOpen(p) && p.draft === true;
   }));
 }
 
@@ -353,6 +376,7 @@ if (typeof module !== 'undefined' && module.exports) {
                      attachSessions: attachSessions, lastActivity: lastActivity,
                      classify: classify, sortProcesses: sortProcesses,
                      safeHttpUrl: safeHttpUrl, PR_FILTER_ALL: PR_FILTER_ALL,
+                     prIsOpen: prIsOpen,
                      rowHasPR: rowHasPR, rowHasOpenPR: rowHasOpenPR,
                      rowHasDraftPR: rowHasDraftPR, nextChipFilter: nextChipFilter,
                      filterRowsByPR: filterRowsByPR,
