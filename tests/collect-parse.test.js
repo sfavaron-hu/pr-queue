@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseWorktrees, parseStatusShort, parseAgents,
+const { parseWorktrees, parseStatusShort, parseStatusFiles, parseAgents,
         parseTranscriptTail, parseGithubSlug, parseLastCommitLog, parseCommitRangeLog,
         safeHttpUrl } = require('../collect-parse.js');
 
@@ -321,4 +321,30 @@ test('parseTranscriptTail nulls out a javascript: prUrl but keeps number and rep
   assert.equal(prLink.number, 42);
   assert.equal(prLink.repo, 'HumandDev/humand-web');
   assert.equal(prLink.url, null);
+});
+
+// The count alone cannot be acted on. Asked "1 file uncommitted, commit it?" the
+// honest answer is "depends what it is" — and the motivating real case was a
+// single modified file holding a `// TEMP — DO NOT COMMIT` flag override, where
+// the count pointed at exactly the wrong answer.
+test('parseStatusFiles returns status code and path per entry', () => {
+  const out = parseStatusFiles(' M src/hooks/useCommunityFeature.ts\n?? node_modules\n');
+  assert.deepEqual(out, [
+    { code: 'M', path: 'src/hooks/useCommunityFeature.ts' },
+    { code: '??', path: 'node_modules' },
+  ]);
+});
+
+test('parseStatusFiles caps the sample and ignores blank lines', () => {
+  const many = Array.from({ length: 9 }, (_, i) => ` M f${i}.ts`).join('\n') + '\n\n';
+  assert.equal(parseStatusFiles(many).length, 5);
+  assert.equal(parseStatusFiles(many, 2).length, 2);
+  assert.deepEqual(parseStatusFiles(''), []);
+});
+
+// Renames arrive as `R  old -> new`; keeping the arrow intact is more useful than
+// half-parsing it, and the code already says it is a rename.
+test('parseStatusFiles keeps a rename readable', () => {
+  assert.deepEqual(parseStatusFiles('R  a.ts -> b.ts\n'),
+    [{ code: 'R', path: 'a.ts -> b.ts' }]);
 });

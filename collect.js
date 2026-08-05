@@ -1,7 +1,7 @@
 // IO orchestration. All effects are injected so this is testable without a
 // real workspace; bin/collect.js supplies the real implementations.
 const nodePath = require('node:path');
-const { parseWorktrees, parseStatusShort, parseAgents,
+const { parseWorktrees, parseStatusShort, parseStatusFiles, parseAgents,
         parseTranscriptTail, parseGithubSlug,
         parseLastCommitLog } = require('./collect-parse.js');
 const { resolveWorkspaceRoot, resolveClaudeDir, pickBaseBranch } = require('./collect-paths.js');
@@ -136,13 +136,17 @@ async function collectRepo(repo, repoPath, run, warn) {
     // remove`. See parseWorktrees for why position is the only available signal.
     const row = { repo, path: wt.path, branch: wt.branch, detached: wt.detached,
                   prunable: wt.prunable, isPrimary: wt.isPrimary === true,
-                  dirty: null, unpushed: null, lastCommit: null,
+                  dirty: null, dirtyFiles: [], unpushed: null, lastCommit: null,
                   lastCommitSubject: null, githubRepo, baseBranch: base, onOrigin };
     // A prunable worktree's directory is gone — running git in it would just fail.
     if (wt.prunable) return row;
 
+    // One `git status` feeds both the count and the sample — a consumer that has
+    // to ask "commit this?" needs to say WHAT, and the count alone cannot.
     try {
-      row.dirty = parseStatusShort(await run('git', ['status', '--short'], wt.path));
+      const status = await run('git', ['status', '--short'], wt.path);
+      row.dirty = parseStatusShort(status);
+      row.dirtyFiles = parseStatusFiles(status);
     } catch (e) { warn(repo, 'status', e.message); }
 
     // HEAD's own subject — used for `lastCommit` (the timestamp; that stays

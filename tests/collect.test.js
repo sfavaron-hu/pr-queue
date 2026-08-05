@@ -700,3 +700,49 @@ test('collect keeps onOrigin false when case differs AND the name genuinely diff
   const wt = out.processes[0].worktrees[0];
   assert.equal(wt.onOrigin, false);
 });
+
+// The payload must carry WHAT is uncommitted, not only how much: a consumer that
+// asks "commit this?" is unanswerable with a bare count.
+test('collect carries a sample of the dirty paths alongside the count', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/humand-web-feat\nHEAD abc\nbranch refs/heads/feat/SQSH-3954\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop\n';
+      if (a.startsWith('status')) return ' M src/hooks/useCommunityFeature.ts\n?? scratch.md\n';
+      if (a.includes('log -1')) return String(Math.floor(NOW / 1000));
+      if (a.includes('..HEAD')) return '';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees)[0];
+  assert.equal(wt.dirty, 2);
+  assert.deepEqual(wt.dirtyFiles, [
+    { code: 'M', path: 'src/hooks/useCommunityFeature.ts' },
+    { code: '??', path: 'scratch.md' },
+  ]);
+});
+
+test('collect leaves dirtyFiles empty for a prunable worktree', async () => {
+  const { opts } = harness({
+    run: async (cmd, args) => {
+      if (cmd === 'claude') return '[]';
+      const a = args.join(' ');
+      if (a.startsWith('worktree list')) {
+        return 'worktree /w/gone\nHEAD abc\nbranch refs/heads/feat/x\nprunable gitdir missing\n';
+      }
+      if (a.includes('symbolic-ref')) return 'refs/remotes/origin/develop\n';
+      return '';
+    },
+    listFiles: async () => [],
+  });
+  const out = await collect(opts);
+  const wt = out.processes.flatMap(p => p.worktrees)[0];
+  assert.deepEqual(wt.dirtyFiles, []);
+  assert.equal(wt.dirty, null);
+});
