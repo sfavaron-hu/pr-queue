@@ -30,14 +30,34 @@ const deps = (io, exec, over) => Object.assign({
   loadGate: async () => ({ gate: gate(), warnings: [] }),
 }, over);
 
-test('drain runs reversible actions, syncs questions, and prunes; exit 0', async () => {
+test('drain runs reversible actions, syncs questions, and prunes; a new question makes it exit 10', async () => {
   const io = memIo(1000); const exec = fakeExec();
   const res = await runCli([], deps(io, exec));
-  assert.equal(res.exit, 0);
+  assert.equal(res.exit, 10);   // a NEW unanswered question is waiting → heartbeat pings the owner
+  assert.equal(res.output.notify, true);
   assert.deepEqual(exec.calls[0], ['git', '-C', '/w/r', 'push', '-u', 'origin', 'b']);   // action ran via argv
   assert.equal(io.exists(`${queuePaths('/s').items}/${itemId(coldItem)}.json`), true);   // question queued
   assert.equal(res.output.actions.ran, 1);
   assert.equal(res.output.questions.synced, 1);
+});
+
+test('drain does NOT re-notify a question already notified last pass (exit 0)', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const first = await runCli([], deps(io, exec));
+  assert.equal(first.exit, 10);                 // first pass pings
+  const second = await runCli([], deps(io, exec));
+  assert.equal(second.exit, 0);                 // same question → throttled, no re-ping
+  assert.equal(second.output.notify, false);
+  assert.equal(second.output.questions.new, 0);
+  assert.equal(second.output.questions.open, 1); // still open, just already notified
+});
+
+test('drain with no open questions does not notify (exit 0)', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const res = await runCli([], deps(io, exec, { loadGate: async () => ({ gate: gate({ questions: [] }), warnings: [] }) }));
+  assert.equal(res.exit, 0);
+  assert.equal(res.output.notify, false);
+  assert.equal(res.output.questions.open, 0);
 });
 
 test('drain applies a "Dejar" answer already sitting in the queue', async () => {

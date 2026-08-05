@@ -10,7 +10,7 @@
 // so `cmd` must never be interpolated into a shell — there is no sh -c path.
 
 const {
-  decline, markDone, syncItems, writeAnswer, readItem, readAnswer,
+  decline, markDone, syncItems, writeAnswer, readItem, readAnswer, writeAtomic,
   listOpenItems, pruneDeclined, pruneDone,
 } = require('./queue.js');
 
@@ -145,12 +145,41 @@ async function runCli(argv, deps) {
   }
   const declinedPruned = pruneDeclined(io, paths);
   const donePruned = pruneDone(io, paths, 30);
+
+  // Notify throttle. The heartbeat can never ANSWER a question (no human), so
+  // the most it does is ping the owner that decisions are waiting — but only
+  // when a NEW one appeared, never every tick while questions sit unanswered
+  // (that recurring ping is the exact fatigue the queue exists to prevent).
+  // The already-notified ids live in notified.json, reconciled each pass to
+  // whatever is still open, so a resolved-then-recurring question pings again.
+  // The marker is written here (in the drain), BEFORE the escalation actually
+  // sends the ping — so a rare failed send (Slack/MCP down) is not retried until
+  // the next genuinely new question. Acceptable for v1: the panel still shows
+  // the queue, and the miss self-heals; the alternative (mark only after a
+  // confirmed send) buys little and couples the marker to the model session.
+  const openUnanswered = listOpenItems(io, paths).filter(o => o.answer === null);
+  const openIds = openUnanswered.map(o => o.id);
+  const notifiedPath = `${paths.root}/notified.json`;
+  let prevNotified = [];
+  try { prevNotified = JSON.parse(io.read(notifiedPath)).ids || []; } catch { prevNotified = []; }
+  const openSet = new Set(openIds);
+  const alreadyNotified = new Set(prevNotified.filter(id => openSet.has(id)));
+  const newIds = openIds.filter(id => !alreadyNotified.has(id));
+  writeAtomic(io, paths, notifiedPath, { ids: openIds });
+  const notify = newIds.length > 0;
+
   return {
-    exit: 0,
+    exit: notify ? 10 : 0,   // 10 escalates a model session that only sends the heads-up
     output: {
       actions: { ran: drained.ran, failed: drained.failed, results: drained.results.map(r => ({ id: r.id, kind: r.kind, ok: r.ok, code: r.code })) },
-      questions: { synced: synced.written.length, skipped: synced.skipped.length, removed: synced.removed.length, declined },
+      questions: {
+        synced: synced.written.length, skipped: synced.skipped.length, removed: synced.removed.length, declined,
+        open: openUnanswered.length, new: newIds.length,
+        // Generic surface for the escalation to list — headers/keys only, no evidence.
+        waiting: openUnanswered.map(o => ({ header: o.item.header, key: o.item.key, question: o.item.question })),
+      },
       prune: { declinedPruned, donePruned },
+      notify,
     },
   };
 }
