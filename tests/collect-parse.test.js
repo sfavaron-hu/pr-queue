@@ -43,6 +43,25 @@ test('parseWorktrees returns empty array for empty input', () => {
   assert.deepEqual(parseWorktrees(''), []);
 });
 
+// The main working tree is the one `git worktree remove` refuses with exit 128,
+// and `git worktree list` never labels it — it is simply first. Everything else
+// must come back false, or a consumer would skip removing a real worktree.
+test('parseWorktrees marks only the first worktree as primary', () => {
+  const out = parseWorktrees(WORKTREE_FIXTURE);
+  assert.equal(out[0].isPrimary, true);
+  assert.equal(out[1].isPrimary, false);
+  assert.equal(out[2].isPrimary, false);
+});
+
+// Leading blank lines are the trap: keying off "have I seen a `worktree` line
+// yet" rather than a raw line counter is what keeps the first real entry primary.
+test('parseWorktrees marks the first entry primary despite leading blank lines', () => {
+  const out = parseWorktrees(`\n\n${WORKTREE_FIXTURE}`);
+  assert.equal(out.length, 3);
+  assert.equal(out[0].isPrimary, true);
+  assert.equal(out[1].isPrimary, false);
+});
+
 test('parseStatusShort counts changed files', () => {
   assert.equal(parseStatusShort('?? AGENTS.md\n M src/a.ts\n M src/b.ts\n'), 3);
 });
