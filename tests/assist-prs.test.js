@@ -78,6 +78,22 @@ test('fetchOwnPRs shells gh search then gh pr view, and normalizes', async () =>
   assert.ok(calls.some(c => c[1] === 'pr' && c[2] === 'view'));
 });
 
+test('fetchOwnPRs pulls merged PRs from a 30-day window, not 3 days', async () => {
+  const calls = [];
+  const run = async (cmd, args) => {
+    calls.push(args);
+    if (args[0] === 'search') return JSON.stringify([]);
+    return JSON.stringify({ headRefName: 'b', isDraft: false, reviewDecision: null,
+      mergeable: 'MERGEABLE', statusCheckRollup: [], reviews: [], updatedAt: '2026-08-05T00:00:00Z' });
+  };
+  const now = () => Date.parse('2026-08-05T00:00:00Z');
+  await fetchOwnPRs({ run, now });
+  const mergedSearch = calls.find(a => a.includes('--merged'));
+  const mergedAt = mergedSearch[mergedSearch.indexOf('--merged-at') + 1];
+  assert.equal(mergedAt, '>=2026-07-06');                     // 30 days back, so a PR merged 07-21 is seen
+  assert.equal(mergedSearch[mergedSearch.indexOf('--limit') + 1], '60');   // limit raised for the wider window
+});
+
 test('fetchOwnPRs degrades to a warning when gh fails, never throws', async () => {
   const run = async () => { throw new Error('gh: not found'); };
   const { prs, warnings } = await fetchOwnPRs({ run, now: () => 0 });
