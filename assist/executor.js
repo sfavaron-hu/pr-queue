@@ -205,7 +205,17 @@ async function runCli(argv, deps) {
   return {
     exit: notify ? 10 : 0,   // 10 escalates a model session that only sends the heads-up
     output: {
-      actions: { ran: drained.ran, failed: drained.failed, results: drained.results.map(r => ({ id: r.id, kind: r.kind, ok: r.ok, code: r.code })) },
+      // A bare exit code is not diagnosable: `git worktree remove` returns 128 both
+      // for the main working tree and for a worktree holding untracked files, and
+      // those need opposite handling. Carry stderr on failures so the reader does
+      // not have to re-run the command by hand to find out which one it was.
+      actions: {
+        ran: drained.ran, failed: drained.failed,
+        results: drained.results.map(r => ({
+          id: r.id, kind: r.kind, ok: r.ok, code: r.code,
+          ...(r.ok ? {} : { stderr: String(r.stderr || '').trim().slice(0, 500) }),
+        })),
+      },
       draftsPending: draftsPending.length,   // left for /work-assistant (model-authored body)
       questions: {
         synced: synced.written.length, skipped: synced.skipped.length,

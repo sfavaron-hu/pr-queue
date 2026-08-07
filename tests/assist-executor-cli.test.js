@@ -45,6 +45,32 @@ test('drain runs reversible actions, syncs questions, and prunes; a new question
   assert.equal(res.output.questions.synced, 1);
 });
 
+test('a failed action reports its stderr; a successful one carries no stderr key', async () => {
+  const io = memIo(1000);
+  // 128 is ambiguous on its own: the main working tree and a worktree with untracked
+  // files both return it, and they need opposite handling.
+  const exec = fakeExec((argv) => argv.includes('push')
+    ? { code: 128, stdout: '', stderr: "  fatal: '/w/r' contains modified or untracked files, use --force to delete it\n" }
+    : { code: 0, stdout: '', stderr: '' });
+  const res = await runCli([], deps(io, exec));
+  const failed = res.output.actions.results.find(r => r.id === pushAction.id);
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, 128);
+  assert.match(failed.stderr, /contains modified or untracked files/);
+  assert.ok(!failed.stderr.startsWith(' '), 'stderr should be trimmed');
+
+  const io2 = memIo(1000);
+  const ok = await runCli([], deps(io2, fakeExec()));
+  assert.equal(Object.hasOwn(ok.output.actions.results[0], 'stderr'), false);
+});
+
+test('reported stderr is capped so a chatty failure cannot flood the digest', async () => {
+  const io = memIo(1000);
+  const exec = fakeExec(() => ({ code: 1, stdout: '', stderr: 'x'.repeat(5000) }));
+  const res = await runCli([], deps(io, exec));
+  assert.equal(res.output.actions.results[0].stderr.length, 500);
+});
+
 test('drain runs the push but does NOT open draft PRs (left for /work-assistant)', async () => {
   const io = memIo(1000); const exec = fakeExec();
   const res = await runCli([], deps(io, exec, {
