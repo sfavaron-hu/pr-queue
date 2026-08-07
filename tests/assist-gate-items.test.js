@@ -91,6 +91,65 @@ test('notify items pass through untouched and unbudgeted', () => {
 const fs = require('node:fs');
 const path = require('node:path');
 
+// --- Huérfano: PR done but local-only work (two changes from real use) ---
+test('orphan question fires when a merged PR leaves unpushed local commits', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ unpushedLocal: 3, isPrimary: false })],
+    prs: [{ number: 9577, merged: true, closed: false }], flags: flags() }), ledger([]));
+  assert.equal(q.type, 'question');
+  assert.equal(q.header, 'Huérfano');
+  assert.match(q.key, /^orphan:/);
+  renderable(q);
+  assert.match(q.question, /sin pushear/);
+  const labels = q.options.map(o => o.label);
+  assert.deepEqual(labels, ['Nuevo PR', 'Descartar', 'Dejar']);
+  const d = q.options.find(o => o.label === 'Descartar');
+  assert.match(d.description, /worktree remove --force/);
+  assert.match(d.description, /confirmo/i);   // destructive → must promise a confirmation
+});
+
+test('orphan fires for a closed-unmerged PR whose worktree has uncommitted work', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ dirty: 2, unpushedLocal: 0, isPrimary: false })],
+    prs: [{ number: 6, merged: false, closed: true }], flags: flags() }), ledger([]));
+  assert.equal(q.header, 'Huérfano');
+});
+
+test('orphan does NOT fire while any PR is still open', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ unpushedLocal: 3, isPrimary: false })],
+    prs: [{ merged: true, closed: false }, { merged: false, closed: false }],
+    flags: flags({ cold: true }) }), ledger([]));
+  assert.notEqual(q && q.header, 'Huérfano');
+});
+
+test('orphan does NOT fire on the primary checkout (parked on base, nothing lost)', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ unpushedLocal: 3, isPrimary: true })],
+    prs: [{ merged: true, closed: false }], flags: flags({ cold: true }) }), ledger([]));
+  assert.notEqual(q && q.header, 'Huérfano');
+});
+
+test('cold offers Descartar (not Archivar) when the worktree holds only-local work', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ unpushed: 4, unpushedLocal: 4, isPrimary: false })],
+    prs: [], flags: flags({ cold: true }) }), ledger([]));
+  assert.equal(q.header, 'Frío');
+  const labels = q.options.map(o => o.label);
+  assert.ok(labels.includes('Descartar'), 'has Descartar');
+  assert.ok(!labels.includes('Archivar'), 'no Archivar when there is local-only work to lose');
+  assert.match(q.options.find(o => o.label === 'Descartar').description, /worktree remove --force/);
+});
+
+test('cold keeps plain Archivar when the worktree is clean and fully pushed', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ unpushed: 0, unpushedLocal: 0, isPrimary: false })],
+    prs: [], flags: flags({ cold: true }) }), ledger([]));
+  const labels = q.options.map(o => o.label);
+  assert.ok(labels.includes('Archivar'));
+  assert.ok(!labels.includes('Descartar'));
+});
+
 test('cold question pluralizes commits correctly (1 commit, 2 commits)', () => {
   const { questionFor } = require('../assist/gate.js');
   const proc = (unpushed) => ({ key: 'p1', flags: { cold: true },

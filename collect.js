@@ -136,8 +136,8 @@ async function collectRepo(repo, repoPath, run, warn) {
     // remove`. See parseWorktrees for why position is the only available signal.
     const row = { repo, path: wt.path, branch: wt.branch, detached: wt.detached,
                   prunable: wt.prunable, isPrimary: wt.isPrimary === true,
-                  dirty: null, dirtyFiles: [], unpushed: null, lastCommit: null,
-                  lastCommitSubject: null, githubRepo, baseBranch: base, onOrigin };
+                  dirty: null, dirtyFiles: [], unpushed: null, unpushedLocal: null,
+                  lastCommit: null, lastCommitSubject: null, githubRepo, baseBranch: base, onOrigin };
     // A prunable worktree's directory is gone — running git in it would just fail.
     if (wt.prunable) return row;
 
@@ -184,6 +184,16 @@ async function collectRepo(repo, repoPath, run, warn) {
       // range to compute, so HEAD's own subject is the best available signal.
       row.lastCommitSubject = headSubject;
     }
+
+    // Commits reachable from HEAD but from NO remote-tracking branch: the work
+    // that genuinely only exists locally. Distinct from `unpushed` (vs base,
+    // which still counts commits whose content landed via a squash-merge). This
+    // is the signal that a `git worktree remove` would actually LOSE something,
+    // so it both blocks the autonomous remove and drives the "Huérfano" question.
+    try {
+      const raw = await run('git', ['rev-list', '--count', 'HEAD', '--not', '--remotes'], wt.path);
+      row.unpushedLocal = parseInt(String(raw).trim(), 10) || 0;
+    } catch (e) { warn(repo, 'unpushedLocal', e.message); }
     return row;
   }));
 }
