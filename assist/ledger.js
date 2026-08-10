@@ -2,6 +2,7 @@
 // (assist/prs.js), joined by the same functions the browser panel uses
 // (classify.js), classified by the same classify(). One document, no browser.
 const { attachOwnPRs, synthesizeProcesses, classify } = require('../classify.js');
+const { deriveFlags } = require('./flags.js');
 
 const LEDGER_VERSION = 1;
 
@@ -13,8 +14,10 @@ function buildLedger(localPayload, prs, now, extraWarnings) {
   const synthetic = synthesizeProcesses(unmatched);
   const allRows = rows.concat(synthetic);
 
-  const processes = allRows.map(({ proc, prs }) =>
-    Object.assign({}, proc, { prs, state: classify(proc, prs, now) }));
+  const processes = allRows.map(({ proc, prs }) => {
+    const state = classify(proc, prs, now);
+    return Object.assign({}, proc, { prs, state, flags: deriveFlags(proc, prs, state) });
+  });
 
   return {
     version: LEDGER_VERSION,
