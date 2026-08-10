@@ -284,10 +284,22 @@ async function loadOwnPRs() {
       results.push(...out);
     }
     state.ownPRs       = results.filter(Boolean);
-    state.mergedPRs    = (mergedData.items || []).map(pr => {
-      const [owner, repo] = pr.repository_url.replace(`${API}/repos/`, '').split('/');
-      return { id: pr.id, number: pr.number, owner, repo, title: pr.title, url: pr.html_url, updatedAt: new Date(pr.updated_at) };
-    });
+    // Batched by 4, matching the open-PR loop above, so the extra head-ref GET per
+    // merged PR cannot burst the rate limit.
+    const mergedItems = mergedData.items || [];
+    const merged = [];
+    for (let i = 0; i < mergedItems.length; i += 4) {
+      const out = await Promise.all(mergedItems.slice(i, i + 4).map(async pr => {
+        const [owner, repo] = pr.repository_url.replace(`${API}/repos/`, '').split('/');
+        return { id: pr.id, number: pr.number, owner, repo, title: pr.title, url: pr.html_url,
+                 // Without this the join can only match a ticket parsed out of the
+                 // title, which fails for no-ticket work — see fetchHeadRef.
+                 headRef: await fetchHeadRef(pr.pull_request && pr.pull_request.url),
+                 updatedAt: new Date(pr.updated_at) };
+      }));
+      merged.push(...out);
+    }
+    state.mergedPRs    = merged;
     renderOwnPRs();
   } catch { /* silent */ } finally {
     el.ownLoading.classList.add('hidden');

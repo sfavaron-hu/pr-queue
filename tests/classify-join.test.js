@@ -81,3 +81,43 @@ test('the join works with a PR carrying ONLY the contract fields', () => {
   const syn = synthesizeProcesses([{ ...onlyContract, headRef: 'feat/SQSH-8' }]);
   assert.equal(syn.length, 1);
 });
+
+// The whole point of enriching merged PRs with a head ref (github.js
+// fetchHeadRef). A no-ticket merged PR has nothing in its title to match on, so
+// without headRef it cannot join and becomes its own "sin worktree local" card —
+// and the worktree it belongs to never reads as merged-and-cleanable. Measured on
+// the real account: 3 of 7 merged PRs in the panel's window were like this,
+// including humand-web#9884 and material-hu#1339.
+test('a no-ticket merged PR joins its worktree once it carries a headRef', () => {
+  const processes = [proc('fix/no-ticket-socket-error-reporting-policy', null,
+                          ['fix/no-ticket-socket-error-reporting-policy'])];
+  const merged = { owner: 'HumandDev', repo: 'humand-web', number: 9884, merged: true,
+    title: 'fix(sockets): report sustained socket failures once instead of per attempt',
+    headRef: 'fix/no-ticket-socket-error-reporting-policy' };
+
+  const { rows, unmatched } = attachOwnPRs(processes, [merged]);
+  assert.equal(unmatched.length, 0, 'must not become a synthetic process');
+  assert.equal(rows[0].prs.length, 1);
+});
+
+test('the same PR without a headRef cannot join, and keys on owner/repo#number', () => {
+  const processes = [proc('fix/no-ticket-socket-error-reporting-policy', null,
+                          ['fix/no-ticket-socket-error-reporting-policy'])];
+  const noRef = { owner: 'HumandDev', repo: 'humand-web', number: 9884, merged: true,
+    title: 'fix(sockets): report sustained socket failures once instead of per attempt' };
+
+  const { rows, unmatched } = attachOwnPRs(processes, [noRef]);
+  assert.equal(rows[0].prs.length, 0, 'this is the gap fetchHeadRef closes');
+  assert.equal(unmatched.length, 1);
+  assert.equal(synthesizeProcesses(unmatched)[0].proc.key, 'HumandDev/humand-web#9884');
+});
+
+// Two ticket-less merged PRs with no headRef must never share one process — the
+// reason owner/repo#number is the fallback rather than a null headRef.
+test('two headRef-less ticket-less merged PRs get separate synthetic processes', () => {
+  const a = { owner: 'o', repo: 'r', number: 1, merged: true, title: 'chore: a' };
+  const b = { owner: 'o', repo: 'r', number: 2, merged: true, title: 'chore: b' };
+  const out = synthesizeProcesses([a, b]);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out.map(x => x.proc.key).sort(), ['o/r#1', 'o/r#2']);
+});

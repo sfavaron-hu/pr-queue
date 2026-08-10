@@ -292,11 +292,10 @@ function filterRowsByPRStatus(rows, mode) {
   return test ? list.filter(test) : list.slice();
 }
 
-// A merged PR from state.mergedPRs carries no `headRef` at all (see
-// mergedSectionHTML's former caller / renderLocalPanel for the shape) — so
-// the ticket it should join on has to come from its title instead, which is
-// where a Jira ticket normally also appears. Open PRs always have `headRef`
-// and keep using that, unchanged.
+// `headRef` is the preferred source, but it can be absent: the panel enriches
+// merged PRs with one (github.js fetchHeadRef) and that extra GET is allowed to
+// fail. The title is the fallback because a Jira ticket normally appears there
+// too. Open PRs always have `headRef` and keep using it, unchanged.
 function prTicket(pr) {
   if (pr.headRef) return extractTicket(pr.headRef);
   return pr.title ? extractTicket(pr.title) : null;
@@ -351,10 +350,12 @@ function synthesizeProcesses(unmatchedPRs) {
   const map = new Map();
   unmatchedPRs.forEach(pr => {
     const ticket = prTicket(pr);
-    // A merged PR has no `headRef` — falling back to it here (like an open
-    // PR would) collapses every ticket-less merged PR onto one shared key.
-    // owner/repo#number is always unique per PR, so it's the fallback
-    // instead.
+    // `headRef` can be null on a merged PR even now that the panel's fetchHeadRef
+    // fills it in: that extra GET is allowed to fail (a PR worth listing is not
+    // worth dropping over an unreadable branch name). So owner/repo#number stays
+    // the last resort — it is the only component always present and always
+    // unique, whereas falling through to a null headRef would collapse every
+    // ticket-less merged PR onto one shared key.
     const key = ticket || pr.headRef || `${pr.owner}/${pr.repo}#${pr.number}`;
     if (!map.has(key)) {
       map.set(key, {
