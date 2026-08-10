@@ -5,7 +5,8 @@ const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
 const CODE = ['classify.js', 'collect.js', 'collect-parse.js', 'collect-paths.js',
-              'serve.js', 'local.js', 'bin/collect.js', 'scripts/install-launchd.sh'];
+              'serve.js', 'local.js', 'bin/collect.js', 'scripts/install-launchd.sh',
+              'assist/prs.js', 'assist/ledger.js', 'assist/bin/ledger.js'];
 
 test('no committed code contains a hardcoded home directory', () => {
   for (const f of CODE) {
@@ -28,6 +29,24 @@ test('the README documents the localStorage gotcha and both env vars', () => {
   assert.match(src, /PRQ_WORKSPACE/);
   assert.match(src, /PRQ_PORT/);
   assert.match(src, /localStorage/);
+});
+
+// A raw NUL byte anywhere in a source file makes git classify it as binary, and
+// every later merge of that file degrades to an unresolvable whole-file conflict
+// — which in a stacked branch series means the stack simply cannot be merged
+// down. This happened once, in assist/ledger.js, where a NUL separator meant as
+// a source escape was written as a literal byte. Escapes are fine; bytes are not.
+test('no committed source file contains a raw NUL byte', () => {
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    if (e.name === 'node_modules' || e.name === '.git' || e.name === 'state') return [];
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) return walk(full);
+    return /\.(js|json|md|sh|html|css)$/.test(e.name) ? [full] : [];
+  });
+  for (const full of walk(ROOT)) {
+    assert.ok(!fs.readFileSync(full).includes(0),
+      `${path.relative(ROOT, full)} contains a raw NUL byte — write it as an escape`);
+  }
 });
 
 // `/search/issues` returns issue-shaped items with no head ref, so a merged PR
@@ -53,6 +72,13 @@ test('merged PRs are enriched with a head ref before reaching the join', () => {
 // through to a null headRef would collapse every ticket-less merged PR onto one
 // shared process, which is the bug the fallback order exists to prevent.
 test('the synthetic-process key falls back to owner/repo#number, not to headRef', () => {
-  const local = fs.readFileSync(path.join(ROOT, 'local.js'), 'utf8');
-  assert.match(local, /ticket \|\| pr\.headRef \|\| `\$\{pr\.owner\}\/\$\{pr\.repo\}#\$\{pr\.number\}`/);
+  // synthesizeProcesses lives in local.js in the panel-only revision and moves to
+  // classify.js once Node shares the join, so follow the function, not a filename.
+  const src = ['classify.js', 'local.js']
+    .map(f => path.join(ROOT, f))
+    .filter(p2 => fs.existsSync(p2))
+    .map(p2 => fs.readFileSync(p2, 'utf8'))
+    .find(t => t.includes('function synthesizeProcesses'));
+  assert.ok(src, 'synthesizeProcesses must exist somewhere');
+  assert.match(src, /ticket \|\| pr\.headRef \|\| `\$\{pr\.owner\}\/\$\{pr\.repo\}#\$\{pr\.number\}`/);
 });

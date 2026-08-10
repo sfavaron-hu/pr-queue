@@ -3,6 +3,26 @@
 
 var COLD_DAYS = 14;
 
+// Every field the local↔PR join and classify() read off a PR. It is the
+// contract assist/prs.js must emit and the browser's enrichOwnPR already
+// emits (as a superset). Frozen so a typo'd push can't mutate it.
+// `closed` means closed WITHOUT merging — a deliberate "no, not this". It is
+// separate from `merged` because the two demand opposite handling: merged work is
+// consumed (its worktree is disposable), whereas closed work was rejected and
+// must simply stop being offered. Both are equally "not open", and every
+// predicate below that used to spell that `merged !== true` was silently reading
+// a closed PR as open. Producers that never fetch closed PRs (github.js, the
+// browser path) leave it undefined, which every check treats as today.
+var PR_CONTRACT_FIELDS = Object.freeze([
+  'owner', 'repo', 'number', 'title', 'url', 'headRef', 'draft', 'merged',
+  'closed', 'ci', 'approved', 'changesReq', 'conflicts', 'newComments',
+  'humanReviews', 'updatedAt',
+]);
+
+// The one place "this PR is neither merged nor abandoned" is decided, so a new
+// terminal state cannot be added without every caller inheriting it.
+function prIsOpen(pr) { return pr.merged !== true && pr.closed !== true; }
+
 var TICKET_RE = /\b([A-Z]{3,5}-\d+)\b/;
 
 function extractTicket(branch) {
@@ -133,8 +153,15 @@ function classify(proc, prs, now) {
   // open PR on the process — an open PR alongside a merged one still means
   // there's live work, and the open PR should decide instead.
   var hasMerged = list.some(function (p) { return p.merged === true; });
-  var hasOpen = list.some(function (p) { return p.merged !== true; });
+  var hasOpen = list.some(prIsOpen);
   if (hasMerged && !hasOpen) return 'mergeado';
+
+  // Every PR on the process was closed without merging: the work was dropped on
+  // purpose. Falling through would land on 'esperando' (a closed PR has
+  // humanReviews === 0), which reads as "someone owes you a review" for a PR
+  // nobody will ever look at again. 'frio' is the honest state — it is dormant
+  // work, and the gate offers to archive it rather than to chase a review.
+  if (list.length > 0 && !hasMerged && !hasOpen) return 'frio';
 
   var waiting = list.some(function (p) {
     return p.ci === 'pending' || (p.humanReviews || 0) === 0;
@@ -218,15 +245,20 @@ function rowHasPR(row) {
 // under either of these chips — which is why they carry counts that can sum to
 // less than the "con PR" total, and why nothing here silently reinterprets
 // "abierto" as "open including drafts". Draft is the distinction being drawn.
+//
+// A closed-unmerged PR is excluded on the same grounds, via prIsOpen. GitHub
+// keeps `isDraft: true` on a draft that was closed, so testing only `draft`
+// would file abandoned drafts under the "draft" chip as if they were still
+// awaiting work — real case: react-workflows#6, a draft closed unmerged.
 function rowHasOpenPR(row) {
   return !!(row && row.prs && row.prs.some(function (p) {
-    return p.merged !== true && p.draft !== true;
+    return prIsOpen(p) && p.draft !== true;
   }));
 }
 
 function rowHasDraftPR(row) {
   return !!(row && row.prs && row.prs.some(function (p) {
-    return p.merged !== true && p.draft === true;
+    return prIsOpen(p) && p.draft === true;
   }));
 }
 
@@ -260,14 +292,97 @@ function filterRowsByPRStatus(rows, mode) {
   return test ? list.filter(test) : list.slice();
 }
 
+// `headRef` is the preferred source, but it can be absent: the panel enriches
+// merged PRs with one (github.js fetchHeadRef) and that extra GET is allowed to
+// fail. The title is the fallback because a Jira ticket normally appears there
+// too. Open PRs always have `headRef` and keep using it, unchanged.
+function prTicket(pr) {
+  if (pr.headRef) return extractTicket(pr.headRef);
+  return pr.title ? extractTicket(pr.title) : null;
+}
+
+// Attaches each PR in `ownPRs` to at most one process: an exact `headRef`
+// match against `proc.branches` wins if one exists; failing that, the first
+// process (in payload order) whose `ticket` equals the PR's extracted ticket,
+// provided both are non-null. This is what merges a PR on
+// `feat/SQSH-3954-copy` into the same row as a worktree on
+// `feat/SQSH-3954-web` — same ticket, one process — while still preferring
+// the precise branch match when one exists. Two passes over `ownPRs`, not
+// one, so an exact match anywhere always outranks a ticket match anywhere,
+// matching the priority order the spec calls for. Returns the per-process PR
+// lists alongside whatever PR matched nothing, for synthesizeProcesses() to
+// turn into rows of its own.
+function attachOwnPRs(processes, ownPRs) {
+  const rows = processes.map(proc => ({ proc, prs: [] }));
+  const afterExact = [];
+  const unmatched = [];
+
+  ownPRs.forEach(pr => {
+    const row = pr.headRef ? rows.find(r => r.proc.branches.indexOf(pr.headRef) !== -1) : null;
+    if (row) row.prs.push(pr);
+    else afterExact.push(pr);
+  });
+
+  afterExact.forEach(pr => {
+    const ticket = prTicket(pr);
+    const row = ticket ? rows.find(r => r.proc.ticket && r.proc.ticket === ticket) : null;
+    if (row) row.prs.push(pr);
+    else unmatched.push(pr);
+  });
+
+  return { rows, unmatched };
+}
+
+// One synthetic process per distinct ticket (or, lacking a ticket, per
+// branch) among PRs that attachOwnPRs() matched nowhere — a PR pushed
+// straight to GitHub with no local worktree still gets a card instead of
+// vanishing along with the "Mis PRs" column it used to live in.
+// `worktrees`/`sessions` stay empty and `lastLocalActivity` stays null, which
+// is what keeps this out of the 48h own-activity window: classify() falls
+// straight through turno's local-activity check to the PR-driven
+// esperando/pausa/frío branches, so no classifier change is needed. `ticket`
+// mirrors a real process's shape (non-null only when one was found) so
+// downstream code (the "sin ticket" badge) treats it identically. `synthetic`
+// is the marker procCardHTML uses to print "sin worktree local" in place of
+// the (necessarily empty) repo list. Two PRs that resolve to the same key
+// share one process, both attached to it.
+function synthesizeProcesses(unmatchedPRs) {
+  const map = new Map();
+  unmatchedPRs.forEach(pr => {
+    const ticket = prTicket(pr);
+    // `headRef` can be null on a merged PR even now that the panel's fetchHeadRef
+    // fills it in: that extra GET is allowed to fail (a PR worth listing is not
+    // worth dropping over an unreadable branch name). So owner/repo#number stays
+    // the last resort — it is the only component always present and always
+    // unique, whereas falling through to a null headRef would collapse every
+    // ticket-less merged PR onto one shared key.
+    const key = ticket || pr.headRef || `${pr.owner}/${pr.repo}#${pr.number}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        proc: { key: key, ticket: ticket || null, branches: [], worktrees: [],
+                sessions: [], lastLocalActivity: null, synthetic: true },
+        prs: [],
+      });
+    }
+    const row = map.get(key);
+    if (pr.headRef && row.proc.branches.indexOf(pr.headRef) === -1) row.proc.branches.push(pr.headRef);
+    row.prs.push(pr);
+  });
+  return Array.from(map.values());
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { COLD_DAYS: COLD_DAYS, extractTicket: extractTicket,
                      processKey: processKey, groupProcesses: groupProcesses,
                      attachSessions: attachSessions, lastActivity: lastActivity,
                      classify: classify, sortProcesses: sortProcesses,
                      safeHttpUrl: safeHttpUrl, PR_FILTER_ALL: PR_FILTER_ALL,
+                     prIsOpen: prIsOpen,
                      rowHasPR: rowHasPR, rowHasOpenPR: rowHasOpenPR,
                      rowHasDraftPR: rowHasDraftPR, nextChipFilter: nextChipFilter,
                      filterRowsByPR: filterRowsByPR,
-                     filterRowsByPRStatus: filterRowsByPRStatus };
+                     filterRowsByPRStatus: filterRowsByPRStatus,
+                     prTicket: prTicket, attachOwnPRs: attachOwnPRs,
+                     synthesizeProcesses: synthesizeProcesses,
+                     PR_CONTRACT_FIELDS: PR_CONTRACT_FIELDS };
 }

@@ -1,0 +1,136 @@
+// Own PR state via the `gh` CLI, normalized to the shared `pr` contract
+// (classify.js PR_CONTRACT_FIELDS). This is the assistant's half of the one
+// duplication the design accepts: the browser fetches with a PAT via
+// github.js, this fetches with `gh` — but both emit the identical shape, and
+// tests/classify-join.js proves the join needs nothing outside that shape.
+//
+// Deliberately `--author=@me` with no org qualifier (unlike render.js:272),
+// so the owner's work in every org is seen — including this repo's own PRs,
+// which the browser's org-scoped query drops.
+const { PR_CONTRACT_FIELDS, safeHttpUrl } = require('../classify.js');
+
+// GitHub check conclusions → the four CI states classify() understands. A
+// failing conclusion anywhere loses; else any not-yet-concluded check is
+// pending; else all concluded green; an empty rollup is unknown (no CI).
+const FAILED = new Set(['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
+function ciFromRollup(rollup) {
+  const checks = rollup || [];
+  if (!checks.length) return 'unknown';
+  if (checks.some(c => FAILED.has(c.conclusion))) return 'failed';
+  if (checks.some(c => !c.conclusion)) return 'pending';
+  return 'green';
+}
+
+// `gh` is not consistent about case: `gh search prs --json state` yields
+// lowercase ("open", "merged"), `gh pr list --json state` yields uppercase
+// ("OPEN", "MERGED", "CLOSED"). Both feed buildPR, so normalize once here rather
+// than trusting either producer — a missed case silently makes a merged PR look
+// open, which is the single most consequential misread in this file.
+function normState(state) { return String(state || '').toUpperCase(); }
+
+// One search item (gh search prs) + its detail view (gh pr view) → a contract
+// pr. `url` is re-validated through safeHttpUrl even though it comes from gh,
+// matching local.js's rule of trusting no href.
+function buildPR(item, view) {
+  const [owner, repo] = item.repository.nameWithOwner.split('/');
+  const state = normState(item.state);
+  return {
+    owner, repo,
+    number: item.number,
+    title: item.title,
+    url: safeHttpUrl(item.url),
+    headRef: view.headRefName || null,
+    draft: view.isDraft === true,
+    merged: state === 'MERGED',
+    closed: state === 'CLOSED',
+    ci: ciFromRollup(view.statusCheckRollup),
+    approved: view.reviewDecision === 'APPROVED',
+    changesReq: view.reviewDecision === 'CHANGES_REQUESTED',
+    conflicts: view.mergeable === 'CONFLICTING',
+    // The assistant has no per-PR "seen" baseline (that lives in the browser's
+    // localStorage), so it cannot compute "new since I last looked". 0 is
+    // honest here; the assistant's turn signal comes from other flags.
+    newComments: 0,
+    humanReviews: (view.reviews || []).length,
+    updatedAt: view.updatedAt,
+  };
+}
+
+const SEARCH_FIELDS = 'number,title,url,repository,state';
+const VIEW_FIELDS = 'headRefName,isDraft,reviewDecision,mergeable,statusCheckRollup,reviews,updatedAt';
+
+// Open PRs plus PRs merged in the last 3 days (sorted by most recently updated),
+// each enriched by a per-PR `gh pr view`. `run(cmd, args, cwd)` → stdout.
+async function fetchOwnPRs({ run, now }) {
+  const cutoff = new Date(now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const warnings = [];
+  let items = [];
+  try {
+    const open = JSON.parse(await run('gh',
+      ['search', 'prs', '--author', '@me', '--state', 'open', '--limit', '60', '--json', SEARCH_FIELDS]));
+    const merged = JSON.parse(await run('gh',
+      ['search', 'prs', '--author', '@me', '--merged', '--merged-at', `>=${cutoff}`, '--sort', 'updated', '--limit', '20', '--json', SEARCH_FIELDS]))
+      .map(x => ({ ...x, state: 'MERGED' }));
+    items = open.concat(merged);
+  } catch (e) {
+    warnings.push({ repo: null, step: 'gh-search', message: `gh search prs failed: ${e.message}` });
+    return { prs: [], warnings };
+  }
+
+  const prs = [];
+  for (const item of items) {
+    try {
+      const view = JSON.parse(await run('gh', ['pr', 'view', item.url, '--json', VIEW_FIELDS]));
+      prs.push(buildPR(item, view));
+    } catch (e) {
+      warnings.push({ repo: item.repository && item.repository.nameWithOwner, step: 'gh-view',
+        message: `gh pr view ${item.url} failed: ${e.message}` });
+    }
+  }
+  return { prs, warnings };
+}
+
+// `gh pr list --json` returns every field buildPR needs in ONE call, so the
+// search+view two-step above is unnecessary here. The shapes are reconciled by
+// passing the same object as both `item` and `view`.
+const LIST_FIELDS = `number,title,url,state,${VIEW_FIELDS}`;
+
+// Exact PR state for specific branches, unbounded in time. This exists because
+// the broad search above is bounded twice over — by `--limit` and by the merged
+// window — and both bounds fail the same way: a branch whose PR is invisible
+// reads as "has no PR", which is what makes the gate offer to open a draft for
+// work that is already merged, or already rejected.
+//
+// Two real misreads this fixes, neither reachable by widening the window:
+//   - humand-product-workflow#22, merged months ago: outside any sane window.
+//   - react-workflows#6, closed unmerged: `--state open` and `--merged` between
+//     them never return a closed-unmerged PR at all, at any window size.
+//
+// Cost is one `gh pr list` (~0.5s) per branch, so callers must pass only the
+// branches they could not resolve from the broad search — see assist/ledger.js.
+// A per-branch failure is a warning, never fatal: the pass degrades to what the
+// broad search knew, and `isDegraded` keeps the drain off worktrees.
+async function fetchPRsForBranches({ run, branches }) {
+  const warnings = [];
+  const prs = [];
+  for (const { githubRepo, branch } of (branches || [])) {
+    if (!githubRepo || !branch) continue;
+    try {
+      const found = JSON.parse(await run('gh',
+        ['pr', 'list', '-R', githubRepo, '--head', branch, '--state', 'all', '--limit', '10', '--json', LIST_FIELDS]));
+      const [owner, repo] = githubRepo.split('/');
+      for (const p of found) {
+        // buildPR expects the search shape (`repository.nameWithOwner`); the
+        // list shape carries neither owner nor repo, so they come from the slug
+        // the caller already had to know in order to ask.
+        prs.push(buildPR({ ...p, repository: { nameWithOwner: `${owner}/${repo}` } }, p));
+      }
+    } catch (e) {
+      warnings.push({ repo: githubRepo, step: 'gh-pr-list',
+        message: `gh pr list --head ${branch} failed: ${e.message}` });
+    }
+  }
+  return { prs, warnings };
+}
+
+module.exports = { ciFromRollup, buildPR, fetchOwnPRs, fetchPRsForBranches, normState };
