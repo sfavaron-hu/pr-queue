@@ -10,7 +10,7 @@
 // so `cmd` must never be interpolated into a shell — there is no sh -c path.
 
 const {
-  decline, markDone, syncItems, writeAnswer, readItem, readAnswer, writeAtomic,
+  decline, isDeclined, markDone, syncItems, writeAnswer, readItem, readAnswer, writeAtomic,
   listOpenItems, pruneDeclined, pruneDone, itemId,
 } = require('./queue.js');
 
@@ -141,9 +141,20 @@ async function runCli(argv, deps) {
     // but `list` is a directory read with no order, so "the top 4" was arbitrary.
     // Keeping the budget in one place is also what stops it drifting from
     // QUESTION_BUDGET, which is the whole defence against approval fatigue.
+    //
+    // Declined items have to be filtered HERE, not only in the drain. The gate
+    // rebuilds its questions from the live situation every pass, so a declined
+    // question comes back the moment the situation persists — and "Dejar" is
+    // usually chosen precisely because the situation is going to persist. The
+    // two halves then disagreed: `ask` served three questions declined until
+    // September, and `writeAnswer` refused all three with `already-done`,
+    // because the drain had moved them to `done/`. Asked forever, answerable
+    // never. A decline that does not silence anything is worse than no decline
+    // at all: it spends the question budget that exists to prevent fatigue.
     const batch = (gate.ask || [])
       .map(q => ({ id: itemId(q), item: q }))
-      .filter(e => readAnswer(io, paths, e.id) === null);
+      .filter(e => readAnswer(io, paths, e.id) === null)
+      .filter(e => !isDeclined(io, paths, e.id));
     return { exit: 0, output: batch };
   }
 

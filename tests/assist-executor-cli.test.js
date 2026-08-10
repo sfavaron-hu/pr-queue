@@ -236,6 +236,36 @@ test('ask drops a question the owner already answered', async () => {
   assert.deepEqual(res.output.map(e => e.item.processKey), ['b']);
 });
 
+// The gate rebuilds its questions from the live situation on every pass, so a
+// declined question returns the moment the situation persists — and "Dejar" is
+// usually chosen *because* it is going to persist. Found in the wild: three
+// questions declined until September were served again, and writeAnswer then
+// refused all three with `already-done` (the drain had moved them to done/).
+// Asked forever, answerable never.
+test('ask drops a question the owner declined, even when the gate re-emits it', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const all = ['a', 'b'].map(q);
+  const paths = queuePaths('/s');
+  io.write(`${paths.declined}/${itemId(all[0])}.json`, JSON.stringify({ until: 1000 + 30 * 86400000 }));
+  const res = await runCli(['ask'], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ questions: all, ask: all }), warnings: [] }),
+  }));
+  assert.deepEqual(res.output.map(e => e.item.processKey), ['b']);
+});
+
+// The decline is a 30-day silence, not a permanent one: once it lapses the
+// question has to come back, or "Dejar" quietly becomes "never ask me again".
+test('ask asks a declined question again once the decline has expired', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const all = ['a'].map(q);
+  const paths = queuePaths('/s');
+  io.write(`${paths.declined}/${itemId(all[0])}.json`, JSON.stringify({ until: 999 }));
+  const res = await runCli(['ask'], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ questions: all, ask: all }), warnings: [] }),
+  }));
+  assert.deepEqual(res.output.map(e => e.item.processKey), ['a']);
+});
+
 test('ask on a gate with no budgeted questions returns an empty batch', async () => {
   const io = memIo(1000); const exec = fakeExec();
   const res = await runCli(['ask'], deps(io, exec, {
