@@ -1,3 +1,4 @@
+<meta charset="utf-8" />
 <title>PR Queue · HumandDev</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>" />
 <style>
@@ -29,7 +30,7 @@ html, body {
 }
 
 .app {
-  max-width: 800px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 32px 16px 80px;
 }
@@ -499,7 +500,27 @@ html, body {
   margin-left: auto;
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
+
+/* A process key/branch name can run far longer than a repo slug ever would
+   (".pr-repo" is nowrap elsewhere, sized for short repo names) — let it wrap
+   instead of forcing the column wider than its 1fr share. Scoped to #work-list
+   only; PR cards elsewhere keep the original single-line behavior.
+
+   Wrapping .pr-repo's own text wasn't enough on its own: the sibling
+   .pr-number (the repo name) lived alongside it in a `display:flex` row,
+   which pins flex items to one line unless told otherwise, so the repo name
+   stayed squeezed next to the wrapping key instead of moving to its own
+   line. .proc-identity drops that flex row in favor of ordinary block/inline
+   flow — the same reflow any wrapping paragraph gets — so the key wraps
+   internally when it must, and the repo name (an ordinary unbreakable word)
+   flows onto whatever line has room for it, next line included. The pair
+   reads and behaves as one wrapping unit instead of two competing flex items. */
+#work-list .proc-identity { display: block; }
+#work-list .pr-repo { white-space: normal; overflow-wrap: anywhere; }
+#work-list .proc-identity .pr-number { margin-left: 6px; }
 
 /* ── Loading / empty / error ── */
 .loading {
@@ -553,6 +574,70 @@ html, body {
   line-height: 1.5;
 }
 
+.proc-notice { font-size: 11px; opacity: .85; padding: 5px 10px; border-radius: 6px;
+  background: rgba(219,171,9,.14); border: 1px solid rgba(219,171,9,.3); margin-bottom: 6px; }
+/* The session aiTitle, shown under the card title — smaller and dimmer than
+   .pr-title so it reads as subordinate context, not a second title, and
+   incidentally helps tell "this is a PR title" from "this is still local,
+   here's what a session was doing" apart at a glance. */
+.proc-ai-title { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+/* PR-backed vs local-only: a subtle left accent built from the existing
+   --accent token (already used for .pr-repo/links/badge-blue), not a new
+   palette or a loud badge — the state badge (TU TURNO, etc.) already carries
+   the loud signal. Local-only cards keep the plain card border. */
+#work-list .pr-card.proc-has-pr {
+  border-left: 3px solid var(--accent);
+  padding-left: 13px;
+}
+.proc-meta-line { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+/* "con PR / sin PR" chips. Same visual language as the config .repo-chip
+   pills, a size down and fully rounded — these live inside the narrower
+   own-column, right above the cards. Only one can be on; neither on means
+   todos. They render disabled while GitHub's PR data hasn't landed, because
+   until it does every card looks "sin PR" (see prPending in local.js) and
+   either chip would be filtering on data the panel doesn't have yet.
+   The second row (abierto / draft) only exists while "con PR" is on — asking
+   which PR status to keep has no answer for a row with no PR — and is indented
+   to read as subordinate to the chip that opened it. */
+.proc-filter { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.proc-filter-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.proc-filter-sub { margin-left: 14px; }
+.proc-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 11px; font-family: var(--font);
+  cursor: pointer; transition: border-color .15s, color .15s, background .15s;
+}
+/* Hover must never overwrite the selected look: `:hover:not([disabled])`
+   out-specifies `.selected` on its own, which had a lit chip drop back to the
+   muted border and text colour the moment the pointer landed on it — so the
+   one chip you were pointing at was the one that stopped saying it was on.
+   Unselected chips lighten; a selected one deepens its accent fill instead. */
+.proc-chip:hover:not([disabled]):not(.selected) { border-color: var(--border-hover); color: var(--text); }
+.proc-chip.selected { border-color: var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.proc-chip.selected:hover:not([disabled]) { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.proc-chip[disabled] { opacity: .45; cursor: default; }
+.proc-chip-count { opacity: .6; font-variant-numeric: tabular-nums; }
+.badge-dim { opacity: .6; }
+/* Loose-sessions entry: the one leftover row that isn't a process card. */
+.proc-row { display: grid; grid-template-columns: 90px 1fr auto;
+  gap: 10px; align-items: center; padding: 8px 10px; border-radius: 6px;
+  background: rgba(127,127,127,.06); font-size: 12px; }
+.proc-state { font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; padding: 2px 6px; border-radius: 4px; text-align: center; }
+.proc-state.turno     { background: #d73a49; color: #fff; }
+.proc-state.esperando { background: #dbab09; color: #1b1f23; }
+.proc-state.pausa     { background: rgba(127,127,127,.45); }
+.proc-state.frio      { background: rgba(127,127,127,.25); }
+.proc-key { font-weight: 600; }
+.proc-detail { opacity: .7; font-size: 11px; }
+.proc-detail code { font-size: 10px; opacity: .8; }
+.proc-subtitle { display: inline-block; opacity: .85; font-size: 11.5px; margin-top: 1px; }
+.proc-copy.copied { color: var(--green, #3fb950); }
+@media (max-width: 680px) { .proc-row { grid-template-columns: 70px 1fr; } }
+
 /* ── Layout ── */
 .main-layout {
   display: grid;
@@ -561,6 +646,17 @@ html, body {
   align-items: start;
 }
 @media (max-width: 680px) { .main-layout { grid-template-columns: 1fr; } }
+
+/* Process cards live inside #own-column, alongside (in place of) the PR
+   cards it normally shows. Widen its slot to 1fr/1fr — process cards carry
+   more chips than PR cards and are cramped at the column's usual 1fr of
+   2fr/1fr — and hide the PR-list elements by class, not inline style,
+   because render.js's loadOwnPRs() clears any inline display on them on its
+   own timer; a class on <body> is untouched by that and keeps winning. */
+body.proc-panel-active .main-layout { grid-template-columns: 1fr 1fr; }
+body.proc-panel-active #own-pr-list,
+body.proc-panel-active #own-empty,
+body.proc-panel-active #own-loading { display: none; }
 
 /* ── Own PRs panel ── */
 .own-column-header {
@@ -576,14 +672,14 @@ html, body {
 }
 
 
-#own-pr-list .pr-card { padding: 10px 12px; }
-#own-pr-list .pr-title { font-size: 12px; margin-bottom: 6px; }
-#own-pr-list .pr-repo  { font-size: 10px; }
-#own-pr-list .pr-number { font-size: 10px; }
-#own-pr-list .pr-meta  { font-size: 11px; }
-#own-pr-list .badge    { font-size: 10px; padding: 1px 5px; }
-#own-pr-list .btn-sm   { font-size: 11px; padding: 3px 8px; }
-#own-pr-list .pr-author img { width: 14px; height: 14px; }
+#own-pr-list .pr-card, #work-list .pr-card { padding: 10px 12px; }
+#own-pr-list .pr-title, #work-list .pr-title { font-size: 12px; margin-bottom: 6px; }
+#own-pr-list .pr-repo, #work-list .pr-repo  { font-size: 10px; }
+#own-pr-list .pr-number, #work-list .pr-number { font-size: 10px; }
+#own-pr-list .pr-meta, #work-list .pr-meta  { font-size: 11px; }
+#own-pr-list .badge, #work-list .badge    { font-size: 10px; padding: 1px 5px; }
+#own-pr-list .btn-sm, #work-list .btn-sm   { font-size: 11px; padding: 3px 8px; }
+#own-pr-list .pr-author img, #work-list .pr-author img { width: 14px; height: 14px; }
 
 /* ── Tooltip ── */
 #tip {
@@ -773,8 +869,20 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
   <!-- Own PRs -->
   <div class="own-column" id="own-column" style="display:none">
     <div class="own-column-header">
-      Mis PRs <span class="count-badge" id="own-count"></span>
+      <span id="own-column-title">Mis PRs</span> <span class="count-badge" id="own-count"></span>
     </div>
+    <div class="proc-meta-line hidden" id="proc-meta-line"></div>
+    <div class="proc-filter hidden" id="proc-filter">
+      <div class="proc-filter-row">
+        <button type="button" class="proc-chip" data-pr-filter="con">con PR<span class="proc-chip-count"></span></button>
+        <button type="button" class="proc-chip" data-pr-filter="sin">sin PR<span class="proc-chip-count"></span></button>
+      </div>
+      <div class="proc-filter-row proc-filter-sub hidden" id="proc-filter-status">
+        <button type="button" class="proc-chip" data-pr-status="abierto">abierto<span class="proc-chip-count"></span></button>
+        <button type="button" class="proc-chip" data-pr-status="draft">draft<span class="proc-chip-count"></span></button>
+      </div>
+    </div>
+    <div id="work-list"></div>
     <div id="own-loading" class="loading hidden" style="padding:20px;font-size:12px;">
       <div class="spinner"></div>
     </div>
@@ -789,6 +897,8 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
 <script src="state.js"></script>
 <script src="github.js"></script>
 <script src="score.js"></script>
+<script src="classify.js"></script>
 <script src="render.js"></script>
 <script src="app.js"></script>
+<script src="local.js"></script>
 

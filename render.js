@@ -255,16 +255,25 @@ function renderOwnPRs() {
 
 async function loadOwnPRs() {
   if (!state.token || document.hidden) return;
-  const { org, label } = state.config;
+  const { org } = state.config;
   if (!state.me) return;
 
   el.ownColumn.style.display = '';
   if (state.ownPRs.length === 0) el.ownLoading.classList.remove('hidden');
 
   try {
+    // Unlike loadPRs (the tribe's review queue), this column is "Mis PRs" —
+    // all of the owner's own work org-wide, not just the tribe's slice of
+    // it — so no label: qualifier belongs here at all. Qualifiers are still
+    // built as an array and joined rather than concatenated, so an absent
+    // or empty value can never leave a stray `+` in the query string (a
+    // malformed GitHub search silently returns the wrong results instead of
+    // erroring, so this is worth keeping even with one fewer qualifier).
+    const openQualifiers = ['is:pr', 'is:open', `org:${encodeURIComponent(org)}`, `author:${encodeURIComponent(state.me)}`];
+    const mergedQualifiers = ['is:pr', 'is:merged', `org:${encodeURIComponent(org)}`, `author:${encodeURIComponent(state.me)}`, `merged:>${threeDAysAgo()}`];
     const [openData, mergedData] = await Promise.all([
-      apiFetch(`${API}/search/issues?q=is:pr+is:open+label:${encodeURIComponent(label)}+org:${encodeURIComponent(org)}+author:${encodeURIComponent(state.me)}&per_page=50&sort=created&order=desc`),
-      apiFetch(`${API}/search/issues?q=is:pr+is:merged+label:${encodeURIComponent(label)}+org:${encodeURIComponent(org)}+author:${encodeURIComponent(state.me)}+merged:>${threeDAysAgo()}&per_page=20&sort=updated&order=desc`),
+      apiFetch(`${API}/search/issues?q=${openQualifiers.join('+')}&per_page=50&sort=created&order=desc`),
+      apiFetch(`${API}/search/issues?q=${mergedQualifiers.join('+')}&per_page=20&sort=updated&order=desc`),
     ]);
 
     const items = openData.items || [];
@@ -275,10 +284,22 @@ async function loadOwnPRs() {
       results.push(...out);
     }
     state.ownPRs       = results.filter(Boolean);
-    state.mergedPRs    = (mergedData.items || []).map(pr => {
-      const [owner, repo] = pr.repository_url.replace(`${API}/repos/`, '').split('/');
-      return { id: pr.id, number: pr.number, owner, repo, title: pr.title, url: pr.html_url, updatedAt: new Date(pr.updated_at) };
-    });
+    // Batched by 4, matching the open-PR loop above, so the extra head-ref GET per
+    // merged PR cannot burst the rate limit.
+    const mergedItems = mergedData.items || [];
+    const merged = [];
+    for (let i = 0; i < mergedItems.length; i += 4) {
+      const out = await Promise.all(mergedItems.slice(i, i + 4).map(async pr => {
+        const [owner, repo] = pr.repository_url.replace(`${API}/repos/`, '').split('/');
+        return { id: pr.id, number: pr.number, owner, repo, title: pr.title, url: pr.html_url,
+                 // Without this the join can only match a ticket parsed out of the
+                 // title, which fails for no-ticket work — see fetchHeadRef.
+                 headRef: await fetchHeadRef(pr.pull_request && pr.pull_request.url),
+                 updatedAt: new Date(pr.updated_at) };
+      }));
+      merged.push(...out);
+    }
+    state.mergedPRs    = merged;
     renderOwnPRs();
   } catch { /* silent */ } finally {
     el.ownLoading.classList.add('hidden');
