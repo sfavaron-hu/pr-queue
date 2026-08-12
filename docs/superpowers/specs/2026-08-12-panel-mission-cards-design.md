@@ -166,6 +166,27 @@ Esto revierte a propósito el "someone who never runs the sidecar sees no change
 all" del spec del 2026-08-03: ese invariante era sobre no *romperle* nada, no sobre
 esconderle que existe.
 
+## 7. Preexistente: el compare no puede apuntar a la nada
+
+`diffLinksFor` (`local.js:210`) suprime el link sólo con `onOrigin === false`
+confirmado; `null` y el campo ausente lo renderizan igual, deliberadamente
+(`local.js:205-209`). Pero el panel cachea el payload en `localStorage`
+(`prq_proc_cache`, `local.js:12`), así que un payload viejo — de antes de que el
+drenaje pushee la rama — produce un `compare/<base>...<branch>` que GitHub no puede
+resolver. Es lo que se vio con `bp-prod-10230` (hoy en origin: `diverged`, 34 commits,
+135 archivos).
+
+Cambia así:
+
+- Con `onOrigin` **desconocido** el link ya no se pinta como link: se pinta el chip de
+  push que ya existe (`pushChip`, `local.js:290`) y el badge "no está en origin" que
+  ya existe, con el motivo.
+- Un payload servido desde caché marca sus links como no confiables hasta que el
+  primer `/api/local` fresco responde. La regla vieja ("unknown se comporta como antes
+  de que existiera `onOrigin`") se mantiene **sólo** para el payload fresco.
+- El panel **no** pushea. Eso ya lo hace el drenaje (acción `push` del gate, ramas
+  `notOnOrigin` no consumidas) y el read-only del panel no se toca por esto.
+
 ## Testing
 
 `node --test`, sin deps, con `exec` inyectado. Consistente con el repo (353 tests
@@ -182,6 +203,7 @@ verdes en `dd567cf`).
 | ausencia | `PRQ_MC_BIN` sin setear + default inexistente ⇒ cero cards y ningún hint |
 | shareability | el default de `PRQ_MC_BIN` se deriva de `CLAUDE_CONFIG_DIR`/homedir (`tests/shareability.test.js` ya falla con un home hardcodeado) |
 | GH Pages | con `/api/local` en 404 el hint se pinta una vez y el dismiss persiste |
+| compare | payload desde caché con `onOrigin` desconocido ⇒ chip de push, **no** link; el mismo payload fresco ⇒ link |
 
 ## Entrega
 
