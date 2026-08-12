@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { collect } = require('../../collect.js');
-const { fetchOwnPRs } = require('../prs.js');
+const { fetchOwnPRs, fetchPRsForBranches } = require('../prs.js');
 const { ledger } = require('../ledger.js');
 const { buildGate } = require('../gate.js');
 const { babysitStateDir } = require('./gate.js');
@@ -36,7 +36,7 @@ const fsIo = {
 async function main() {
   const checkoutDir = path.resolve(__dirname, '..', '..');
   const doc = await ledger({
-    collect, fetchOwnPRs,
+    collect, fetchOwnPRs, fetchPRsForBranches,
     ioForCollect: {
       env: process.env, homeDir: os.homedir(), checkoutDir,
       run, listDirs, listFiles, readTail, now: () => Date.now(),

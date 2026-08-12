@@ -71,6 +71,18 @@ test('parseStatusShort returns 0 for a clean tree', () => {
   assert.equal(parseStatusShort('\n'), 0);
 });
 
+test('parseStatusShort ignores untracked worktree-container dirs (not real work)', () => {
+  // A merged worktree with only `?? .worktrees/` must read as clean (0), so it
+  // is eligible for autonomous removal and produces no spurious commit question.
+  assert.equal(parseStatusShort('?? .worktrees/\n'), 0);
+  assert.equal(parseStatusShort('?? .claude/worktrees/\n'), 0);
+  // Mixed: the container is dropped, the real modified file still counts.
+  assert.equal(parseStatusShort(' M package.json\n?? .worktrees/\n'), 1);
+  // A real untracked file named similarly is NOT dropped — only exact containers.
+  assert.equal(parseStatusShort('?? .worktrees-notes.md\n'), 1);
+  assert.equal(parseStatusShort('?? src/.worktrees/thing.ts\n'), 1);
+});
+
 test('parseAgents normalizes status from status or state', () => {
   const fixture = JSON.stringify([
     { id: '50f65449', cwd: '/w', kind: 'background', startedAt: 1782329044156,
@@ -328,10 +340,10 @@ test('parseTranscriptTail nulls out a javascript: prUrl but keeps number and rep
 // single modified file holding a `// TEMP — DO NOT COMMIT` flag override, where
 // the count pointed at exactly the wrong answer.
 test('parseStatusFiles returns status code and path per entry', () => {
-  const out = parseStatusFiles(' M src/hooks/useCommunityFeature.ts\n?? node_modules\n');
+  const out = parseStatusFiles(' M src/hooks/useCommunityFeature.ts\n?? scratch.md\n');
   assert.deepEqual(out, [
     { code: 'M', path: 'src/hooks/useCommunityFeature.ts' },
-    { code: '??', path: 'node_modules' },
+    { code: '??', path: 'scratch.md' },
   ]);
 });
 
@@ -347,4 +359,32 @@ test('parseStatusFiles caps the sample and ignores blank lines', () => {
 test('parseStatusFiles keeps a rename readable', () => {
   assert.deepEqual(parseStatusFiles('R  a.ts -> b.ts\n'),
     [{ code: 'R', path: 'a.ts -> b.ts' }]);
+});
+
+// git reports the shallowest untracked dir, so `.claude/` must be listed and not
+// just `.claude/worktrees/`; and a node_modules SYMLINK (the standard worktree
+// setup here) arrives without a trailing slash, which is what produced a phantom
+// "1 archivo sin commitear" on humand-main-api where nothing was committable.
+test('parseStatusShort ignores tooling artifacts in both slash forms', () => {
+  assert.equal(parseStatusShort('?? .worktrees/\n'), 0);
+  assert.equal(parseStatusShort('?? .claude/worktrees/\n'), 0);
+  assert.equal(parseStatusShort('?? .claude/\n'), 0);
+  assert.equal(parseStatusShort('?? node_modules/\n'), 0);
+  assert.equal(parseStatusShort('?? node_modules\n'), 0);   // symlink form
+});
+
+test('parseStatusShort still counts real untracked work', () => {
+  assert.equal(parseStatusShort('?? AGENTS.md\n?? docs/analysis/\n'), 2);
+  // A tracked modification to an ignored-looking path is still real work.
+  assert.equal(parseStatusShort(' M .claude/settings.json\n'), 1);
+  // A nested path under an ignored dir is not the ignored entry itself.
+  assert.equal(parseStatusShort('?? .claude/notes.md\n'), 1);
+});
+
+// The count and the sample must never disagree about what "dirty" means, or a
+// question says "1 file" and then lists a different one.
+test('parseStatusFiles applies the same filter as parseStatusShort', () => {
+  const status = '?? node_modules\n M src/x.ts\n?? .worktrees/\n';
+  assert.equal(parseStatusShort(status), 1);
+  assert.deepEqual(parseStatusFiles(status), [{ code: 'M', path: 'src/x.ts' }]);
 });

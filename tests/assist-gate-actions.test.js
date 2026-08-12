@@ -37,6 +37,10 @@ test('open-draft-pr fires for an on-origin branch with commits above base, no PR
   assert.deepEqual(acts[0].argv,
     ['gh', 'pr', 'create', '--draft', '--fill', '-R', 'HumandDev/humand-web', '--head', 'feat/SQSH-1', '--base', 'develop']);
   assert.equal(acts[0].argv.join(' '), acts[0].cmd);
+  // Semantic fields so /work-assistant can open a well-formatted PR without re-parsing argv.
+  assert.equal(acts[0].githubRepo, 'HumandDev/humand-web');
+  assert.equal(acts[0].head, 'feat/SQSH-1');
+  assert.equal(acts[0].base, 'develop');
 });
 
 test('a dirty worktree suppresses open-draft-pr (no autonomous resolution)', () => {
@@ -63,6 +67,14 @@ test('remove-merged-worktree fires when every PR is merged, the dir is present a
   assert.equal(acts.filter(a => a.kind === 'remove-merged-worktree').length, 1);
   assert.match(acts.find(a => a.kind === 'remove-merged-worktree').cmd,
     /git -C \/w\/humand-web worktree remove \/w\/humand-web/);
+});
+
+test('remove-merged-worktree is suppressed when the worktree has unpushed local commits', () => {
+  // Removing it would silently destroy commits that exist only locally. The
+  // owner gets a "Huérfano" question instead (see gate-items); no auto-remove.
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ dirty: 0, unpushedLocal: 2 })], prs: [{ headRef: 'feat/SQSH-1', merged: true }] })]));
+  assert.equal(acts.filter(a => a.kind === 'remove-merged-worktree').length, 0);
 });
 
 test('remove-merged-worktree is suppressed by a dirty worktree', () => {

@@ -85,7 +85,13 @@ function buildActions(ledger) {
         continue;
       }
 
-      if (consumedWork && clean && w.isPrimary !== true) {
+      // Only auto-remove when the worktree holds NOTHING that would be lost:
+      // clean (no uncommitted) AND no commits that exist only locally. If there
+      // is unpushed local work, removal would silently destroy it — so we skip
+      // the action and let questionFor surface it as a "Huérfano" question with
+      // its content, where the owner can keep it (new PR) or discard it.
+      const noLocalOnlyWork = (w.unpushedLocal || 0) === 0;
+      if (consumedWork && clean && noLocalOnlyWork && w.isPrimary !== true) {
         actions.push({
           id: actionId('remove-merged-worktree', p.key, w.repo, w.branch),
           kind: 'remove-merged-worktree', processKey: p.key, repo: w.repo,
@@ -93,7 +99,7 @@ function buildActions(ledger) {
           argv: ['git', '-C', repoPath(root, w.repo), 'worktree', 'remove', w.path],
           reversibility: 'reversible-local',
           why: 'Todos los PRs del proceso están mergeados; el worktree es estado local sobrante',
-          evidence: `${w.repo}/${w.branch}: PRs mergeados, worktree limpio`,
+          evidence: `${w.repo}/${w.branch}: PRs mergeados, worktree limpio, sin trabajo local sin pushear`,
         });
         continue;
       }
@@ -106,6 +112,11 @@ function buildActions(ledger) {
         actions.push({
           id: actionId('open-draft-pr', p.key, w.repo, w.branch),
           kind: 'open-draft-pr', processKey: p.key, repo: w.repo,
+          // Semantic fields so a consumer can open a well-formatted PR without
+          // re-parsing argv. The --fill argv stays as a mechanical fallback, but
+          // the drain no longer runs this kind — a model writes the body in
+          // /work-assistant (see assist/bin/run.js `drafts`).
+          githubRepo: w.githubRepo, head: w.branch, base: w.baseBranch,
           cmd: `gh pr create --draft --fill -R ${w.githubRepo} --head ${w.branch} --base ${w.baseBranch}`,
           argv: ['gh', 'pr', 'create', '--draft', '--fill', '-R', w.githubRepo, '--head', w.branch, '--base', w.baseBranch],
           reversibility: 'reversible-draft',
@@ -182,6 +193,39 @@ function questionFor(proc, ledger) {
   const wts = proc.worktrees || [];
   const now = ledger && ledger.generatedAt;
 
+  // Orphan: the PR already landed or was closed, yet the worktree still holds
+  // work that exists only locally (unpushed commits and/or uncommitted changes)
+  // — so it cannot be auto-removed without losing it (buildActions skips the
+  // remove for exactly this case). Surface it WITH its content and offer to keep
+  // it (a fresh PR) or discard it. Non-primary only: a primary checkout is parked
+  // on its base by switch-primary-to-base, which loses nothing. This precedes the
+  // dirty/cold cases: "the PR is done but there's stray local work" is a more
+  // specific question than either.
+  const oprs = proc.prs || [];
+  const consumed = oprs.some(pr => pr.merged === true || pr.closed === true) && !oprs.some(prIsOpen);
+  const orphanWt = consumed
+    ? wts.find(x => x.isPrimary !== true && ((x.unpushedLocal || 0) > 0 || (x.dirty || 0) > 0))
+    : null;
+  if (orphanWt) {
+    const w = orphanWt;
+    const commits = w.unpushedLocal || 0;
+    const bits = [];
+    if (commits > 0) bits.push(`${commits} commit${commits === 1 ? '' : 's'} sólo local`);
+    if ((w.dirty || 0) > 0) bits.push(`${w.dirty} archivo(s) sin commitear`);
+    return {
+      type: 'question', key: `orphan:${proc.key}`, processKey: proc.key,
+      question: `${w.repo}/${w.branch}: el PR quedó ${prSummary(oprs)} pero hay trabajo sin pushear (${bits.join(', ')}). ¿Qué hago?`,
+      header: 'Huérfano',
+      options: [
+        { label: 'Nuevo PR',
+          description: 'Abro un PR nuevo con ese trabajo. Te muestro los commits (git log) y qué archivos toca (diff --stat) antes de abrirlo.' },
+        { label: 'Descartar',
+          description: `Abandono el trabajo local: git worktree remove --force ${w.path} y borro la rama. Te muestro exactamente qué se pierde y confirmo antes de borrar nada.` },
+        { label: 'Dejar', description: `Lo dejo como está en ${w.path}; no vuelvo a preguntar por 30 días.` },
+      ],
+    };
+  }
+
   if (f.dirty) {
     const w = wts.find(x => (x.dirty || 0) > 0) || wts[0];
     const what = dirtySummary(w);
@@ -209,13 +253,22 @@ function questionFor(proc, ledger) {
     // `Archivar` means `git worktree remove`, which the main working tree refuses
     // with exit 128 — offering it there would hand back an option that cannot
     // work. The equivalent for a primary checkout is to park it on its base.
+    // A non-primary worktree that still holds only-local work needs `--force` +
+    // a branch delete to truly abandon it (a plain `worktree remove` leaves the
+    // commits on the branch ref) → that's Descartar. A clean, fully-pushed one
+    // just needs a plain remove → Archivar. A primary checkout can't be removed
+    // at all (exit 128) → park it on base.
+    const hasLocalOnly = w && ((w.unpushedLocal || 0) > 0 || (w.dirty || 0) > 0);
     const archive = !w
       ? { label: 'Archivar', description: 'Archivo el proceso.' }
       : w.isPrimary === true
         ? { label: 'Ir a la base',
             description: `Es el checkout principal de ${w.repo}: no hay worktree que remover (git worktree remove da exit 128). Lo paso a ${w.baseBranch || 'su base'}; el branch queda en origin.` }
-        : { label: 'Archivar',
-            description: `git worktree remove ${w.path} — el branch queda en origin.` };
+        : hasLocalOnly
+          ? { label: 'Descartar',
+              description: `Abandono el trabajo local: git worktree remove --force ${w.path} y borro la rama. Te muestro qué se pierde y confirmo antes.` }
+          : { label: 'Archivar',
+              description: `git worktree remove ${w.path} — el branch queda en origin.` };
 
     return {
       type: 'question', key: `cold:${proc.key}`, processKey: proc.key,
@@ -223,7 +276,7 @@ function questionFor(proc, ledger) {
       header: 'Frío',
       options: [
         { label: 'Retomar',
-          description: `${commits} commit(s) sobre ${w && w.baseBranch ? w.baseBranch : 'base'}${onOrigin ? ', rama en origin' : ', rama sólo local'}. PR: ${prSummary(proc.prs)}.${age}${subject}` },
+          description: `${commits} commit${commits === 1 ? '' : 's'} sobre ${w && w.baseBranch ? w.baseBranch : 'base'}${onOrigin ? ', rama en origin' : ', rama sólo local'}. PR: ${prSummary(proc.prs)}.${age}${subject}` },
         { label: 'Dejar', description: 'Lo dejo dormido; no vuelvo a preguntar por 30 días.' },
         archive,
       ],

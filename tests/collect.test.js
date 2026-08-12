@@ -51,6 +51,7 @@ function harness(over) {
       if (a.startsWith('status')) return ' M src/a.ts\n';
       if (a.includes('log -1')) return Math.floor((NOW - 3600000) / 1000) + '\x00chore: do the thing';
       if (a.includes('..HEAD')) return rangeLog('chore: do the thing', 'earlier work');
+      if (a.startsWith('rev-list') && a.includes('--not --remotes')) return '2\n';
       if (a.includes('remote get-url')) return 'git@github.com:HumandDev/humand-web.git\n';
       return '';
     },
@@ -76,6 +77,9 @@ test('collect groups the worktree and session into one ticket process', async ()
   assert.equal(p.worktrees[0].repo, 'humand-web');
   assert.equal(p.worktrees[0].dirty, 1);
   assert.equal(p.worktrees[0].unpushed, 2);
+  // unpushedLocal = `git rev-list --count HEAD --not --remotes` (commits in no
+  // remote at all) — the signal that a worktree remove would actually lose work.
+  assert.equal(p.worktrees[0].unpushedLocal, 2);
   assert.equal(p.sessions.length, 1);
   assert.equal(p.sessions[0].resumeCmd, 'claude --resume s1');
 });

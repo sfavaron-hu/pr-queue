@@ -39,8 +39,40 @@ function parseWorktrees(stdout) {
   return out;
 }
 
+// Untracked tooling artifacts are not the owner's uncommitted work. Counting them
+// as "dirty" both hides a merged worktree from autonomous cleanup and emits a
+// spurious "¿commiteo?" question — and the question is worse than useless, since
+// there is no answer to "commit node_modules?" that is right.
+//
+// git reports the SHALLOWEST untracked directory, which is why `.claude/` has to
+// be listed and not only `.claude/worktrees/`: in a repo whose worktrees live
+// under `.claude/worktrees/` but which tracks nothing else in `.claude/`, git says
+// `?? .claude/`. Both real forms are covered.
+//
+// Trailing slashes are normalized because the same entry appears both ways: a
+// real untracked directory is `?? node_modules/`, while a symlink to another
+// checkout's modules — the standard worktree setup here — is `?? node_modules`.
+// The second form is what produced a phantom "1 archivo sin commitear" on
+// humand-main-api, where there was in fact nothing to commit.
+//
+// Drop only these known artifacts; every other untracked entry (a real new file)
+// still counts.
+const IGNORED_UNTRACKED = new Set(['.worktrees', '.claude/worktrees', '.claude', 'node_modules']);
+function isIgnoredUntracked(line) {
+  if (!line.startsWith('?? ')) return false;
+  return IGNORED_UNTRACKED.has(line.slice(3).trim().replace(/\/$/, ''));
+}
+
+// The one filter both the count and the sample use, so they can never disagree
+// about what "dirty" means.
+function dirtyLines(stdout) {
+  return String(stdout).split('\n')
+    .filter(l => l.trim() !== '')
+    .filter(l => !isIgnoredUntracked(l));
+}
+
 function parseStatusShort(stdout) {
-  return String(stdout).split('\n').filter(l => l.trim() !== '').length;
+  return dirtyLines(stdout).length;
 }
 
 // The first few changed paths, with their status codes, so a consumer can say
@@ -55,8 +87,7 @@ function parseStatusShort(stdout) {
 const DIRTY_SAMPLE = 5;
 function parseStatusFiles(stdout, limit) {
   const max = typeof limit === 'number' ? limit : DIRTY_SAMPLE;
-  return String(stdout).split('\n')
-    .filter(l => l.trim() !== '')
+  return dirtyLines(stdout)
     // `XY path` — keep both, trimmed: the code says modified vs untracked vs
     // deleted, which is most of what makes the decision.
     .map(l => ({ code: l.slice(0, 2).trim(), path: l.slice(2).trim() }))
