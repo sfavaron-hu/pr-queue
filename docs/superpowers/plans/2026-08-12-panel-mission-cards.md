@@ -1300,7 +1300,7 @@ Subir el cap a 180 s no alcanza: dejaría al panel dos minutos sin datos en cada
 - Test: `tests/bin-mission.test.js`, `tests/mission-cards.test.js`
 
 **Interfaces:**
-- Produces: el payload gana `refreshing: boolean`. `makeMissionReader` acepta `staleAfterMs` (default 300000, la TTL de la propia caché de mc) y `freshTimeoutMs` (default 180000, sólo para el build de fondo; el foreground se queda en 20 s).
+- Produces: el payload gana `refreshing: boolean`. `makeMissionReader` acepta `staleAfterMs` (default **240000**, deliberadamente por debajo de la TTL de 5 min de la caché de mc: como el reader muestrea cada 60 s, eso deja exactamente una muestra para detectar "viejo" y arrancar el refresco de fondo *antes* de que mc tire su caché. Igualarla a 300000 hace que la muestra que detecta el vencimiento sea la misma que se come el rebuild de 133 s y muere en el cap de 20 s) y `freshTimeoutMs` (default 180000, sólo para el build de fondo; el foreground se queda en 20 s).
 
 - [ ] **Step 1: Write the failing tests**
 
