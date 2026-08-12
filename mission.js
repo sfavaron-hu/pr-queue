@@ -237,6 +237,13 @@ function compareLinkAllowed(worktree, fromCache) {
   return true;
 }
 
+// Painted only after /api/local has actually failed — never while the fetch
+// is in flight, or it flashes on localhost where the sidecar does answer.
+function shouldShowSidecarHint(state) {
+  var s = state || {};
+  return !!s.fetchFailed && !s.dismissed;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { MISSION_STATES: MISSION_STATES,
                      normalizeSourceStatus: normalizeSourceStatus,
@@ -246,5 +253,6 @@ if (typeof module !== 'undefined' && module.exports) {
                      missionCardHTML: missionCardHTML,
                      escM: escM,
                      safeUrlM: safeUrlM,
-                     compareLinkAllowed: compareLinkAllowed };
+                     compareLinkAllowed: compareLinkAllowed,
+                     shouldShowSidecarHint: shouldShowSidecarHint };
 }

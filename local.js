@@ -910,6 +910,22 @@ function mountPanelSafely() {
   }
 }
 
+const HINT_DISMISS_KEY = 'prq_sidecar_hint_dismissed';
+
+function showSidecarHint() {
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(HINT_DISMISS_KEY) === '1'; } catch { /* modo privado */ }
+  if (!shouldShowSidecarHint({ fetchFailed: true, dismissed })) return;
+  const el = document.getElementById('sidecar-hint');
+  if (!el) return;
+  el.classList.remove('hidden');
+  const btn = document.getElementById('sidecar-hint-dismiss');
+  if (btn) btn.addEventListener('click', () => {
+    el.classList.add('hidden');
+    try { localStorage.setItem(HINT_DISMISS_KEY, '1'); } catch { /* quota */ }
+  });
+}
+
 async function initLocalPanel() {
   let painted = false;
   try {
@@ -927,6 +943,7 @@ async function initLocalPanel() {
     // The fetch failed, so window.LOCAL_STATE (if anything) is still the
     // stale cached payload — payloadFromCache stays true, on purpose.
     if (painted) unmountPanel();
+    showSidecarHint();
     return;
   }
 
