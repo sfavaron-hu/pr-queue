@@ -1277,7 +1277,9 @@ Expected: `ok` con las 5 fuentes y su estado real; `broken` con el binario inexi
 
 - [ ] **Step 3: Verificar en el browser con captura**
 
-Abrir `http://localhost:7778` con el PAT pegado (es otro origin que `:7777`, así que hay que repegarlo — está documentado en el README) y capturar: (a) una card de proceso con pregunta y lease cosidos, (b) la card de una fuente no-`ok` con su `install`, (c) una card por cola de tickets, (d) el chip `mc` apagando todo. Usar la skill `chrome-browser-control-macos` (CDP), no el MCP.
+Abrir `http://localhost:7778` por CDP (skill `chrome-browser-control-macos`, **no** el MCP de Playwright) y capturar: (a) una card de proceso con pregunta y lease cosidos, (b) la card de una fuente no-`ok` con su `install`, (c) una card por cola de tickets, (d) el chip `mc` apagando todo.
+
+**Sin PAT y sin pedírselo a nadie.** `:7778` es otro origin que `:7777`, así que no hereda el token — y no hace falta: las cards de mission no dependen de GitHub. La mitad de PRs va a quedar en `cargando PRs…` y eso es el estado correcto, no un fallo (ver `prDataState()`, `local.js:407`). Si hace falta ver un proceso con badges de PR, se inyecta un `LOCAL_STATE` sintético por CDP, nunca el token real del dueño.
 
 - [ ] **Step 4: Verificar el hint sin sidecar**
 
