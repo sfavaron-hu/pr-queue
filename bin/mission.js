@@ -108,25 +108,50 @@ function makeMissionReader(opts) {
       .finally(() => { backgroundInFlight = false; });
   }
 
+  // ageMs is a VIEW over generatedAt, computed fresh every time a payload is
+  // handed to a caller — never stored state. Storing it once (as this used
+  // to) was harmless before shouldReplaceCache existed, because every build
+  // outcome overwrote `cached` and the skew was bounded by ttlMs. Now that a
+  // broken build can retain the SAME cached object across an entire outage,
+  // a stored ageMs would freeze at the age the good snapshot had when it was
+  // built and stay there for as long as the outage lasts — understating the
+  // true age on every fast-path poll, which is the exact lie this feature
+  // exists to prevent. generatedAt stays the single source of truth.
+  function deriveAgeMs(generatedAt) {
+    return generatedAt ? Math.max(0, now() - Date.parse(generatedAt)) : null;
+  }
+
+  // Returns a fresh object, never the shared `cached`/`inFlight` reference —
+  // a prior review already flagged maybeKickRefresh writing `refreshing`
+  // straight onto the cached payload; serving a shallow copy per call with
+  // its own ageMs and refreshing flag fixes both the frozen-age bug and the
+  // shared-mutation bug at once.
+  function serve(stored) {
+    return Object.assign({}, stored, { ageMs: deriveAgeMs(stored.generatedAt), refreshing: false });
+  }
+
   // Deliberately NOT registered on inFlight/inFlightFresh: a foreground
   // `fresh` request must never be absorbed into this detached pass (which can
   // run up to freshTimeoutMs) — it always gets its own build, capped at the
   // ordinary EXEC_TIMEOUT_MS, per the single-flight contract above `read`.
-  function maybeKickRefresh(payload) {
-    if (!payload) return payload;
+  function maybeKickRefresh(stored) {
+    if (!stored) return stored;
+    const served = serve(stored);
     // A blind read — broken, timed out, or otherwise snapshot-less — has no
     // numeric ageMs to compare against staleAfterMs. That is exactly the read
     // this task exists for: the one that hit mc's 133s cold path and got
     // killed at the endpoint's 20s cap. Treating "can't tell how old" as
     // "definitely over threshold" is what arms the one thing — kickRefresh's
     // freshTimeoutMs detached pass — that can actually recover it. A numeric
-    // ageMs keeps the original over-staleAfterMs check unchanged.
-    var overThreshold = typeof payload.ageMs !== 'number' || payload.ageMs > staleAfterMs;
+    // ageMs keeps the original over-staleAfterMs check unchanged, but now
+    // decided on the just-recomputed age, not a stored one — so a retained
+    // snapshot that keeps aging re-arms the refresh instead of going quiet.
+    var overThreshold = typeof served.ageMs !== 'number' || served.ageMs > staleAfterMs;
     if (overThreshold) {
       kickRefresh();
-      payload.refreshing = true;
+      served.refreshing = true;
     }
-    return payload;
+    return served;
   }
 
   function payloadFrom(read, bin, leaseRes) {
@@ -141,19 +166,19 @@ function makeMissionReader(opts) {
         leases.error = (leaseRes.stderr || '').split('\n')[0] || ('exit ' + leaseRes.code);
       }
     }
-    const generatedAt = snap ? snap.generatedAt : null;
+    // No ageMs/refreshing here on purpose: this object (and whatever ends up
+    // in `cached`) is the pure stored snapshot. Every caller-facing view of
+    // it goes through serve()/maybeKickRefresh(), which compute ageMs fresh.
     return {
       status: read.status,
       mcBin: bin,
-      generatedAt: generatedAt,
-      ageMs: generatedAt ? Math.max(0, now() - Date.parse(generatedAt)) : null,
+      generatedAt: snap ? snap.generatedAt : null,
       sources: snap ? snap.sources : [],
       ask: snap ? (snap.ask || []) : [],
       deferred: snap ? (snap.deferred || []).length || 0 : 0,
       take: snap ? (snap.take || {}) : {},
       leases: leases,
       error: read.error,
-      refreshing: false,
     };
   }
 
@@ -174,7 +199,7 @@ function makeMissionReader(opts) {
     // a plain read joins a fresh build, which is strictly better data.
     if (inFlight && (inFlightFresh || !fresh)) {
       const joined = await inFlight;
-      return fresh ? joined : maybeKickRefresh(joined);
+      return fresh ? serve(joined) : maybeKickRefresh(joined);
     }
     const p = build(fresh).then((out) => {
       if (shouldReplaceCache(out)) cached = out;
@@ -187,7 +212,7 @@ function makeMissionReader(opts) {
     // flight, the first to settle would otherwise unregister the second.
     p.finally(() => { if (inFlight === p) { inFlight = null; inFlightFresh = false; } });
     const out = await p;
-    return fresh ? out : maybeKickRefresh(out);
+    return fresh ? serve(out) : maybeKickRefresh(out);
   };
 }
 

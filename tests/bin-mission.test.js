@@ -233,10 +233,68 @@ test('un build roto no pisa un cached bueno anterior; el que lo pide ve la verda
   assert.equal(third.status, 'ok');       // pero la caché para lecturas futuras retuvo el último snapshot bueno
   assert.equal(third.sources.length, 1);
   assert.equal(third.generatedAt, '2026-08-12T17:00:00.000Z');
-  // ageMs se congela en payloadFrom cuando ESE build resolvió (fuera de
-  // alcance de esta tarea tocar esa derivación) — el snapshot retenido es
-  // literalmente el objeto de `first`, edad incluida, no uno recalculado.
-  assert.equal(third.ageMs, first.ageMs);
+  // Es el MISMO snapshot cacheado (misma identidad, mismo generatedAt) el que
+  // se sigue sirviendo — eso es lo que "retener el último bueno" quiere
+  // decir. Pero ageMs se deriva al servir, no se congela: como el reloj
+  // avanzó 60001ms entre `first` y acá (el TTL vencido de la lectura del
+  // medio), la edad reportada tiene que reflejarlo — lo contrario es la
+  // mentira exacta que este finding existe para prevenir.
+  assert.equal(third.generatedAt, first.generatedAt);
+  assert.equal(third.ageMs, first.ageMs + 60001);
+});
+
+test('un cached bueno servido más tarde reporta una edad mayor (ageMs se deriva al servir, no se congela)', async () => {
+  const exec = fakeExec(okHandler);
+  let clock = Date.parse('2026-08-12T17:03:00.000Z');
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' },
+    homeDir: '/h', now: () => clock, ttlMs: 300000 });
+  const first = await read({});
+  assert.equal(first.ageMs, 180000);
+  clock += 30000;                              // dentro del TTL: la próxima lectura pega el fast path
+  const second = await read({});
+  assert.equal(exec.calls.length, 2);           // ningún build nuevo — mismo snapshot cacheado
+  assert.equal(second.generatedAt, first.generatedAt);
+  assert.equal(second.ageMs, 210000);           // pero la edad reportada avanzó con el reloj
+});
+
+test('tras un build roto, el fast-path subsecuente reporta la edad real (no la congelada) y sigue pidiendo refresco', async () => {
+  const calls = [];
+  let statusCalls = 0;
+  const exec = async (argv) => {
+    calls.push(argv);
+    if (argv.indexOf('lease') !== -1) return { code: 0, stdout: LEASES, stderr: '', timedOut: false };
+    // El refresco de fondo se cuelga a propósito: lo que importa acá es lo
+    // que se sirve desde `cached` mientras tanto, no si el detached aterriza.
+    if (argv.indexOf('--fresh') !== -1) return new Promise(() => {});
+    statusCalls += 1;
+    if (statusCalls === 1) return okHandler(argv);                   // primer build (propio): bueno
+    return { code: null, stdout: '', stderr: '', timedOut: true };   // el segundo build (propio): timeout
+  };
+  let clock = Date.parse('2026-08-12T17:00:00.000Z');   // = generatedAt del SNAP: ageMs 0 al construirlo
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' },
+    homeDir: '/h', now: () => clock, ttlMs: 60000, staleAfterMs: 240000 });
+
+  const first = await read({});
+  assert.equal(first.status, 'ok');
+  assert.equal(first.refreshing, false);
+
+  clock += 300001;                        // TTL largamente vencido: build propio nuevo, que timeoutea
+  const second = await read({});
+  assert.equal(second.status, 'broken');  // a quien lo pidió, la verdad — no se le miente
+
+  clock += 10000;                         // dentro del TTL reseteado por el build roto: fast path
+  const third = await read({});
+  assert.equal(third.status, 'ok');                    // sirve el cached bueno retenido
+  assert.equal(third.generatedAt, first.generatedAt);  // el mismo snapshot de siempre — identidad retenida
+  assert.equal(third.ageMs, 310001);                   // la edad REAL, no la congelada en 0 del build original
+  assert.equal(third.refreshing, true);                // sigue pidiendo refresco: no se queda calladita
+
+  clock += 20000;                         // sigue dentro del TTL: otro fast-path
+  const fourth = await read({});
+  assert.equal(fourth.ageMs, 330001);      // la edad servida sigue creciendo con cada lectura
+  assert.equal(fourth.refreshing, true);   // y el refresco sigue armado, no se apaga solo
+
+  assert.equal(calls.filter(a => a.indexOf('--fresh') !== -1).length, 1); // tampoco apila refrescos de fondo
 });
 
 test('un fresh disparado con un build no-fresh en vuelo no se cuelga de él', async () => {
