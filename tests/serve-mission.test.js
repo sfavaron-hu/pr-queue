@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { createServer } = require('../serve.js');
+const { DEFAULT_TTL_MS } = require('../bin/mission.js');
 
 function listen(server) {
   return new Promise(res => server.listen(0, '127.0.0.1', () => res(server.address().port)));
@@ -26,6 +27,15 @@ test('?fresh=1 llega al lector como {fresh:true}', async () => {
     await fetch(`http://127.0.0.1:${port}/api/mission?fresh=1`);
     await fetch(`http://127.0.0.1:${port}/api/mission`);
     assert.deepEqual(seen.map(s => s.fresh), [true, false]);
+  } finally { await closeServer(server); }
+});
+
+test('/api/mission manda x-mission-ttl-ms para que local.js no hardcodee una segunda copia del TTL', async () => {
+  const server = createServer({ missionFn: async () => ({ status: 'ok', sources: [], ask: [] }) });
+  const port = await listen(server);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/mission`);
+    assert.equal(res.headers.get('x-mission-ttl-ms'), String(DEFAULT_TTL_MS));
   } finally { await closeServer(server); }
 });
 

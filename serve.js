@@ -1,4 +1,4 @@
-// Local sidecar: serves the static site plus GET /api/local.
+// Local sidecar: serves the static site plus GET /api/local and GET /api/mission.
 // Bound to 127.0.0.1 only — this exposes local filesystem state and must
 // never be reachable from the network.
 const http = require('node:http');
@@ -9,7 +9,7 @@ const { collect } = require('./collect.js');
 // bin/collect.js only runs main() when invoked directly, so requiring it here
 // is safe and avoids duplicating the real IO implementations.
 const { run, listDirs, listFiles, readTail } = require('./bin/collect.js');
-const { makeMissionReader } = require('./bin/mission.js');
+const { makeMissionReader, DEFAULT_TTL_MS } = require('./bin/mission.js');
 
 const ROOT = __dirname;
 const DEFAULT_PORT = 7777;
@@ -85,8 +85,14 @@ async function handle(req, res, collectFn, missionFn) {
                   leases: { active: [], expired: [], error: null },
                   error: { code: null, stderr: String(err && err.message || err), timedOut: false } };
     }
+    // The browser needs to know how often to poll without a second hardcoded
+    // copy of the TTL drifting out of sync with the reader's own value — a
+    // response header carries it without touching the JSON contract in the
+    // spec. `x-mission-ttl-ms` names the reader's sampling interval, not a
+    // caching directive (cache-control above already says never to cache).
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
-                         'cache-control': 'no-store' });
+                         'cache-control': 'no-store',
+                         'x-mission-ttl-ms': String(DEFAULT_TTL_MS) });
     return res.end(JSON.stringify(payload));
   }
 

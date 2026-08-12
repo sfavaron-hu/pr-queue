@@ -46,6 +46,33 @@ let mcFilter = null;
 // row.
 let prStatusFilter = PR_FILTER_ALL;
 
+// The mission poll's own timer handle and stop flag. Declared here (not
+// beside initMissionPanel() near the bottom of the file) because
+// unmountPanel() — defined and reachable well before initMissionPanel() is
+// even called — calls stopMissionPoll() synchronously on the very first,
+// pre-`await` line of initLocalPanel() when a corrupt/absent cache makes
+// mountPanelSafely() throw. A `let` declared after that call site would
+// still be in its TDZ at that point and throw a ReferenceError instead of
+// cleanly no-op'ing.
+let missionPollTimer = null;
+let missionPollStopped = false;
+
+// unmountPanel() calls this: once the panel is gone for this page load,
+// firing fetches on a timer forever serves nobody. Idempotent — safe to call
+// whether or not a poll is currently scheduled.
+function stopMissionPoll() {
+  missionPollStopped = true;
+  if (missionPollTimer !== null) { clearTimeout(missionPollTimer); missionPollTimer = null; }
+}
+
+// Fallback only: used if a fetch fails outright (no response at all, so no
+// header to read) or against an older sidecar build that doesn't send
+// x-mission-ttl-ms yet. Matches bin/mission.js's DEFAULT_TTL_MS today, but
+// this file has no way to import that Node-only module, so the real number
+// comes from the header on every successful response instead of living here
+// twice.
+const DEFAULT_MISSION_POLL_MS = 60000;
+
 const PR_MODES = ['con', 'sin'];
 const PR_STATUS_MODES = ['abierto', 'draft'];
 
@@ -874,10 +901,13 @@ function mountPanel() {
 function unmountPanel() {
   window.LOCAL_STATE = null;
   // Mirrors LOCAL_STATE: leaving mission-control's payload behind here would
-  // be silently invisible today (nothing remounts or polls), but the moment
-  // either does, a remount would repaint stitched detail from a fetch that
-  // predates the unmount instead of starting clean.
+  // let a later poll repaint stitched detail from a fetch that predates the
+  // unmount instead of starting clean.
   window.MISSION_STATE = null;
+  // A dead panel gets no ticking timer: the mission poll (below) keeps
+  // firing fetches on its own schedule otherwise, forever, for a column that
+  // is never going to repaint again this page load.
+  stopMissionPoll();
   procEl.workList().innerHTML = '';
   procEl.metaLine().textContent = '';
   procEl.metaLine().title = '';
@@ -962,18 +992,45 @@ async function initLocalPanel() {
 
 initLocalPanel();
 
+// One fetch-and-render pass. Returns the interval (ms) the next pass should
+// wait, taken from the sidecar's x-mission-ttl-ms header so this file never
+// hardcodes a second copy of bin/mission.js's TTL that could drift out of
+// sync with it.
+async function pollMissionOnce() {
+  try {
+    const res = await fetch('/api/mission', { cache: 'no-store' });
+    if (!res.ok) return DEFAULT_MISSION_POLL_MS;
+    const headerMs = Number(res.headers.get('x-mission-ttl-ms'));
+    const pollMs = Number.isFinite(headerMs) && headerMs > 0 ? headerMs : DEFAULT_MISSION_POLL_MS;
+    const payload = await res.json();
+    if (!payload || payload.status === 'off') return pollMs;
+    window.MISSION_STATE = payload;
+    if (window.LOCAL_STATE) mountPanelSafely();
+    return pollMs;
+  } catch {
+    // sin sidecar no hay panel; el hint lo pone initLocalPanel. Retry at the
+    // default interval — if the sidecar comes back, the next pass picks up
+    // its real TTL from the header again.
+    return DEFAULT_MISSION_POLL_MS;
+  }
+}
+
 // Fetched separately from /api/local on purpose: mc's `work` source carries
 // 180s internal timeouts, so coupling both into one payload would leave the
 // whole panel blank whenever one source is slow.
+//
+// Polls on an interval instead of fetching once: a page left open against a
+// stale snapshot shows "refrescando en segundo plano; la próxima pasada
+// trae lo nuevo" on the mission card (missionCard() in mission.js) — a
+// promise that was false until this loop existed, because nothing ever
+// fetched that next pass. `missionPollStopped` (set by unmountPanel) is
+// re-checked after every await, so a poll already in flight when the panel
+// dies still finishes cleanly instead of scheduling one more.
 async function initMissionPanel() {
-  try {
-    const res = await fetch('/api/mission', { cache: 'no-store' });
-    if (!res.ok) return;
-    const payload = await res.json();
-    if (!payload || payload.status === 'off') return;
-    window.MISSION_STATE = payload;
-    if (window.LOCAL_STATE) mountPanelSafely();
-  } catch { /* sin sidecar no hay panel; el hint lo pone initLocalPanel */ }
+  if (missionPollStopped) return;
+  const pollMs = await pollMissionOnce();
+  if (missionPollStopped) return;
+  missionPollTimer = setTimeout(initMissionPanel, pollMs);
 }
 
 initMissionPanel();
