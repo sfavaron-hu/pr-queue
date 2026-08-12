@@ -337,6 +337,17 @@ test('un exec inyectado que rompe deja ver el error al caller y NO mata el proce
   }
 });
 
+test('deferred llega como el número real de mc, no siempre 0 (mc lo emite como conteo, no como array)', async () => {
+  const SNAP_WITH_DEFERRED = JSON.stringify({ at: 1, generatedAt: '2026-08-12T17:00:00.000Z',
+    sources: [{ name: 'work', status: 'ok', items: [] }], ask: [], deferred: 3, take: {} });
+  const exec = fakeExec((argv) => argv.indexOf('lease') !== -1
+    ? { code: 0, stdout: LEASES, stderr: '', timedOut: false }
+    : { code: 0, stdout: SNAP_WITH_DEFERRED, stderr: '', timedOut: false });
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' }, homeDir: '/h', now: () => 0 });
+  const p = await read({});
+  assert.equal(p.deferred, 3);
+});
+
 test('un generatedAt basura no congela el refresco de fondo (ageMs sale null, no NaN)', async () => {
   // Date.parse('basura') es NaN, y `now() - NaN` también es NaN.
   // `typeof NaN === 'number'` pasaría el guard de maybeKickRefresh, y

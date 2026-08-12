@@ -704,7 +704,13 @@ function renderLocalPanel() {
   // may not have arrived yet, or may be off entirely — both render the panel
   // exactly as it looked before Task 6 existed, never a blank list.
   const mission = window.MISSION_STATE || null;
-  const stitch = stitchMission(mission, sorted);
+  // Stitched against `visible`, not `sorted`: a question whose processKey
+  // belongs to a process the PR-chip filters (con PR / sin PR / abierto /
+  // draft) hid still gets matched-off by stitchMission over the wider set,
+  // but its process card is never painted — the question would exist
+  // nowhere on screen. stitch.perKey is only read per RENDERED row below, so
+  // narrowing the input set to what's actually visible changes nothing else.
+  const stitch = stitchMission(mission, visible);
   const mcCards = mission ? missionCards(Object.assign({}, mission, { matchedAskIds: stitch.matchedAskIds })) : [];
   const mcHidden = mcFilter === 'off';
   const topCards = mcHidden ? '' : mcCards.filter(c => c.slot === 'top').map(missionCardHTML).join('');

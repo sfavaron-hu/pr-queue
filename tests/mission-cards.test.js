@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { missionCards, missionCardHTML } = require('../mission.js');
+const { missionCards, missionCardHTML, safeUrlM } = require('../mission.js');
+const { safeHttpUrl } = require('../classify.js');
 
 const base = (over) => Object.assign({
   status: 'ok', mcBin: '/x/mc', generatedAt: '2026-08-12T17:00:00.000Z', ageMs: 180000,
@@ -72,6 +73,24 @@ test('mission ámbar cuando el read entero está degraded, sin asegurar ceguera'
   assert.doesNotMatch(cards[0].lines.join(' '), /no pude leer mc/);
 });
 
+test('degraded también dice cuántas fuentes miraron, no sólo que vino corta', () => {
+  const cards = missionCards(base({ status: 'degraded', error: null,
+    sources: [src('work', 'ok'), src('prs', 'broken')] }));
+  assert.match(cards[0].lines.join(' '), /1\/2 fuentes/);
+});
+
+test('broken también dice cuántas fuentes miraron (0\\/0 si no hay snapshot que contar)', () => {
+  const cards = missionCards(base({ status: 'broken', error: { code: 1, stderr: 'boom', timedOut: false } }));
+  assert.match(cards[0].lines.join(' '), /0\/0 fuentes/);
+});
+
+test('deferred > 0 se dice en la card mission; deferred 0 no agrega nada', () => {
+  const withDeferred = missionCards(base({ deferred: 3 }));
+  assert.match(withDeferred[0].lines.join(' '), /3 esperan al próximo pase/);
+  const withoutDeferred = missionCards(base({ deferred: 0 }));
+  assert.doesNotMatch(withoutDeferred[0].lines.join(' '), /esperan al próximo pase/);
+});
+
 test('matchedAskIds filtra preguntas ya stitched en process cards', () => {
   const ask1 = { id: 'prs:matched', source: 'prs', priority: 10, item: { type: 'question', question: 'Matched?', header: 'PR', options: [], processKey: null } };
   const ask2 = { id: 'prs:unmatched', source: 'prs', priority: 20, item: { type: 'question', question: 'Unmatched?', header: 'PR', options: [], processKey: null } };
@@ -104,11 +123,49 @@ test('58 tickets producen una card por cola, no 58', () => {
   assert.equal(cards[0].slot, 'bottom');
 });
 
+test('un ticket cuya cola no está en la config no se pierde: cae en "otras colas"', () => {
+  const rows = [
+    { key: 'SQSH-1', summary: 's1', status: 'To Do', url: 'https://x/SQSH-1', queue: 'shark-frontend' },
+    { key: 'SQSH-2', summary: 's2', status: 'To Do', url: 'https://x/SQSH-2', queue: 'cola-no-configurada' },
+  ];
+  const cards = byKind(missionCards(base({ sources: [src('tickets', 'ok', {
+    queues: [{ name: 'shark-frontend', label: 'Shark frontend sin dueño' }], rows: rows })] })), 'ticket');
+  assert.equal(cards.length, 2);
+  const configured = cards.find(c => c.title === 'Shark frontend sin dueño');
+  const leftover = cards.find(c => c.title === 'otras colas');
+  assert.equal(configured.badge, '1');
+  assert.ok(leftover, 'ningún card para la cola no configurada');
+  assert.equal(leftover.badge, '1');
+  assert.match(leftover.lines.join(' '), /SQSH-2/);
+});
+
 test('el inbox es una card agregada, no una por nota', () => {
   const cards = byKind(missionCards(base({ sources: [src('heartbeat', 'ok', {
     inbox: [{ source: 'work' }, { source: 'work' }, { source: 'prs' }], attention: [] })] })), 'inbox');
   assert.equal(cards.length, 1);
   assert.match(cards[0].badge, /3/);
+});
+
+test('fricción abierta produce una card con las observaciones', () => {
+  const cards = byKind(missionCards(base({ sources: [src('friction', 'ok', {
+    open: [{ note: 'el worktree quedó sin node_modules' }, { evidence: 'tsc tira 10k errores fantasma' }] })] })), 'friction');
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].badge, '2');
+  assert.equal(cards[0].slot, 'bottom');
+  assert.match(cards[0].lines.join(' | '), /node_modules/);
+  assert.match(cards[0].lines.join(' | '), /10k errores fantasma/);
+});
+
+test('tickets tomados produce una card "take" con el estado y el vencimiento', () => {
+  const cards = byKind(missionCards(base({ take: { rows: [
+    { key: 'SQSH-100', state: 'in-progress', until: '2026-08-13T00:00:00.000Z' },
+    { key: 'SQSH-101', state: 'snoozed' },
+  ] } })), 'take');
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].badge, '2');
+  assert.equal(cards[0].slot, 'bottom');
+  assert.match(cards[0].lines.join(' | '), /SQSH-100 · in-progress hasta 2026-08-13/);
+  assert.match(cards[0].lines.join(' | '), /SQSH-101 · snoozed/);
 });
 
 test('el HTML de una card escapa todo lo que viene del payload', () => {
@@ -120,6 +177,38 @@ test('el HTML de una card escapa todo lo que viene del payload', () => {
   assert.equal(html.indexOf('javascript:'), -1);
   assert.match(html, /proc-card/);
   assert.match(html, /badge-red/);
+});
+
+// Under `node --test` there is no global `safeHttpUrl` (it's a browser
+// global set by classify.js's <script> tag), so the earlier escaping test
+// only ever exercised safeUrlM's bare-regex fallback — never the checker
+// branch the real browser actually runs. A STUB that disagrees with the
+// regex in both directions proves the checker branch is actually taken, not
+// merely present and dead: if the fallback ran instead, both assertions
+// below would flip.
+test('safeUrlM usa el checker global cuando existe, no el fallback de regex', () => {
+  const prev = global.safeHttpUrl;
+  try {
+    global.safeHttpUrl = () => false;                    // checker dice que no
+    assert.equal(safeUrlM('https://real.com'), null);     // el regex fallback diría que sí
+    global.safeHttpUrl = () => true;                      // checker dice que sí
+    assert.equal(safeUrlM('javascript:alert(1)'), 'javascript:alert(1)'); // el fallback rechazaría esto
+  } finally {
+    if (prev === undefined) delete global.safeHttpUrl; else global.safeHttpUrl = prev;
+  }
+});
+
+// Con el checker REAL de classify.js (el que carga index.html), confirma que
+// el camino de producción rechaza lo mismo que el fallback rechazaba antes.
+test('safeUrlM con el safeHttpUrl real de classify.js rechaza javascript: y acepta https', () => {
+  const prev = global.safeHttpUrl;
+  try {
+    global.safeHttpUrl = safeHttpUrl;
+    assert.equal(safeUrlM('javascript:alert(1)'), null);
+    assert.equal(safeUrlM('https://x/y'), 'https://x/y');
+  } finally {
+    if (prev === undefined) delete global.safeHttpUrl; else global.safeHttpUrl = prev;
+  }
 });
 
 test('un link http sí se pinta como anchor', () => {

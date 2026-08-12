@@ -53,6 +53,7 @@ function missionCard(payload, sources) {
     lines.push(e.timedOut ? 'mc no respondió en el tiempo del panel'
                           : ('no pude leer mc' + (e.stderr ? ': ' + e.stderr : '')));
     lines.push('lo que ves abajo es de la última lectura buena, si hubo alguna');
+    lines.push(looked.length + '/' + sources.length + ' fuentes miraron');
   } else if (payload.status === 'degraded') {
     // mc exited 4: it DID look, and the snapshot parsed fine — the pass just
     // came up short. Claiming "no pude leer mc" here asserts blindness about
@@ -61,9 +62,16 @@ function missionCard(payload, sources) {
     tone = 'amber';
     lines.push('mc miró, pero la pasada vino corta');
     lines.push('los conteos están incompletos; el snapshot es de recién, no viejo');
+    lines.push(looked.length + '/' + sources.length + ' fuentes miraron');
   } else {
     lines.push(looked.length + '/' + sources.length + ' fuentes miraron');
   }
+  // mc's own budget caps ask[] at 4 total / 3 per source (mission-control/
+  // src/budget.js) and comes back next pass in the same order — never
+  // dropped. `deferred` was computed and never read anywhere in the UI;
+  // the panel's whole point is not hiding what mc saw, so a nonzero count
+  // gets a line, in the same words mc's own brief uses for it.
+  if (payload.deferred > 0) lines.push(payload.deferred + ' esperan al próximo pase');
   // A lease that cannot be read is the exact condition under which the drain
   // walks over a working agent, so it can never be a silent omission.
   if (payload.leases && payload.leases.error) {
@@ -116,7 +124,8 @@ function missionCards(payload) {
 
   sources.forEach(function (s) {
     if (s.name === 'tickets' && Array.isArray(s.rows)) {
-      var queues = s.queues && s.queues.length ? s.queues : [{ name: null, label: 'tickets' }];
+      var hasQueues = !!(s.queues && s.queues.length);
+      var queues = hasQueues ? s.queues : [{ name: null, label: 'tickets' }];
       queues.forEach(function (q) {
         var rows = s.rows.filter(function (r) { return q.name === null || r.queue === q.name; });
         if (!rows.length) return;
@@ -125,6 +134,20 @@ function missionCards(payload) {
                      lines: rows.map(function (r) { return r.key + ' · ' + (r.status || '') + ' · ' + (r.summary || ''); }),
                      links: rows.filter(function (r) { return r.url; }).map(function (r) { return { label: r.key, url: r.url }; }) });
       });
+      // A row whose queue matches none of the configured queues is otherwise
+      // dropped with no card and no count — indistinguishable on screen from
+      // a queue that simply has zero tickets. Only fires when queues are
+      // actually configured: the catch-all `[{name:null}]` above already
+      // covers every row when they aren't.
+      if (hasQueues) {
+        var leftover = s.rows.filter(function (r) { return !queues.some(function (q) { return r.queue === q.name; }); });
+        if (leftover.length) {
+          cards.push({ kind: 'ticket', id: 'tickets:otras', tone: 'plain', title: 'otras colas',
+                       badge: String(leftover.length), slot: 'bottom',
+                       lines: leftover.map(function (r) { return r.key + ' · ' + (r.status || '') + ' · ' + (r.summary || ''); }),
+                       links: leftover.filter(function (r) { return r.url; }).map(function (r) { return { label: r.key, url: r.url }; }) });
+        }
+      }
     }
     if (s.name === 'heartbeat') {
       var notes = (s.inbox || []).concat(s.attention || []);
@@ -154,7 +177,7 @@ function missionCards(payload) {
   return cards;
 }
 
-// Matches by path AND by branch, the same way mc does (src/lease.js:88):
+// Matches by path AND by branch, the same way mc does (mission-control/src/lease.js:88):
 // the drain's own questions carry no path field, so a branch-only match is
 // the only thing that connects a lease to half of them.
 function leaseForRow(active, row) {

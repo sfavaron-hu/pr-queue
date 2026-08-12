@@ -184,7 +184,16 @@ function makeMissionReader(opts) {
       generatedAt: snap ? snap.generatedAt : null,
       sources: snap ? snap.sources : [],
       ask: snap ? (snap.ask || []) : [],
-      deferred: snap ? (snap.deferred || []).length || 0 : 0,
+      // mc's real budget() (mission-control/src/budget.js:29) emits `deferred`
+      // as a plain count (open.length - picked.length), never an array — the
+      // `(snap.deferred || []).length` this replaced always read `undefined`
+      // off that number and fell back to 0, so the count silently never left
+      // this file no matter how many questions actually waited. Read the
+      // number directly; keep the array branch only for a disk cache written
+      // by a hypothetical older/other shape, the same defensive posture as
+      // normalizeSourceStatus's no-check handling in mission.js.
+      deferred: snap ? (typeof snap.deferred === 'number' ? snap.deferred
+                        : Array.isArray(snap.deferred) ? snap.deferred.length : 0) : 0,
       take: snap ? (snap.take || {}) : {},
       leases: leases,
       error: read.error,
