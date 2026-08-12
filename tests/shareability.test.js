@@ -10,7 +10,8 @@ const CODE = ['classify.js', 'collect.js', 'collect-parse.js', 'collect-paths.js
               'assist/gate.js', 'assist/bin/gate.js',
               'assist/queue.js', 'assist/bin/queue.js',
               'assist/executor.js', 'assist/bin/run.js',
-              'scripts/install-skill.sh', 'scripts/install-heartbeat-check.sh'];
+              'scripts/install-skill.sh', 'scripts/install-heartbeat-check.sh',
+              'mission.js', 'bin/mission.js'];
 
 test('no committed code contains a hardcoded home directory', () => {
   for (const f of CODE) {
