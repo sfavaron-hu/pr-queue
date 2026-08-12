@@ -361,11 +361,19 @@ function paintChipRow(row, selector, dataKey, selected, counts, disabled) {
 // filter — its counts are over the con-PR rows alone, since that's the set it
 // narrows — and is hidden (not merely emptied) otherwise, so it can never
 // suggest a choice that wouldn't apply to anything.
-function renderFilterChips(counts, statusCounts, disabled) {
+//
+// The `mc` chip is furniture for a source that doesn't exist yet for a
+// teammate who never installed mission-control: gate it on `mcAvailable`
+// (not on `disabled`, which is about GitHub PR data) so the row stays
+// pixel-identical to pre-Task-6 for that teammate instead of shipping a
+// clickable chip with nothing behind it.
+function renderFilterChips(counts, statusCounts, disabled, mcAvailable) {
   const row = procEl.filterRow();
   if (!row) return;
   row.classList.remove('hidden');
   paintChipRow(row, '.proc-chip[data-pr-filter]', 'prFilter', prFilter, counts, disabled);
+  const mcChip = row.querySelector('.proc-chip[data-mc-filter]');
+  if (mcChip) mcChip.classList.toggle('hidden', !mcAvailable);
 
   const statusRow = procEl.statusRow();
   if (!statusRow) return;
@@ -384,6 +392,10 @@ function renderFilterChips(counts, statusCounts, disabled) {
 function resetChipRow(row) {
   row.querySelectorAll('.proc-chip').forEach(chip => {
     chip.classList.remove('selected');
+    // No chip ships hidden in index.html — only the mc chip is ever hidden
+    // individually (see renderFilterChips), so clearing it here is safe for
+    // every other chip and undoes that one on unmount/reset.
+    chip.classList.remove('hidden');
     chip.disabled = false;
     chip.title = '';
     const countEl = chip.querySelector('.proc-chip-count');
@@ -716,7 +728,10 @@ function renderLocalPanel() {
       (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
 
   procEl.workList().innerHTML = listHTML;
-  renderFilterChips(filterCounts, statusCounts, prPending);
+  // Checked directly against status rather than trusting `mission` to always
+  // exclude 'off' (which initMissionPanel happens to guarantee today) — the
+  // chip's visibility rule shouldn't silently depend on that staying true.
+  renderFilterChips(filterCounts, statusCounts, prPending, !!(mission && mission.status !== 'off'));
   procEl.metaLine().textContent = metaText;
   procEl.metaLine().classList.remove('hidden');
   // Hovering surfaces the actual warning messages — otherwise "· N warnings"
@@ -824,6 +839,11 @@ function mountPanel() {
 // #work-list, PR list visible, 2fr/1fr grid.
 function unmountPanel() {
   window.LOCAL_STATE = null;
+  // Mirrors LOCAL_STATE: leaving mission-control's payload behind here would
+  // be silently invisible today (nothing remounts or polls), but the moment
+  // either does, a remount would repaint stitched detail from a fetch that
+  // predates the unmount instead of starting clean.
+  window.MISSION_STATE = null;
   procEl.workList().innerHTML = '';
   procEl.metaLine().textContent = '';
   procEl.metaLine().title = '';
