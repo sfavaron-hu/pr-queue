@@ -10,10 +10,17 @@ const { classifyMissionRead } = require('../mission.js');
 
 const DEFAULT_TTL_MS = 60000;
 const EXEC_TIMEOUT_MS = 20000;
-// mc's own disk cache lasts 5 minutes and nothing else warms it (the
-// heartbeat's `work` check runs the drain, not `mc status`), so this mirrors
-// that TTL: past it, mc's cached answer is old enough to be worth replacing.
-const DEFAULT_STALE_AFTER_MS = 300000;
+// mc's own disk cache lasts 5 minutes (300000ms) and nothing else warms it
+// (the heartbeat's `work` check runs the drain, not `mc status`). Equalling
+// that 300000 exactly would mean the reader's own 60s sampling (DEFAULT_TTL_MS)
+// and mc's cache expiry cross the line in the SAME poll: the first read that
+// notices "stale" is the same one whose underlying mc cache has just gone
+// cold, so it is also the read that eats the 133s rebuild and dies at the
+// endpoint's 20s cap — exactly the failure this task exists to prevent.
+// 240000 leaves exactly one sampling interval of margin: a read observes the
+// staleness and arms the detached refresh (180s cap) BEFORE mc's own cache
+// expires underneath it, with nobody waiting on that refresh.
+const DEFAULT_STALE_AFTER_MS = 240000;
 // Only the detached background refresh gets this long: measured 133s for a
 // real cold `mc status --fresh` against gh + Jira, so 20s (EXEC_TIMEOUT_MS)
 // would almost always time it out. The foreground path never sees this value.
@@ -58,6 +65,19 @@ function makeMissionReader(opts) {
   let inFlight = null;
   let inFlightFresh = false;
 
+  // A broken build carries no data at all (sources: [], ask: [], ageMs:
+  // null) — letting it stomp a `cached` entry that DID hold a real snapshot
+  // would make the fast TTL path serve nothing where it used to serve
+  // something real, merely aging. Keep the last good snapshot until a build
+  // actually produces one; its ageMs keeps growing honestly in the meantime
+  // (computed straight off the unchanged generatedAt), and maybeKickRefresh
+  // already treats that growing age like any other stale read, so retries
+  // keep firing until one lands. Only accept a broken result into `cached`
+  // when there is nothing good there to lose.
+  function shouldReplaceCache(next) {
+    return !(next.status === 'broken' && cached && cached.status !== 'broken');
+  }
+
   async function build(fresh, statusTimeoutMs) {
     const { bin, configured } = resolveMcBin(env, homeDir);
     if (!exists(bin)) {
@@ -78,14 +98,14 @@ function makeMissionReader(opts) {
   // always serves what mc already has and, when that is stale, kicks a
   // detached refresh whose result the NEXT read serves. Serving something old
   // is honest as long as the card says how old — which is what ageMs is for.
-  let refreshing = false;
+  let backgroundInFlight = false;      // the detached-pass flag; NOT payload.refreshing (the card-facing field)
   function kickRefresh() {
-    if (refreshing) return;            // never stack background passes
-    refreshing = true;
+    if (backgroundInFlight) return;    // never stack background passes
+    backgroundInFlight = true;
     build(true, freshTimeoutMs)
-      .then((out) => { cached = out; cachedAt = now(); })
+      .then((out) => { if (shouldReplaceCache(out)) cached = out; cachedAt = now(); })
       .catch(() => { /* the next read reports it; a failed refresh is not fatal */ })
-      .finally(() => { refreshing = false; });
+      .finally(() => { backgroundInFlight = false; });
   }
 
   // Deliberately NOT registered on inFlight/inFlightFresh: a foreground
@@ -93,7 +113,16 @@ function makeMissionReader(opts) {
   // run up to freshTimeoutMs) — it always gets its own build, capped at the
   // ordinary EXEC_TIMEOUT_MS, per the single-flight contract above `read`.
   function maybeKickRefresh(payload) {
-    if (payload && typeof payload.ageMs === 'number' && payload.ageMs > staleAfterMs) {
+    if (!payload) return payload;
+    // A blind read — broken, timed out, or otherwise snapshot-less — has no
+    // numeric ageMs to compare against staleAfterMs. That is exactly the read
+    // this task exists for: the one that hit mc's 133s cold path and got
+    // killed at the endpoint's 20s cap. Treating "can't tell how old" as
+    // "definitely over threshold" is what arms the one thing — kickRefresh's
+    // freshTimeoutMs detached pass — that can actually recover it. A numeric
+    // ageMs keeps the original over-staleAfterMs check unchanged.
+    var overThreshold = typeof payload.ageMs !== 'number' || payload.ageMs > staleAfterMs;
+    if (overThreshold) {
       kickRefresh();
       payload.refreshing = true;
     }
@@ -147,7 +176,11 @@ function makeMissionReader(opts) {
       const joined = await inFlight;
       return fresh ? joined : maybeKickRefresh(joined);
     }
-    const p = build(fresh).then((out) => { cached = out; cachedAt = now(); return out; });
+    const p = build(fresh).then((out) => {
+      if (shouldReplaceCache(out)) cached = out;
+      cachedAt = now();       // reset the clock regardless, or every poll would retry synchronously
+      return out;
+    });
     inFlight = p;
     inFlightFresh = fresh;
     // Only the build that still owns the slot may clear it: with two builds in

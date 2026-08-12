@@ -1,7 +1,7 @@
 // tests/bin-mission.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { resolveMcBin, makeMissionReader } = require('../bin/mission.js');
+const { resolveMcBin, makeMissionReader, DEFAULT_STALE_AFTER_MS, DEFAULT_TTL_MS } = require('../bin/mission.js');
 
 const SNAP = JSON.stringify({ at: 1, generatedAt: '2026-08-12T17:00:00.000Z', sources: [{ name: 'work', status: 'ok', items: [] }], ask: [], deferred: [], take: {} });
 const LEASES = JSON.stringify({ active: [{ path: '/w/a', branch: null, forWhat: 'e2e', minutesLeft: 30 }], expired: [] });
@@ -15,6 +15,18 @@ function fakeExec(handler) {
 const okHandler = (argv) => argv.indexOf('lease') !== -1
   ? { code: 0, stdout: LEASES, stderr: '', timedOut: false }
   : { code: 10, stdout: SNAP, stderr: '', timedOut: false };
+
+test('staleAfterMs por defecto deja margen antes de que venza la caché de 5min de mc', () => {
+  // Si staleAfterMs igualara los 300000 de la caché de mc, la MISMA lectura
+  // que nota "viejo" (a los 240000..300000, en el peor caso justo al cruzar
+  // la línea) sería la que se come el rebuild de 133s de mc y muere en el
+  // cap de 20s del endpoint. El margen tiene que ser de al menos un ciclo de
+  // sampleo (DEFAULT_TTL_MS) para que un read arranque el refresco de fondo
+  // ANTES de que la caché de mc expire debajo.
+  assert.equal(DEFAULT_STALE_AFTER_MS, 240000);
+  assert.ok(DEFAULT_STALE_AFTER_MS + DEFAULT_TTL_MS <= 300000,
+    'staleAfterMs + ttlMs debe caber dentro de los 5min de la caché de mc');
+});
 
 test('el default de PRQ_MC_BIN se deriva de CLAUDE_CONFIG_DIR', () => {
   const r = resolveMcBin({ CLAUDE_CONFIG_DIR: '/cfg' }, '/home/x');
@@ -157,6 +169,74 @@ test('lo que trae el refresco de fondo es lo que sirve la lectura siguiente', as
   await new Promise(r => setImmediate(r));   // dejar aterrizar el refresco de fondo
   const second = await read({});             // dentro del TTL: sirve la caché ya actualizada
   assert.equal(second.generatedAt, '2026-08-12T18:00:00.000Z');
+});
+
+test('un status que timeoutea es broken con ageMs null y arma igual el refresco de fondo', async () => {
+  // El caso real del finding: `mc status` pega el cap de 20s del endpoint y
+  // vuelve killeado. classifyMissionRead no tiene snapshot que parsear ⇒
+  // ageMs sale null, no un número vencido — maybeKickRefresh no puede mirar
+  // "> staleAfterMs" sobre eso, tiene que tratar "no sé la edad" como vencido.
+  const exec = fakeExec((argv) => argv.indexOf('lease') !== -1
+    ? { code: 0, stdout: LEASES, stderr: '', timedOut: false }
+    : { code: null, stdout: '', stderr: '', timedOut: true });
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' }, homeDir: '/h', now: () => 0 });
+  const p = await read({});
+  assert.equal(p.status, 'broken');
+  assert.equal(p.ageMs, null);
+  assert.equal(p.refreshing, true);
+  await new Promise(r => setImmediate(r));   // dejar correr el detached
+  assert.equal(exec.calls.filter(a => a.indexOf('--fresh') !== -1).length, 1);
+});
+
+test('el refresco de fondo armado por un timeout sana la próxima lectura', async () => {
+  // Cierra el loop: no alcanza con que se arme el refresco (test anterior),
+  // tiene que aterrizar y la lectura siguiente tiene que servir lo sano.
+  const NEW_SNAP = JSON.stringify({ at: 2, generatedAt: '2026-08-12T18:00:00.000Z', sources: [{ name: 'work', status: 'ok', items: [] }], ask: [], deferred: [], take: {} });
+  const exec = async (argv) => {
+    if (argv.indexOf('lease') !== -1) return { code: 0, stdout: LEASES, stderr: '', timedOut: false };
+    if (argv.indexOf('--fresh') !== -1) return { code: 0, stdout: NEW_SNAP, stderr: '', timedOut: false };
+    return { code: null, stdout: '', stderr: '', timedOut: true };   // la lectura normal siempre timeoutea
+  };
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' }, homeDir: '/h', now: () => 0 });
+  const first = await read({});
+  assert.equal(first.status, 'broken');
+  await new Promise(r => setImmediate(r));   // dejar aterrizar el refresco de fondo
+  const second = await read({});             // dentro del TTL: sirve la caché ya sanada
+  assert.equal(second.status, 'ok');
+  assert.equal(second.generatedAt, '2026-08-12T18:00:00.000Z');
+});
+
+test('un build roto no pisa un cached bueno anterior; el que lo pide ve la verdad, la caché retiene lo bueno', async () => {
+  // Decisión explícita del finding: ¿un payload broken debe pisar un cached
+  // bueno anterior? No — serviría "nada" donde antes servía algo real, sólo
+  // envejeciendo. El caller que dispara el build roto sí ve la verdad (no se
+  // le miente), pero `cached` retiene el último snapshot bueno para que la
+  // próxima lectura rápida (TTL) siga sirviendo datos.
+  let statusCalls = 0;
+  const exec = async (argv) => {
+    if (argv.indexOf('lease') !== -1) return { code: 0, stdout: LEASES, stderr: '', timedOut: false };
+    statusCalls += 1;
+    if (statusCalls === 1) return okHandler(argv);                 // el primer status: bueno
+    return { code: null, stdout: '', stderr: '', timedOut: true };  // todos los siguientes: timeout
+  };
+  let clock = Date.parse('2026-08-12T17:00:00.000Z');   // = generatedAt de SNAP: ageMs 0 al leer
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' },
+    homeDir: '/h', now: () => clock, ttlMs: 60000 });
+  const first = await read({});
+  assert.equal(first.status, 'ok');
+
+  clock += 60001;                        // vence el TTL: la próxima lectura fuerza un build nuevo
+  const second = await read({});         // ese build nuevo timeoutea
+  assert.equal(second.status, 'broken');  // quien pidió ESTA lectura ve la verdad, no la caché vieja
+
+  const third = await read({});          // mismo clock, dentro del TTL reseteado por la lectura anterior
+  assert.equal(third.status, 'ok');       // pero la caché para lecturas futuras retuvo el último snapshot bueno
+  assert.equal(third.sources.length, 1);
+  assert.equal(third.generatedAt, '2026-08-12T17:00:00.000Z');
+  // ageMs se congela en payloadFrom cuando ESE build resolvió (fuera de
+  // alcance de esta tarea tocar esa derivación) — el snapshot retenido es
+  // literalmente el objeto de `first`, edad incluida, no uno recalculado.
+  assert.equal(third.ageMs, first.ageMs);
 });
 
 test('un fresh disparado con un build no-fresh en vuelo no se cuelga de él', async () => {
