@@ -46,6 +46,7 @@ function makeMissionReader(opts) {
   let cached = null;
   let cachedAt = -Infinity;
   let inFlight = null;
+  let inFlightFresh = false;
 
   async function build(fresh) {
     const { bin, configured } = resolveMcBin(env, homeDir);
@@ -94,11 +95,19 @@ function makeMissionReader(opts) {
     if (!fresh && cached && (now() - cachedAt) < ttlMs) return cached;
     // Single-flight: the panel polls, and two overlapping polls must never
     // become two `mc status` passes — each one costs gh round-trips.
-    if (inFlight) return inFlight;
-    inFlight = build(fresh)
-      .then((p) => { cached = p; cachedAt = now(); return p; })
-      .finally(() => { inFlight = null; });
-    return inFlight;
+    //
+    // But a `fresh` caller may only join a build that is ITSELF fresh. Riding
+    // along on a non-fresh build hands back the very answer they asked mc to
+    // re-derive, silently — the refresh button would lie. The reverse is fine:
+    // a plain read joins a fresh build, which is strictly better data.
+    if (inFlight && (inFlightFresh || !fresh)) return inFlight;
+    const p = build(fresh).then((out) => { cached = out; cachedAt = now(); return out; });
+    inFlight = p;
+    inFlightFresh = fresh;
+    // Only the build that still owns the slot may clear it: with two builds in
+    // flight, the first to settle would otherwise unregister the second.
+    p.finally(() => { if (inFlight === p) { inFlight = null; inFlightFresh = false; } });
+    return p;
   };
 }
 

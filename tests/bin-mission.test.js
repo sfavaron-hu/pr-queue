@@ -96,3 +96,23 @@ test('status ok con leases roto conserva el status y reporta el error de leases'
   assert.deepEqual(p.leases.active, []);
   assert.match(p.leases.error, /lease boom|exit 3/);
 });
+
+test('un fresh disparado con un build no-fresh en vuelo no se cuelga de él', async () => {
+  let release;
+  const gate = new Promise(res => { release = res; });
+  const calls = [];
+  const exec = async (argv) => {
+    calls.push(argv);
+    if (argv.indexOf('lease') === -1) await gate;
+    return argv.indexOf('lease') !== -1
+      ? { code: 0, stdout: LEASES, stderr: '', timedOut: false }
+      : { code: 0, stdout: SNAP, stderr: '', timedOut: false };
+  };
+  exec.calls = calls;
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' }, homeDir: '/h', now: () => 0 });
+  const slow = read({});
+  const forced = read({ fresh: true });
+  release();
+  await Promise.all([slow, forced]);
+  assert.ok(calls.some(a => a.indexOf('--fresh') !== -1), 'el fresh nunca llegó a mc');
+});
