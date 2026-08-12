@@ -1280,6 +1280,110 @@ sidecar: mission-control es personal y prometerlo sería mentir."
 
 ---
 
+### Task 10: el browser nunca paga el camino frío
+
+**Medido en la Task 9, contra el `mc` real de esta máquina:**
+
+| `mc status` | tiempo |
+|---|---|
+| con la caché de mc caliente | **0.06 s** |
+| en frío (caché vencida, gh + Jira) | **133 s** (2:13) |
+
+El cap de exec del endpoint es de 20 s, así que **toda** lectura con la caché vencida devuelve `broken`. Y la caché de mc dura 5 minutos, sin que nadie más la caliente — el check `work` del heartbeat corre el drenaje, no `mc status`. En la práctica el panel casi nunca vería un snapshot bueno. Verificado en vivo: `GET /api/mission` devolvió `status: broken` con `sources: []` mientras `mc lease` (que es un dir read) contestaba bien.
+
+Subir el cap a 180 s no alcanza: dejaría al panel dos minutos sin datos en cada arranque frío.
+
+**Stale-while-revalidate.** El foreground siempre sirve lo que mc ya tiene (0.06 s) con su edad a la vista, y si eso está vencido se dispara un `mc status --fresh` **detached** que no se espera. La próxima lectura sirve lo nuevo. Servir algo viejo no es mentir mientras la card diga de cuándo es — que es exactamente para lo que existe `ageMs`.
+
+**Files:**
+- Modify: `bin/mission.js` (`makeMissionReader`), `mission.js` (`missionCard`)
+- Test: `tests/bin-mission.test.js`, `tests/mission-cards.test.js`
+
+**Interfaces:**
+- Produces: el payload gana `refreshing: boolean`. `makeMissionReader` acepta `staleAfterMs` (default 300000, la TTL de la propia caché de mc) y `freshTimeoutMs` (default 180000, sólo para el build de fondo; el foreground se queda en 20 s).
+
+- [ ] **Step 1: Write the failing tests**
+
+```js
+// en tests/bin-mission.test.js
+test('un snapshot vencido se sirve igual y dispara UN refresco de fondo', async () => {
+  const exec = fakeExec(okHandler);          // SNAP con generatedAt viejo
+  let clock = Date.parse('2026-08-12T18:00:00.000Z');
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' },
+    homeDir: '/h', now: () => clock, staleAfterMs: 300000 });
+  const p = await read({});
+  assert.equal(p.status, 'ok');              // sirve lo viejo, no espera
+  assert.equal(p.refreshing, true);
+  await new Promise(r => setImmediate(r));   // dejar correr el detached
+  assert.equal(exec.calls.filter(a => a.indexOf('--fresh') !== -1).length, 1);
+});
+
+test('un snapshot reciente no dispara nada de fondo', async () => { /* ageMs < staleAfterMs ⇒ refreshing false, 0 --fresh */ });
+
+test('dos lecturas vencidas seguidas no apilan dos refrescos', async () => { /* 1 solo --fresh */ });
+
+test('lo que trae el refresco de fondo es lo que sirve la lectura siguiente', async () => { /* el 2do read ve el generatedAt nuevo */ });
+```
+
+```js
+// en tests/mission-cards.test.js
+test('refrescando se dice en la card, no se esconde', () => {
+  const cards = missionCards(base({ refreshing: true, ageMs: 900000 }));
+  assert.match(cards[0].lines.join(' '), /refrescando/);
+});
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `node --test tests/bin-mission.test.js tests/mission-cards.test.js`
+Expected: FAIL — `refreshing` no existe
+
+- [ ] **Step 3: Implement**
+
+En `makeMissionReader`, después de que un build no-fresh resuelve:
+
+```js
+  // The browser must never pay the cold path: 133s measured against the real
+  // mc, versus 0.06s when mc's own 5-minute cache is warm. So the foreground
+  // always serves what mc already has and, when that is stale, kicks a
+  // detached refresh whose result the NEXT read serves. Serving something old
+  // is honest as long as the card says how old — which is what ageMs is for.
+  let refreshing = false;
+  function kickRefresh() {
+    if (refreshing) return;            // never stack background passes
+    refreshing = true;
+    build(true, freshTimeoutMs)
+      .then((out) => { cached = out; cachedAt = now(); })
+      .catch(() => { /* the next read reports it; a failed refresh is not fatal */ })
+      .finally(() => { refreshing = false; });
+  }
+```
+
+y en `read`, antes de devolver un payload no-fresh cuyo `ageMs` supere `staleAfterMs`, llamar `kickRefresh()` y sellar `payload.refreshing = true`.
+
+En `missionCard` (`mission.js`), agregar la línea cuando `payload.refreshing`:
+
+```js
+  if (payload.refreshing) lines.push('refrescando en segundo plano; la próxima pasada trae lo nuevo');
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node --test`
+Expected: PASS, toda la suite
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add bin/mission.js mission.js tests/bin-mission.test.js tests/mission-cards.test.js
+git commit -m "feat(mission): stale-while-revalidate — el browser nunca paga el camino frío
+
+mc status en frío tarda 133s contra 0.06s en caliente, y el cap del endpoint
+es 20s: toda lectura con la caché vencida devolvía broken."
+```
+
+---
+
 ### Task 9: verificación en vivo y PR
 
 **Files:**
