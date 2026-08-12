@@ -151,9 +151,49 @@ function missionCards(payload) {
   return cards;
 }
 
+// Matches by path AND by branch, the same way mc does (src/lease.js:88):
+// the drain's own questions carry no path field, so a branch-only match is
+// the only thing that connects a lease to half of them.
+function leaseForRow(active, row) {
+  var wts = (row.proc && row.proc.worktrees) || [];
+  for (var i = 0; i < active.length; i++) {
+    var l = active[i];
+    for (var j = 0; j < wts.length; j++) {
+      if (l.path && wts[j].path && l.path === wts[j].path) return l;
+      if (l.branch && wts[j].branch && l.branch === wts[j].branch) return l;
+    }
+  }
+  return null;
+}
+
+function stitchMission(payload, rows) {
+  var out = { perKey: {}, matchedAskIds: [] };
+  if (!payload) return out;
+  var active = (payload.leases && payload.leases.active) || [];
+  var keys = {};
+  (rows || []).forEach(function (r) { if (r.proc && r.proc.key) keys[r.proc.key] = r; });
+
+  (payload.ask || []).forEach(function (entry) {
+    var pk = entry.item && entry.item.processKey;
+    if (!pk || !keys[pk]) return;
+    out.perKey[pk] = out.perKey[pk] || { questions: [], lease: null };
+    out.perKey[pk].questions.push(entry);
+    out.matchedAskIds.push(entry.id);
+  });
+
+  Object.keys(keys).forEach(function (k) {
+    var lease = leaseForRow(active, keys[k]);
+    if (!lease) return;
+    out.perKey[k] = out.perKey[k] || { questions: [], lease: null };
+    out.perKey[k].lease = lease;
+  });
+  return out;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { MISSION_STATES: MISSION_STATES,
                      normalizeSourceStatus: normalizeSourceStatus,
                      classifyMissionRead: classifyMissionRead,
-                     missionCards: missionCards };
+                     missionCards: missionCards,
+                     stitchMission: stitchMission };
 }
