@@ -302,12 +302,20 @@ function missionCard(payload, sources) {
   var looked = sources.filter(function (s) { return ['absent', 'broken'].indexOf(normalizeSourceStatus(s.status)) === -1; });
   var lines = [];
   var tone = 'plain';
-  if (payload.status === 'broken' || payload.status === 'degraded') {
-    tone = payload.status === 'broken' ? 'red' : 'amber';
+  if (payload.status === 'broken') {
+    tone = 'red';
     var e = payload.error || {};
     lines.push(e.timedOut ? 'mc no respondió en el tiempo del panel'
                           : ('no pude leer mc' + (e.stderr ? ': ' + e.stderr : '')));
     lines.push('lo que ves abajo es de la última lectura buena, si hubo alguna');
+  } else if (payload.status === 'degraded') {
+    // mc exited 4: it DID look, and the snapshot parsed fine — the pass just
+    // came up short. Claiming "no pude leer mc" here asserts blindness about
+    // a fresh, valid read, which is the same collapse the four states exist
+    // to prevent, only inverted.
+    tone = 'amber';
+    lines.push('mc miró, pero la pasada vino corta');
+    lines.push('los conteos están incompletos; el snapshot es de recién, no viejo');
   } else {
     lines.push(looked.length + '/' + sources.length + ' fuentes miraron');
   }
