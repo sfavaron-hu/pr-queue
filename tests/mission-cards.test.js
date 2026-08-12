@@ -81,6 +81,11 @@ test('matchedAskIds filtra preguntas ya stitched en process cards', () => {
   assert.equal(questions[0].id, 'q:prs:unmatched');
 });
 
+test('refrescando se dice en la card, no se esconde', () => {
+  const cards = missionCards(base({ refreshing: true, ageMs: 900000 }));
+  assert.match(cards[0].lines.join(' '), /refrescando/);
+});
+
 test('leases ilegibles ponen la card mission en ámbar y lo nombran', () => {
   const cards = missionCards(base({ leases: { active: [], expired: [], error: 'exit 3' } }));
   assert.equal(cards[0].tone, 'amber');

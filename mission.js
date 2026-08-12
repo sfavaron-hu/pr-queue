@@ -70,6 +70,9 @@ function missionCard(payload, sources) {
     if (tone === 'plain') tone = 'amber';
     lines.push('no pude leer los leases (' + payload.leases.error + '): una card puede ofrecer algo que un agente está usando');
   }
+  // Stale-while-revalidate serves what mc already had rather than blocking on
+  // a 133s cold pass — honest only as long as the card says so out loud.
+  if (payload.refreshing) lines.push('refrescando en segundo plano; la próxima pasada trae lo nuevo');
   return { kind: 'mission', id: 'mission', tone: tone, title: 'mission-control',
            badge: ageLabel(payload.ageMs), lines: lines, links: [], slot: 'top' };
 }

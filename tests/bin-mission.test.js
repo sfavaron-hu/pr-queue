@@ -97,6 +97,68 @@ test('status ok con leases roto conserva el status y reporta el error de leases'
   assert.match(p.leases.error, /lease boom|exit 3/);
 });
 
+test('un snapshot vencido se sirve igual y dispara UN refresco de fondo', async () => {
+  const exec = fakeExec(okHandler);          // SNAP con generatedAt viejo
+  let clock = Date.parse('2026-08-12T18:00:00.000Z');
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' },
+    homeDir: '/h', now: () => clock, staleAfterMs: 300000 });
+  const p = await read({});
+  assert.equal(p.status, 'ok');              // sirve lo viejo, no espera
+  assert.equal(p.refreshing, true);
+  await new Promise(r => setImmediate(r));   // dejar correr el detached
+  assert.equal(exec.calls.filter(a => a.indexOf('--fresh') !== -1).length, 1);
+});
+
+test('un snapshot reciente no dispara nada de fondo', async () => {
+  const exec = fakeExec(okHandler);
+  // SNAP.generatedAt es 17:00:00; a las 17:03:00 el ageMs (180000) queda bajo
+  // el staleAfterMs por defecto (300000) — nada que refrescar.
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' },
+    homeDir: '/h', now: () => Date.parse('2026-08-12T17:03:00.000Z') });
+  const p = await read({});
+  assert.equal(p.status, 'ok');
+  assert.equal(p.refreshing, false);
+  assert.equal(exec.calls.filter(a => a.indexOf('--fresh') !== -1).length, 0);
+});
+
+test('dos lecturas vencidas seguidas no apilan dos refrescos', async () => {
+  const calls = [];
+  // El status/lease normales resuelven siempre; el --fresh de fondo se queda
+  // colgado a propósito, así el flag `refreshing` no se libera durante el
+  // test y la segunda lectura llega mientras el primer refresco sigue en
+  // vuelo — sin esto, dos resoluciones rápidas por fakeExec podrían liberar
+  // el flag antes de la segunda lectura y esconder un stacking real.
+  const exec = async (argv) => {
+    calls.push(argv);
+    if (argv.indexOf('--fresh') !== -1) return new Promise(() => {});
+    return okHandler(argv);
+  };
+  let clock = Date.parse('2026-08-12T18:00:00.000Z');
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' },
+    homeDir: '/h', now: () => clock, staleAfterMs: 300000, ttlMs: 0 });
+  await read({});
+  await read({});
+  assert.equal(calls.filter(a => a.indexOf('--fresh') !== -1).length, 1);
+});
+
+test('lo que trae el refresco de fondo es lo que sirve la lectura siguiente', async () => {
+  const OLD_SNAP = JSON.stringify({ at: 1, generatedAt: '2026-08-12T10:00:00.000Z', sources: [{ name: 'work', status: 'ok', items: [] }], ask: [], deferred: [], take: {} });
+  const NEW_SNAP = JSON.stringify({ at: 2, generatedAt: '2026-08-12T18:00:00.000Z', sources: [{ name: 'work', status: 'ok', items: [] }], ask: [], deferred: [], take: {} });
+  const exec = async (argv) => {
+    if (argv.indexOf('lease') !== -1) return { code: 0, stdout: LEASES, stderr: '', timedOut: false };
+    if (argv.indexOf('--fresh') !== -1) return { code: 0, stdout: NEW_SNAP, stderr: '', timedOut: false };
+    return { code: 10, stdout: OLD_SNAP, stderr: '', timedOut: false };
+  };
+  const clock = Date.parse('2026-08-12T18:00:00.000Z');
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' },
+    homeDir: '/h', now: () => clock, staleAfterMs: 300000 });
+  const first = await read({});
+  assert.equal(first.generatedAt, '2026-08-12T10:00:00.000Z');
+  await new Promise(r => setImmediate(r));   // dejar aterrizar el refresco de fondo
+  const second = await read({});             // dentro del TTL: sirve la caché ya actualizada
+  assert.equal(second.generatedAt, '2026-08-12T18:00:00.000Z');
+});
+
 test('un fresh disparado con un build no-fresh en vuelo no se cuelga de él', async () => {
   let release;
   const gate = new Promise(res => { release = res; });
