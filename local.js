@@ -19,6 +19,15 @@ const PROC_CACHE_KEY = 'prq_proc_cache';
 // See prDataState() for the three-way state this feeds.
 let ownPRsFired = false;
 
+// True while the panel is painted from the localStorage cache, false once
+// the fresh /api/local payload has replaced it. A cached payload can predate
+// the drain pushing a branch, so diffLinksFor (below) treats an unconfirmed
+// onOrigin as "no link" only while this is true — see compareLinkAllowed in
+// mission.js for the rule itself. Set in initLocalPanel(); left untouched
+// (still true) if the fresh fetch fails, since window.LOCAL_STATE then stays
+// the stale cached payload.
+let payloadFromCache = false;
+
 // Which of the two chips is on: 'con', 'sin', or PR_FILTER_ALL (null) for
 // neither, which means todos. Module-level rather than read off the DOM
 // because renderLocalPanel() runs again every time GitHub answers — the
@@ -211,20 +220,35 @@ function prRepoSlugs(prs) {
 // onOrigin is unknown/absent) can still produce the link. `onOrigin === null`
 // (undetermined) and an absent field (older cached payload) both mean
 // "unknown", which must keep behaving exactly as before onOrigin existed —
-// only a confirmed `false` suppresses the link.
-function diffLinksFor(p, prs) {
+// only a confirmed `false` suppresses the link — but only while `fromCache`
+// is false: the panel paints from the localStorage cache before the fresh
+// payload lands, and a cached snapshot can predate the drain pushing the
+// branch. compareLinkAllowed (mission.js) is the actual rule; here we just
+// hand it the worktree and the cache flag.
+//
+// A worktree whose link is withheld only for that cache-uncertainty reason
+// (not a confirmed `onOrigin === false`, which already gets its push chip
+// from noOriginWorktrees in procCardHTML) is collected into `pushFallbacks`
+// so the caller can offer the push chip in the link's place — the panel is
+// read-only, but "push this yourself" is a truthful substitute for a link
+// GitHub can't resolve.
+function diffLinksFor(p, prs, fromCache) {
   const seen = new Set();
   const links = [];
+  const pushFallbacks = [];
   const prRepos = prRepoSlugs(prs);
   p.worktrees.forEach(w => {
     if (seen.has(w.repo) || w.detached || w.prunable) return;
-    if (w.onOrigin === false) return;
+    if (!compareLinkAllowed(w, fromCache)) {
+      if (w.onOrigin !== false && w.path && w.branch) pushFallbacks.push(w);
+      return;
+    }
     if (!w.githubRepo || !w.baseBranch || !w.branch) return;
     seen.add(w.repo);
     if (prRepos.has(w.githubRepo.toLowerCase())) return;
     links.push({ repo: w.repo, url: `https://github.com/${w.githubRepo}/compare/${w.baseBranch}...${w.branch}` });
   });
-  return links;
+  return { links, pushFallbacks };
 }
 
 // A click-to-copy chip, styled like the rest of the card's actionables
@@ -447,7 +471,8 @@ function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   // remote anyway. (diffLinksFor would already suppress the merged PR's own
   // repo via prRepoSlugs, but this also covers a multi-repo process where
   // another repo's worktree has no PR of its own.)
-  const diffs = s === 'mergeado' ? [] : diffLinksFor(p, prs);
+  const diffResult = s === 'mergeado' ? { links: [], pushFallbacks: [] } : diffLinksFor(p, prs, payloadFromCache);
+  const diffs = diffResult.links;
 
   // Title: PR title, else last commit subject, else the process key itself
   // so the card never has an empty title (see subtitleFor for why aiTitle is
@@ -542,14 +567,17 @@ function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   // their "Open →" since that column has no such title link. So: a diff
   // chip per repo still missing a PR, then a push chip per worktree confirmed
   // absent from origin (the actionable that pairs with the badge above —
-  // pushing is what would actually let a diff/PR happen), then a resume chip
-  // per session, then a cd/prune chip per worktree.
+  // pushing is what would actually let a diff/PR happen) or one whose diff
+  // link diffLinksFor withheld only because the cached payload couldn't
+  // confirm onOrigin, then a resume chip per session, then a cd/prune chip
+  // per worktree.
   const actions = [];
   diffs.forEach(d => {
     const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
     actions.push(safeLinkHTML(d.url, label, ' target="_blank" rel="noopener" class="btn btn-ghost btn-sm"'));
   });
   noOriginWorktrees.forEach(w => actions.push(pushChip(w, multiWorktree)));
+  diffResult.pushFallbacks.forEach(w => actions.push(pushChip(w, multiWorktree)));
   // The leftover-cleanup actionable for a mergeado card: a worktree still on
   // disk for a process whose PR(s) are all merged is exactly the combination
   // worth surfacing. Skipped for a prunable worktree — its directory is
@@ -886,7 +914,7 @@ async function initLocalPanel() {
   let painted = false;
   try {
     const cached = localStorage.getItem(PROC_CACHE_KEY);
-    if (cached) { window.LOCAL_STATE = JSON.parse(cached); painted = mountPanelSafely(); }
+    if (cached) { payloadFromCache = true; window.LOCAL_STATE = JSON.parse(cached); painted = mountPanelSafely(); }
   } catch { /* ignore a corrupt cache */ }
 
   let payload;
@@ -896,10 +924,13 @@ async function initLocalPanel() {
     payload = await res.json();
     if (!payload || !Array.isArray(payload.processes)) throw new Error('bad payload');
   } catch {
+    // The fetch failed, so window.LOCAL_STATE (if anything) is still the
+    // stale cached payload — payloadFromCache stays true, on purpose.
     if (painted) unmountPanel();
     return;
   }
 
+  payloadFromCache = false;
   window.LOCAL_STATE = payload;
   try { localStorage.setItem(PROC_CACHE_KEY, JSON.stringify(payload)); } catch { /* quota */ }
 

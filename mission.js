@@ -225,6 +225,18 @@ function missionCardHTML(card) {
        + '</div>';
 }
 
+// A cached payload can predate the drain pushing the branch, and then the
+// card offers a `compare/<base>...<branch>` that GitHub cannot resolve. The
+// old rule (unknown behaves as it did before onOrigin existed) is right for a
+// fresh payload and wrong for a cached one — measured with bp-prod-10230,
+// which by the time it was clicked was on origin with 34 commits.
+function compareLinkAllowed(worktree, fromCache) {
+  var w = worktree || {};
+  if (w.onOrigin === false) return false;
+  if (fromCache) return w.onOrigin === true;
+  return true;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { MISSION_STATES: MISSION_STATES,
                      normalizeSourceStatus: normalizeSourceStatus,
@@ -233,5 +245,6 @@ if (typeof module !== 'undefined' && module.exports) {
                      stitchMission: stitchMission,
                      missionCardHTML: missionCardHTML,
                      escM: escM,
-                     safeUrlM: safeUrlM };
+                     safeUrlM: safeUrlM,
+                     compareLinkAllowed: compareLinkAllowed };
 }
