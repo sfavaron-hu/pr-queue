@@ -146,10 +146,23 @@ if (typeof module !== 'undefined' && module.exports) {
 Run: `node --test tests/mission-status.test.js`
 Expected: PASS, 8 tests
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Poner los dos archivos nuevos bajo el test de shareability**
+
+`tests/shareability.test.js:7-13` escanea una **lista blanca hardcodeada** (`CODE`), no el árbol: sin esto, un `/Users/sebas` en los archivos nuevos pasaría el CI sin que nadie lo vea. El test saltea los paths inexistentes (`if (!fs.existsSync(full)) continue;`), así que los dos se agregan ahora aunque `bin/mission.js` recién se cree en la Task 4.
+
+En el array `CODE`, después de `'bin/collect.js'`:
+
+```js
+              'mission.js', 'bin/mission.js',
+```
+
+Run: `node --test tests/shareability.test.js`
+Expected: PASS
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add mission.js tests/mission-status.test.js
+git add mission.js tests/mission-status.test.js tests/shareability.test.js
 git commit -m "feat(mission): clasificar el read de mc en cuatro estados
 
 El exit code de mc es un contrato (10=preguntas, 4=degradado, 3=ciego), no
