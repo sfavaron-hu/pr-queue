@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { missionCards } = require('../mission.js');
+const { missionCards, missionCardHTML } = require('../mission.js');
 
 const base = (over) => Object.assign({
   status: 'ok', mcBin: '/x/mc', generatedAt: '2026-08-12T17:00:00.000Z', ageMs: 180000,
@@ -104,4 +104,21 @@ test('el inbox es una card agregada, no una por nota', () => {
     inbox: [{ source: 'work' }, { source: 'work' }, { source: 'prs' }], attention: [] })] })), 'inbox');
   assert.equal(cards.length, 1);
   assert.match(cards[0].badge, /3/);
+});
+
+test('el HTML de una card escapa todo lo que viene del payload', () => {
+  const html = missionCardHTML({ kind: 'source', id: 'source:x', tone: 'red',
+    title: '<img src=x onerror=alert(1)>', badge: 'broken',
+    lines: ['<script>bad</script>'], links: [{ label: 'a', url: 'javascript:alert(1)' }], slot: 'top' });
+  assert.equal(html.indexOf('<img'), -1);
+  assert.equal(html.indexOf('<script>bad'), -1);
+  assert.equal(html.indexOf('javascript:'), -1);
+  assert.match(html, /proc-card/);
+  assert.match(html, /badge-red/);
+});
+
+test('un link http sí se pinta como anchor', () => {
+  const html = missionCardHTML({ kind: 'ticket', id: 't', tone: 'plain', title: 'q', badge: '1',
+    lines: [], links: [{ label: 'SQSH-1', url: 'https://x/SQSH-1' }], slot: 'bottom' });
+  assert.match(html, /<a[^>]+href="https:\/\/x\/SQSH-1"/);
 });

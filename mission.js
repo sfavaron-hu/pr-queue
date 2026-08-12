@@ -190,10 +190,48 @@ function stitchMission(payload, rows) {
   return out;
 }
 
+var TONE_CLASS = { red: 'badge-red', amber: 'badge-amber', gray: 'badge-gray', plain: 'badge-gray badge-dim' };
+
+function escM(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Only http(s). Everything in a card comes from mc's output, which includes
+// Jira summaries and branch names — none of it is trusted markup.
+function safeUrlM(url) {
+  var checker = (typeof safeHttpUrl === 'function') ? safeHttpUrl : null;
+  if (checker) return checker(url) ? url : null;
+  return /^https?:\/\//i.test(String(url || '')) ? url : null;
+}
+
+function missionCardHTML(card) {
+  var badge = card.badge
+    ? '<span class="badge ' + (TONE_CLASS[card.tone] || 'badge-gray') + '">' + escM(card.badge) + '</span>'
+    : '';
+  var lines = (card.lines || []).map(function (l) {
+    return '<div class="proc-detail">' + escM(l) + '</div>';
+  }).join('');
+  var links = (card.links || []).map(function (l) {
+    var u = safeUrlM(l.url);
+    return u ? '<a class="btn btn-ghost btn-sm" href="' + escM(u) + '" target="_blank" rel="noopener noreferrer">' + escM(l.label) + '</a>'
+             : '<span class="btn btn-ghost btn-sm">' + escM(l.label) + '</span>';
+  }).join('');
+  return '<div class="proc-card pr-card mission-card" data-mc-kind="' + escM(card.kind) + '">'
+       + '<div class="pr-number">' + escM(card.title) + badge + '</div>'
+       + lines
+       + (links ? '<div class="pr-actions">' + links + '</div>' : '')
+       + '</div>';
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { MISSION_STATES: MISSION_STATES,
                      normalizeSourceStatus: normalizeSourceStatus,
                      classifyMissionRead: classifyMissionRead,
                      missionCards: missionCards,
-                     stitchMission: stitchMission };
+                     stitchMission: stitchMission,
+                     missionCardHTML: missionCardHTML,
+                     escM: escM,
+                     safeUrlM: safeUrlM };
 }

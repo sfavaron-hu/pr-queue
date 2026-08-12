@@ -26,6 +26,11 @@ let ownPRsFired = false;
 // and dropped whenever PR data is unavailable (see renderLocalPanel).
 let prFilter = PR_FILTER_ALL;
 
+// Hides every mission-control card when set to 'off'; null (default) shows
+// them. Module-level and reset by unmountPanel() for the same reason
+// prFilter is.
+let mcFilter = null;
+
 // The second row's selection: 'abierto', 'draft', or PR_FILTER_ALL. Only ever
 // meaningful while prFilter === 'con' — renderLocalPanel() clears it whenever
 // that stops being true, so it can never keep filtering from behind a hidden
@@ -420,7 +425,7 @@ function prDataState() {
 // index.html's CSS so they never touch render.js's cards: .proc-ai-title
 // (the subordinate aiTitle line), .proc-identity (the wrapping key+repo
 // block), and .proc-has-pr (the PR-backed left accent).
-function procCardHTML(row, now, workspaceRoot, prPending) {
+function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   const p = row.proc;
   const prs = row.prs;
   const s = classify(p, prs, now);
@@ -512,6 +517,13 @@ function procCardHTML(row, now, workspaceRoot, prPending) {
   if (dirty > 0) rightBadges.push(`<span class="badge badge-gray">${dirty} sin commitear</span>`);
   rightBadges.push(`<span class="badge badge-gray">${last ? timeAgo(new Date(last)) : '—'}</span>`);
 
+  // Stitched from mission-control: the question and the lease belong on the
+  // card of the work they describe, not in a separate list.
+  const stitchedHTML = !stitched ? '' :
+    (stitched.lease ? `<div class="proc-detail">🔒 lease: ${escS(stitched.lease.forWhat || 'tomado')} · vence en ${escS(stitched.lease.minutesLeft)}m</div>` : '')
+    + stitched.questions.map(q => `<div class="proc-detail">❓ ${escS(q.item.question)}</div>`
+        + (q.item.options || []).map(o => `<div class="proc-detail">· ${escS(o.label)} — ${escS(o.description || '')}</div>`).join('')).join('');
+
   // .pr-actions: every actionable link/chip. No "Open →" here — the title
   // already links to the PR (or the compare diff when there is no PR), and
   // that's what the owner actually clicks; render.js's own PR cards keep
@@ -589,6 +601,7 @@ function procCardHTML(row, now, workspaceRoot, prPending) {
     </div>
     <div class="pr-meta">
       <div>${identity.join(' ')}</div>
+      ${stitchedHTML}
       <div class="pr-actions">${actions.join('')}</div>
     </div>
   </div>`;
@@ -647,6 +660,16 @@ function renderLocalPanel() {
     draft:   withPR.filter(rowHasDraftPR).length,
   };
 
+  // mission-control's cards are fetched independently (initMissionPanel) and
+  // may not have arrived yet, or may be off entirely — both render the panel
+  // exactly as it looked before Task 6 existed, never a blank list.
+  const mission = window.MISSION_STATE || null;
+  const stitch = stitchMission(mission, sorted);
+  const mcCards = mission ? missionCards(Object.assign({}, mission, { matchedAskIds: stitch.matchedAskIds })) : [];
+  const mcHidden = mcFilter === 'off';
+  const topCards = mcHidden ? '' : mcCards.filter(c => c.slot === 'top').map(missionCardHTML).join('');
+  const bottomCards = mcHidden ? '' : mcCards.filter(c => c.slot === 'bottom').map(missionCardHTML).join('');
+
   // Build the entire list first. If anything here throws, nothing has been
   // mutated yet — #work-list stays exactly as it was (empty, or showing the
   // previous good paint) instead of a half-built list.
@@ -654,10 +677,12 @@ function renderLocalPanel() {
   // The loose-sessions row is only shown with the filter off: it isn't a
   // process and has no joined PR, so filing it under either chip would be a
   // claim the panel can't back.
-  const listHTML = (prShowNotice ? prNoticeHTML() : '')
+  const listHTML = topCards
+    + (prShowNotice ? prNoticeHTML() : '')
     + (filterActive && !visible.length ? filterEmptyHTML(filterLabel()) : '')
-    + visible.map(r => procCardHTML(r, now, payload.workspaceRoot, prPending)).join('')
-    + ((!filterActive && (payload.looseSessions || []).length) ? looseRowHTML(payload.looseSessions) : '');
+    + visible.map(r => procCardHTML(r, now, payload.workspaceRoot, prPending, stitch.perKey[r.proc.key] || null)).join('')
+    + ((!filterActive && (payload.looseSessions || []).length) ? looseRowHTML(payload.looseSessions) : '')
+    + bottomCards;
 
   const states = sorted.map(r => classify(r.proc, r.prs, now));
   const count = st => states.filter(x => x === st).length;
@@ -745,8 +770,14 @@ function installCopyDelegation() {
 // turns the previous one off.
 function installFilterDelegation() {
   procEl.filterRow().addEventListener('click', (e) => {
-    const chip = e.target.closest('.proc-chip[data-pr-filter], .proc-chip[data-pr-status]');
+    const chip = e.target.closest('.proc-chip[data-pr-filter], .proc-chip[data-pr-status], .proc-chip[data-mc-filter]');
     if (!chip || chip.disabled) return;
+    if (chip.dataset.mcFilter) {
+      mcFilter = mcFilter === 'off' ? null : 'off';
+      chip.classList.toggle('selected', mcFilter === 'off');
+      renderLocalPanel();
+      return;
+    }
     if (chip.dataset.prFilter) {
       prFilter = nextChipFilter(prFilter, chip.dataset.prFilter, PR_MODES);
     } else {
@@ -802,6 +833,7 @@ function unmountPanel() {
   // exactly as index.html ships them.
   prFilter = PR_FILTER_ALL;
   prStatusFilter = PR_FILTER_ALL;
+  mcFilter = null;
   const filterRow = procEl.filterRow();
   if (filterRow) {
     filterRow.classList.add('hidden');
@@ -855,3 +887,19 @@ async function initLocalPanel() {
 }
 
 initLocalPanel();
+
+// Fetched separately from /api/local on purpose: mc's `work` source carries
+// 180s internal timeouts, so coupling both into one payload would leave the
+// whole panel blank whenever one source is slow.
+async function initMissionPanel() {
+  try {
+    const res = await fetch('/api/mission', { cache: 'no-store' });
+    if (!res.ok) return;
+    const payload = await res.json();
+    if (!payload || payload.status === 'off') return;
+    window.MISSION_STATE = payload;
+    if (window.LOCAL_STATE) mountPanelSafely();
+  } catch { /* sin sidecar no hay panel; el hint lo pone initLocalPanel */ }
+}
+
+initMissionPanel();
