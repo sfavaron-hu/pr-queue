@@ -1,6 +1,10 @@
 // tests/bin-mission.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { resolveMcBin, makeMissionReader, DEFAULT_STALE_AFTER_MS, DEFAULT_TTL_MS } = require('../bin/mission.js');
 
 const SNAP = JSON.stringify({ at: 1, generatedAt: '2026-08-12T17:00:00.000Z', sources: [{ name: 'work', status: 'ok', items: [] }], ask: [], deferred: [], take: {} });
@@ -295,6 +299,62 @@ test('tras un build roto, el fast-path subsecuente reporta la edad real (no la c
   assert.equal(fourth.refreshing, true);   // y el refresco sigue armado, no se apaga solo
 
   assert.equal(calls.filter(a => a.indexOf('--fresh') !== -1).length, 1); // tampoco apila refrescos de fondo
+});
+
+// Regression for the orphan-`.finally()` finding: `p.finally(cb)` returns a
+// NEW promise that nothing stores or awaits. When the build it's chained off
+// rejects, that unreferenced promise rejects right along with it, unhandled
+// — and Node 22 kills the process for an unhandled rejection by default. A
+// same-process assertion can't tell "caught here" apart from "the whole
+// process is about to die"; it has to be an actual child process that proves
+// it's still alive (via a later `setTimeout`) after the rejection landed.
+test('un exec inyectado que rompe deja ver el error al caller y NO mata el proceso', () => {
+  const binPath = path.join(__dirname, '..', 'bin', 'mission.js');
+  const script = [
+    `const { makeMissionReader } = require(${JSON.stringify(binPath)});`,
+    `const exec = async (argv) => {`,
+    `  if (argv.indexOf('lease') !== -1) return { code: 0, stdout: '{"active":[],"expired":[]}', stderr: '', timedOut: false };`,
+    `  throw new Error('boom');`,
+    `};`,
+    `const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' }, homeDir: '/h', now: () => 0 });`,
+    `read({}).then(`,
+    `  () => { console.log('NO_ERROR'); process.exitCode = 1; },`,
+    `  (err) => { console.log('CAUGHT:' + err.message); }`,
+    `);`,
+    // If the orphaned `.finally()` promise's rejection is unhandled, Node
+    // tears the process down before this timer ever fires.
+    `setTimeout(() => { console.log('SURVIVED'); }, 200);`,
+  ].join('\n');
+  const tmp = path.join(os.tmpdir(), `prq-orphan-finally-${process.pid}-${Date.now()}.js`);
+  fs.writeFileSync(tmp, script);
+  try {
+    const res = spawnSync(process.execPath, [tmp], { encoding: 'utf8' });
+    assert.match(res.stdout, /CAUGHT:boom/, 'el caller nunca vio el error:\n' + res.stdout + res.stderr);
+    assert.match(res.stdout, /SURVIVED/, 'el proceso murió antes del timer:\n' + res.stdout + res.stderr);
+    assert.equal(res.status, 0, 'el proceso terminó con error (unhandledRejection):\n' + res.stderr);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
+});
+
+test('un generatedAt basura no congela el refresco de fondo (ageMs sale null, no NaN)', async () => {
+  // Date.parse('basura') es NaN, y `now() - NaN` también es NaN.
+  // `typeof NaN === 'number'` pasaría el guard de maybeKickRefresh, y
+  // `NaN > staleAfterMs` es siempre false — el refresco de fondo no se
+  // armaría NUNCA MÁS en la vida del proceso. Antes del fix este test fallaba
+  // con refreshing === false.
+  const GARBAGE_SNAP = JSON.stringify({ at: 1, generatedAt: 'no-soy-una-fecha',
+    sources: [{ name: 'work', status: 'ok', items: [] }], ask: [], deferred: [], take: {} });
+  const exec = fakeExec((argv) => argv.indexOf('lease') !== -1
+    ? { code: 0, stdout: LEASES, stderr: '', timedOut: false }
+    : { code: 0, stdout: GARBAGE_SNAP, stderr: '', timedOut: false });
+  const read = makeMissionReader({ exec, exists: () => true, env: { PRQ_MC_BIN: '/opt/mc' }, homeDir: '/h', now: () => 0 });
+  const p = await read({});
+  assert.equal(p.status, 'ok');
+  assert.equal(p.ageMs, null);
+  assert.equal(p.refreshing, true);       // ageMs no numérico ⇒ ceguera ⇒ se arma el refresco, como un timeout
+  await new Promise(r => setImmediate(r));
+  assert.equal(exec.calls.filter(a => a.indexOf('--fresh') !== -1).length, 1);
 });
 
 test('un fresh disparado con un build no-fresh en vuelo no se cuelga de él', async () => {

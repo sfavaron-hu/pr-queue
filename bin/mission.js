@@ -118,7 +118,16 @@ function makeMissionReader(opts) {
   // true age on every fast-path poll, which is the exact lie this feature
   // exists to prevent. generatedAt stays the single source of truth.
   function deriveAgeMs(generatedAt) {
-    return generatedAt ? Math.max(0, now() - Date.parse(generatedAt)) : null;
+    if (!generatedAt) return null;
+    var t = Date.parse(generatedAt);
+    // A truthy-but-unparseable generatedAt makes Date.parse return NaN, and
+    // `now() - NaN` is NaN too. `typeof NaN === 'number'` passes
+    // maybeKickRefresh's blind-read guard, and `NaN > staleAfterMs` is always
+    // false, so overThreshold would stay false forever — the background
+    // refresh never re-arms for the life of the process. Falling into the
+    // same `null` path as a missing generatedAt sends it through the
+    // blind-read branch that already re-arms, instead of a silent numeric lie.
+    return Number.isFinite(t) ? Math.max(0, now() - t) : null;
   }
 
   // Returns a fresh object, never the shared `cached`/`inFlight` reference —
@@ -201,16 +210,25 @@ function makeMissionReader(opts) {
       const joined = await inFlight;
       return fresh ? serve(joined) : maybeKickRefresh(joined);
     }
+    // The cleanup MUST live inside the chain that `p` itself is — not a
+    // sibling `.finally()` called on the side. `p.finally(cb)` returns a NEW
+    // promise that nothing here stores or awaits; when the build rejects,
+    // that orphaned promise rejects right along with it, unhandled, and Node
+    // 22 takes the whole process down (taking /api/local with it — see the
+    // comment above `handle()` in serve.js). Chaining `.finally()` onto `p`
+    // before assigning it keeps the cleanup on the SAME promise this
+    // function already awaits, so its rejection is handled the normal way.
     const p = build(fresh).then((out) => {
       if (shouldReplaceCache(out)) cached = out;
       cachedAt = now();       // reset the clock regardless, or every poll would retry synchronously
       return out;
-    });
+    // Only the build that still owns the slot may clear it: with two builds in
+    // flight, the first to settle would otherwise unregister the second. `p`
+    // is assigned by the time this callback can ever run, so the
+    // self-reference below is safe despite being inside `p`'s own definition.
+    }).finally(() => { if (inFlight === p) { inFlight = null; inFlightFresh = false; } });
     inFlight = p;
     inFlightFresh = fresh;
-    // Only the build that still owns the slot may clear it: with two builds in
-    // flight, the first to settle would otherwise unregister the second.
-    p.finally(() => { if (inFlight === p) { inFlight = null; inFlightFresh = false; } });
     const out = await p;
     return fresh ? serve(out) : maybeKickRefresh(out);
   };
