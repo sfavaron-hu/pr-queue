@@ -64,6 +64,23 @@ test('mission roja cuando el read entero está broken, con el error', () => {
   assert.match(cards[0].lines.join(' '), /boom/);
 });
 
+test('mission ámbar cuando el read entero está degraded, sin asegurar ceguera', () => {
+  const cards = missionCards(base({ status: 'degraded', error: null }));
+  assert.deepEqual(kinds(cards), ['mission']);
+  assert.equal(cards[0].tone, 'amber');
+  assert.match(cards[0].lines.join(' '), /mc miró/);
+  assert.doesNotMatch(cards[0].lines.join(' '), /no pude leer mc/);
+});
+
+test('matchedAskIds filtra preguntas ya stitched en process cards', () => {
+  const ask1 = { id: 'prs:matched', source: 'prs', priority: 10, item: { type: 'question', question: 'Matched?', header: 'PR', options: [], processKey: null } };
+  const ask2 = { id: 'prs:unmatched', source: 'prs', priority: 20, item: { type: 'question', question: 'Unmatched?', header: 'PR', options: [], processKey: null } };
+  const cards = missionCards(base({ ask: [ask1, ask2], matchedAskIds: ['prs:matched'] }));
+  const questions = byKind(cards, 'question');
+  assert.equal(questions.length, 1);
+  assert.equal(questions[0].id, 'q:prs:unmatched');
+});
+
 test('leases ilegibles ponen la card mission en ámbar y lo nombran', () => {
   const cards = missionCards(base({ leases: { active: [], expired: [], error: 'exit 3' } }));
   assert.equal(cards[0].tone, 'amber');
