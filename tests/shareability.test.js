@@ -4,14 +4,28 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
-const CODE = ['classify.js', 'collect.js', 'collect-parse.js', 'collect-paths.js',
-              'serve.js', 'local.js', 'bin/collect.js', 'scripts/install-launchd.sh',
-              'assist/prs.js', 'assist/ledger.js', 'assist/bin/ledger.js',
-              'assist/gate.js', 'assist/bin/gate.js',
-              'assist/queue.js', 'assist/bin/queue.js',
-              'assist/executor.js', 'assist/bin/run.js',
-              'scripts/install-skill.sh', 'scripts/install-heartbeat-check.sh',
-              'mission.js', 'bin/mission.js'];
+
+// A hand-maintained list drifts the moment someone adds a file and forgets to
+// list it — which is exactly what happened here (app.js, render.js, state.js,
+// github.js, score.js and assist/flags.js all shipped unscanned). Walking the
+// tree instead means the next new .js file is in scope by construction.
+// `tests/` is excluded on purpose: its fixtures legitimately contain
+// `/home/x`-shaped strings that would fail the very check this list feeds.
+function walkJsFiles(dir, rel) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    if (e.name === 'node_modules' || e.name === '.git' || e.name === 'tests') return [];
+    const relPath = rel ? rel + '/' + e.name : e.name;
+    if (e.isDirectory()) return walkJsFiles(path.join(dir, e.name), relPath);
+    return e.name.endsWith('.js') ? [relPath] : [];
+  });
+}
+
+// The installer shell scripts aren't `.js` and so fall outside the walk
+// above, but the hardcoded-home check below applies to them just as much —
+// listed explicitly since scripts/ only ever grows by an explicit new file.
+const SCRIPTS = ['scripts/install-launchd.sh', 'scripts/install-skill.sh', 'scripts/install-heartbeat-check.sh'];
+
+const CODE = walkJsFiles(ROOT, '').concat(SCRIPTS);
 
 test('no committed code contains a hardcoded home directory', () => {
   for (const f of CODE) {
