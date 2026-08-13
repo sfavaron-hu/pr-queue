@@ -904,10 +904,12 @@ function unmountPanel() {
   // let a later poll repaint stitched detail from a fetch that predates the
   // unmount instead of starting clean.
   window.MISSION_STATE = null;
-  // A dead panel gets no ticking timer: the mission poll (below) keeps
-  // firing fetches on its own schedule otherwise, forever, for a column that
-  // is never going to repaint again this page load.
-  stopMissionPoll();
+  // Deliberately NOT stopping the mission poll here. This function has two
+  // callers and only one of them is terminal: mountPanelSafely() unmounts on
+  // any mount throw — including one from a stale cached payload, moments
+  // before the fresh fetch mounts cleanly. Latching the poll off here meant a
+  // single recoverable failure silently cost the mission cards for the whole
+  // page load. The poll is stopped from the sidecar-gone path instead.
   procEl.workList().innerHTML = '';
   procEl.metaLine().textContent = '';
   procEl.metaLine().title = '';
@@ -979,6 +981,10 @@ async function initLocalPanel() {
     // The fetch failed, so window.LOCAL_STATE (if anything) is still the
     // stale cached payload — payloadFromCache stays true, on purpose.
     if (painted) unmountPanel();
+    // This is the terminal path: no sidecar, so nothing will repaint this
+    // column again this page load. It is the one place the mission poll
+    // should stop — a ticking fetch against a 404 helps nobody.
+    stopMissionPoll();
     showSidecarHint();
     return;
   }
@@ -1008,9 +1014,11 @@ async function pollMissionOnce() {
     if (window.LOCAL_STATE) mountPanelSafely();
     return pollMs;
   } catch {
-    // sin sidecar no hay panel; el hint lo pone initLocalPanel. Retry at the
-    // default interval — if the sidecar comes back, the next pass picks up
-    // its real TTL from the header again.
+    // A failed pass is not the end of the poll: retry at the default
+    // interval, and if the sidecar comes back the next pass reads its real
+    // TTL from the header again. The one case where no next pass happens is
+    // initLocalPanel's sidecar-gone path, which stops the poll outright —
+    // there the hint, not a retry, is the answer.
     return DEFAULT_MISSION_POLL_MS;
   }
 }
