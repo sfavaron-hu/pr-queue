@@ -1,4 +1,4 @@
-// Local sidecar: serves the static site plus GET /api/local.
+// Local sidecar: serves the static site plus GET /api/local and GET /api/mission.
 // Bound to 127.0.0.1 only — this exposes local filesystem state and must
 // never be reachable from the network.
 const http = require('node:http');
@@ -9,6 +9,7 @@ const { collect } = require('./collect.js');
 // bin/collect.js only runs main() when invoked directly, so requiring it here
 // is safe and avoids duplicating the real IO implementations.
 const { run, listDirs, listFiles, readTail } = require('./bin/collect.js');
+const { makeMissionReader, DEFAULT_TTL_MS } = require('./bin/mission.js');
 
 const ROOT = __dirname;
 const DEFAULT_PORT = 7777;
@@ -35,7 +36,16 @@ function realCollect() {
   });
 }
 
-async function handle(req, res, collectFn) {
+// One reader for the process lifetime: makeMissionReader owns its own TTL
+// and single-flight, so a second instance here would just add a competing
+// cache instead of reusing the one that already coalesces concurrent polls.
+let defaultMissionRead = null;
+function realMission(args) {
+  if (!defaultMissionRead) defaultMissionRead = makeMissionReader({ env: process.env, homeDir: os.homedir() });
+  return defaultMissionRead(args);
+}
+
+async function handle(req, res, collectFn, missionFn) {
   let url;
   try {
     url = new URL(req.url, 'http://127.0.0.1');
@@ -63,6 +73,29 @@ async function handle(req, res, collectFn) {
     }
   }
 
+  if (url.pathname === '/api/mission') {
+    // Never 500 on a failed read: `broken` IS the answer, and a transport
+    // error would make the panel show nothing instead of showing why.
+    let payload;
+    try {
+      payload = await missionFn({ fresh: url.searchParams.get('fresh') === '1' });
+    } catch (err) {
+      payload = { status: 'broken', mcBin: null, generatedAt: null, ageMs: null,
+                  sources: [], ask: [], deferred: 0, take: {},
+                  leases: { active: [], expired: [], error: null },
+                  error: { code: null, stderr: String(err && err.message || err), timedOut: false } };
+    }
+    // The browser needs to know how often to poll without a second hardcoded
+    // copy of the TTL drifting out of sync with the reader's own value — a
+    // response header carries it without touching the JSON contract in the
+    // spec. `x-mission-ttl-ms` names the reader's sampling interval, not a
+    // caching directive (cache-control above already says never to cache).
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'cache-control': 'no-store',
+                         'x-mission-ttl-ms': String(DEFAULT_TTL_MS) });
+    return res.end(JSON.stringify(payload));
+  }
+
   const rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
   const full = path.resolve(ROOT, rel);
   if (!full.startsWith(ROOT + path.sep)) {
@@ -87,6 +120,7 @@ async function handle(req, res, collectFn) {
 
 function createServer(opts) {
   const collectFn = (opts && opts.collectFn) || realCollect;
+  const missionFn = (opts && opts.missionFn) || realMission;
 
   return http.createServer(async (req, res) => {
     // The whole handler is wrapped: a synchronous throw in here (notably
@@ -94,7 +128,7 @@ function createServer(opts) {
     // escape as an uncaught exception and kill the process, taking
     // /api/local down with it.
     try {
-      await handle(req, res, collectFn);
+      await handle(req, res, collectFn, missionFn);
     } catch (err) {
       if (!res.headersSent) {
         const bad = err instanceof URIError || err.isMalformedTarget === true;

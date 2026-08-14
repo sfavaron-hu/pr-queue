@@ -19,6 +19,15 @@ const PROC_CACHE_KEY = 'prq_proc_cache';
 // See prDataState() for the three-way state this feeds.
 let ownPRsFired = false;
 
+// True while the panel is painted from the localStorage cache, false once
+// the fresh /api/local payload has replaced it. A cached payload can predate
+// the drain pushing a branch, so diffLinksFor (below) treats an unconfirmed
+// onOrigin as "no link" only while this is true — see compareLinkAllowed in
+// mission.js for the rule itself. Set in initLocalPanel(); left untouched
+// (still true) if the fresh fetch fails, since window.LOCAL_STATE then stays
+// the stale cached payload.
+let payloadFromCache = false;
+
 // Which of the two chips is on: 'con', 'sin', or PR_FILTER_ALL (null) for
 // neither, which means todos. Module-level rather than read off the DOM
 // because renderLocalPanel() runs again every time GitHub answers — the
@@ -26,11 +35,43 @@ let ownPRsFired = false;
 // and dropped whenever PR data is unavailable (see renderLocalPanel).
 let prFilter = PR_FILTER_ALL;
 
+// Hides every mission-control card when set to 'off'; null (default) shows
+// them. Module-level and reset by unmountPanel() for the same reason
+// prFilter is.
+let mcFilter = null;
+
 // The second row's selection: 'abierto', 'draft', or PR_FILTER_ALL. Only ever
 // meaningful while prFilter === 'con' — renderLocalPanel() clears it whenever
 // that stops being true, so it can never keep filtering from behind a hidden
 // row.
 let prStatusFilter = PR_FILTER_ALL;
+
+// The mission poll's own timer handle and stop flag. Declared here (not
+// beside initMissionPanel() near the bottom of the file) because
+// unmountPanel() — defined and reachable well before initMissionPanel() is
+// even called — calls stopMissionPoll() synchronously on the very first,
+// pre-`await` line of initLocalPanel() when a corrupt/absent cache makes
+// mountPanelSafely() throw. A `let` declared after that call site would
+// still be in its TDZ at that point and throw a ReferenceError instead of
+// cleanly no-op'ing.
+let missionPollTimer = null;
+let missionPollStopped = false;
+
+// unmountPanel() calls this: once the panel is gone for this page load,
+// firing fetches on a timer forever serves nobody. Idempotent — safe to call
+// whether or not a poll is currently scheduled.
+function stopMissionPoll() {
+  missionPollStopped = true;
+  if (missionPollTimer !== null) { clearTimeout(missionPollTimer); missionPollTimer = null; }
+}
+
+// Fallback only: used if a fetch fails outright (no response at all, so no
+// header to read) or against an older sidecar build that doesn't send
+// x-mission-ttl-ms yet. Matches bin/mission.js's DEFAULT_TTL_MS today, but
+// this file has no way to import that Node-only module, so the real number
+// comes from the header on every successful response instead of living here
+// twice.
+const DEFAULT_MISSION_POLL_MS = 60000;
 
 const PR_MODES = ['con', 'sin'];
 const PR_STATUS_MODES = ['abierto', 'draft'];
@@ -206,20 +247,35 @@ function prRepoSlugs(prs) {
 // onOrigin is unknown/absent) can still produce the link. `onOrigin === null`
 // (undetermined) and an absent field (older cached payload) both mean
 // "unknown", which must keep behaving exactly as before onOrigin existed —
-// only a confirmed `false` suppresses the link.
-function diffLinksFor(p, prs) {
+// only a confirmed `false` suppresses the link — but only while `fromCache`
+// is false: the panel paints from the localStorage cache before the fresh
+// payload lands, and a cached snapshot can predate the drain pushing the
+// branch. compareLinkAllowed (mission.js) is the actual rule; here we just
+// hand it the worktree and the cache flag.
+//
+// A worktree whose link is withheld only for that cache-uncertainty reason
+// (not a confirmed `onOrigin === false`, which already gets its push chip
+// from noOriginWorktrees in procCardHTML) is collected into `pushFallbacks`
+// so the caller can offer the push chip in the link's place — the panel is
+// read-only, but "push this yourself" is a truthful substitute for a link
+// GitHub can't resolve.
+function diffLinksFor(p, prs, fromCache) {
   const seen = new Set();
   const links = [];
+  const pushFallbacks = [];
   const prRepos = prRepoSlugs(prs);
   p.worktrees.forEach(w => {
     if (seen.has(w.repo) || w.detached || w.prunable) return;
-    if (w.onOrigin === false) return;
+    if (!compareLinkAllowed(w, fromCache)) {
+      if (w.onOrigin !== false && w.path && w.branch) pushFallbacks.push(w);
+      return;
+    }
     if (!w.githubRepo || !w.baseBranch || !w.branch) return;
     seen.add(w.repo);
     if (prRepos.has(w.githubRepo.toLowerCase())) return;
     links.push({ repo: w.repo, url: `https://github.com/${w.githubRepo}/compare/${w.baseBranch}...${w.branch}` });
   });
-  return links;
+  return { links, pushFallbacks };
 }
 
 // A click-to-copy chip, styled like the rest of the card's actionables
@@ -356,11 +412,19 @@ function paintChipRow(row, selector, dataKey, selected, counts, disabled) {
 // filter — its counts are over the con-PR rows alone, since that's the set it
 // narrows — and is hidden (not merely emptied) otherwise, so it can never
 // suggest a choice that wouldn't apply to anything.
-function renderFilterChips(counts, statusCounts, disabled) {
+//
+// The `mc` chip is furniture for a source that doesn't exist yet for a
+// teammate who never installed mission-control: gate it on `mcAvailable`
+// (not on `disabled`, which is about GitHub PR data) so the row stays
+// pixel-identical to pre-Task-6 for that teammate instead of shipping a
+// clickable chip with nothing behind it.
+function renderFilterChips(counts, statusCounts, disabled, mcAvailable) {
   const row = procEl.filterRow();
   if (!row) return;
   row.classList.remove('hidden');
   paintChipRow(row, '.proc-chip[data-pr-filter]', 'prFilter', prFilter, counts, disabled);
+  const mcChip = row.querySelector('.proc-chip[data-mc-filter]');
+  if (mcChip) mcChip.classList.toggle('hidden', !mcAvailable);
 
   const statusRow = procEl.statusRow();
   if (!statusRow) return;
@@ -379,6 +443,10 @@ function renderFilterChips(counts, statusCounts, disabled) {
 function resetChipRow(row) {
   row.querySelectorAll('.proc-chip').forEach(chip => {
     chip.classList.remove('selected');
+    // No chip ships hidden in index.html — only the mc chip is ever hidden
+    // individually (see renderFilterChips), so clearing it here is safe for
+    // every other chip and undoes that one on unmount/reset.
+    chip.classList.remove('hidden');
     chip.disabled = false;
     chip.title = '';
     const countEl = chip.querySelector('.proc-chip-count');
@@ -420,7 +488,7 @@ function prDataState() {
 // index.html's CSS so they never touch render.js's cards: .proc-ai-title
 // (the subordinate aiTitle line), .proc-identity (the wrapping key+repo
 // block), and .proc-has-pr (the PR-backed left accent).
-function procCardHTML(row, now, workspaceRoot, prPending) {
+function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   const p = row.proc;
   const prs = row.prs;
   const s = classify(p, prs, now);
@@ -430,7 +498,8 @@ function procCardHTML(row, now, workspaceRoot, prPending) {
   // remote anyway. (diffLinksFor would already suppress the merged PR's own
   // repo via prRepoSlugs, but this also covers a multi-repo process where
   // another repo's worktree has no PR of its own.)
-  const diffs = s === 'mergeado' ? [] : diffLinksFor(p, prs);
+  const diffResult = s === 'mergeado' ? { links: [], pushFallbacks: [] } : diffLinksFor(p, prs, payloadFromCache);
+  const diffs = diffResult.links;
 
   // Title: PR title, else last commit subject, else the process key itself
   // so the card never has an empty title (see subtitleFor for why aiTitle is
@@ -512,20 +581,30 @@ function procCardHTML(row, now, workspaceRoot, prPending) {
   if (dirty > 0) rightBadges.push(`<span class="badge badge-gray">${dirty} sin commitear</span>`);
   rightBadges.push(`<span class="badge badge-gray">${last ? timeAgo(new Date(last)) : '—'}</span>`);
 
+  // Stitched from mission-control: the question and the lease belong on the
+  // card of the work they describe, not in a separate list.
+  const stitchedHTML = !stitched ? '' :
+    (stitched.lease ? `<div class="proc-detail">🔒 lease: ${escS(stitched.lease.forWhat || 'tomado')} · vence en ${escS(stitched.lease.minutesLeft)}m</div>` : '')
+    + stitched.questions.map(q => `<div class="proc-detail">❓ ${escS(q.item.question)}</div>`
+        + (q.item.options || []).map(o => `<div class="proc-detail">· ${escS(o.label)} — ${escS(o.description || '')}</div>`).join('')).join('');
+
   // .pr-actions: every actionable link/chip. No "Open →" here — the title
   // already links to the PR (or the compare diff when there is no PR), and
   // that's what the owner actually clicks; render.js's own PR cards keep
   // their "Open →" since that column has no such title link. So: a diff
   // chip per repo still missing a PR, then a push chip per worktree confirmed
   // absent from origin (the actionable that pairs with the badge above —
-  // pushing is what would actually let a diff/PR happen), then a resume chip
-  // per session, then a cd/prune chip per worktree.
+  // pushing is what would actually let a diff/PR happen) or one whose diff
+  // link diffLinksFor withheld only because the cached payload couldn't
+  // confirm onOrigin, then a resume chip per session, then a cd/prune chip
+  // per worktree.
   const actions = [];
   diffs.forEach(d => {
     const label = diffs.length > 1 ? `diff ${d.repo}` : 'diff';
     actions.push(safeLinkHTML(d.url, label, ' target="_blank" rel="noopener" class="btn btn-ghost btn-sm"'));
   });
   noOriginWorktrees.forEach(w => actions.push(pushChip(w, multiWorktree)));
+  diffResult.pushFallbacks.forEach(w => actions.push(pushChip(w, multiWorktree)));
   // The leftover-cleanup actionable for a mergeado card: a worktree still on
   // disk for a process whose PR(s) are all merged is exactly the combination
   // worth surfacing. Skipped for a prunable worktree — its directory is
@@ -589,6 +668,7 @@ function procCardHTML(row, now, workspaceRoot, prPending) {
     </div>
     <div class="pr-meta">
       <div>${identity.join(' ')}</div>
+      ${stitchedHTML}
       <div class="pr-actions">${actions.join('')}</div>
     </div>
   </div>`;
@@ -647,6 +727,22 @@ function renderLocalPanel() {
     draft:   withPR.filter(rowHasDraftPR).length,
   };
 
+  // mission-control's cards are fetched independently (initMissionPanel) and
+  // may not have arrived yet, or may be off entirely — both render the panel
+  // exactly as it looked before Task 6 existed, never a blank list.
+  const mission = window.MISSION_STATE || null;
+  // Stitched against `visible`, not `sorted`: a question whose processKey
+  // belongs to a process the PR-chip filters (con PR / sin PR / abierto /
+  // draft) hid still gets matched-off by stitchMission over the wider set,
+  // but its process card is never painted — the question would exist
+  // nowhere on screen. stitch.perKey is only read per RENDERED row below, so
+  // narrowing the input set to what's actually visible changes nothing else.
+  const stitch = stitchMission(mission, visible);
+  const mcCards = mission ? missionCards(Object.assign({}, mission, { matchedAskIds: stitch.matchedAskIds })) : [];
+  const mcHidden = mcFilter === 'off';
+  const topCards = mcHidden ? '' : mcCards.filter(c => c.slot === 'top').map(missionCardHTML).join('');
+  const bottomCards = mcHidden ? '' : mcCards.filter(c => c.slot === 'bottom').map(missionCardHTML).join('');
+
   // Build the entire list first. If anything here throws, nothing has been
   // mutated yet — #work-list stays exactly as it was (empty, or showing the
   // previous good paint) instead of a half-built list.
@@ -654,10 +750,12 @@ function renderLocalPanel() {
   // The loose-sessions row is only shown with the filter off: it isn't a
   // process and has no joined PR, so filing it under either chip would be a
   // claim the panel can't back.
-  const listHTML = (prShowNotice ? prNoticeHTML() : '')
+  const listHTML = topCards
+    + (prShowNotice ? prNoticeHTML() : '')
     + (filterActive && !visible.length ? filterEmptyHTML(filterLabel()) : '')
-    + visible.map(r => procCardHTML(r, now, payload.workspaceRoot, prPending)).join('')
-    + ((!filterActive && (payload.looseSessions || []).length) ? looseRowHTML(payload.looseSessions) : '');
+    + visible.map(r => procCardHTML(r, now, payload.workspaceRoot, prPending, stitch.perKey[r.proc.key] || null)).join('')
+    + ((!filterActive && (payload.looseSessions || []).length) ? looseRowHTML(payload.looseSessions) : '')
+    + bottomCards;
 
   const states = sorted.map(r => classify(r.proc, r.prs, now));
   const count = st => states.filter(x => x === st).length;
@@ -691,7 +789,10 @@ function renderLocalPanel() {
       (payload.generatedAt ? ` · ${timeAgo(new Date(payload.generatedAt))}` : '');
 
   procEl.workList().innerHTML = listHTML;
-  renderFilterChips(filterCounts, statusCounts, prPending);
+  // Checked directly against status rather than trusting `mission` to always
+  // exclude 'off' (which initMissionPanel happens to guarantee today) — the
+  // chip's visibility rule shouldn't silently depend on that staying true.
+  renderFilterChips(filterCounts, statusCounts, prPending, !!(mission && mission.status !== 'off'));
   procEl.metaLine().textContent = metaText;
   procEl.metaLine().classList.remove('hidden');
   // Hovering surfaces the actual warning messages — otherwise "· N warnings"
@@ -745,8 +846,14 @@ function installCopyDelegation() {
 // turns the previous one off.
 function installFilterDelegation() {
   procEl.filterRow().addEventListener('click', (e) => {
-    const chip = e.target.closest('.proc-chip[data-pr-filter], .proc-chip[data-pr-status]');
+    const chip = e.target.closest('.proc-chip[data-pr-filter], .proc-chip[data-pr-status], .proc-chip[data-mc-filter]');
     if (!chip || chip.disabled) return;
+    if (chip.dataset.mcFilter) {
+      mcFilter = mcFilter === 'off' ? null : 'off';
+      chip.classList.toggle('selected', mcFilter === 'off');
+      renderLocalPanel();
+      return;
+    }
     if (chip.dataset.prFilter) {
       prFilter = nextChipFilter(prFilter, chip.dataset.prFilter, PR_MODES);
     } else {
@@ -793,6 +900,16 @@ function mountPanel() {
 // #work-list, PR list visible, 2fr/1fr grid.
 function unmountPanel() {
   window.LOCAL_STATE = null;
+  // Mirrors LOCAL_STATE: leaving mission-control's payload behind here would
+  // let a later poll repaint stitched detail from a fetch that predates the
+  // unmount instead of starting clean.
+  window.MISSION_STATE = null;
+  // Deliberately NOT stopping the mission poll here. This function has two
+  // callers and only one of them is terminal: mountPanelSafely() unmounts on
+  // any mount throw — including one from a stale cached payload, moments
+  // before the fresh fetch mounts cleanly. Latching the poll off here meant a
+  // single recoverable failure silently cost the mission cards for the whole
+  // page load. The poll is stopped from the sidecar-gone path instead.
   procEl.workList().innerHTML = '';
   procEl.metaLine().textContent = '';
   procEl.metaLine().title = '';
@@ -802,6 +919,7 @@ function unmountPanel() {
   // exactly as index.html ships them.
   prFilter = PR_FILTER_ALL;
   prStatusFilter = PR_FILTER_ALL;
+  mcFilter = null;
   const filterRow = procEl.filterRow();
   if (filterRow) {
     filterRow.classList.add('hidden');
@@ -830,11 +948,27 @@ function mountPanelSafely() {
   }
 }
 
+const HINT_DISMISS_KEY = 'prq_sidecar_hint_dismissed';
+
+function showSidecarHint() {
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(HINT_DISMISS_KEY) === '1'; } catch { /* modo privado */ }
+  if (!shouldShowSidecarHint({ fetchFailed: true, dismissed })) return;
+  const el = document.getElementById('sidecar-hint');
+  if (!el) return;
+  el.classList.remove('hidden');
+  const btn = document.getElementById('sidecar-hint-dismiss');
+  if (btn) btn.addEventListener('click', () => {
+    el.classList.add('hidden');
+    try { localStorage.setItem(HINT_DISMISS_KEY, '1'); } catch { /* quota */ }
+  });
+}
+
 async function initLocalPanel() {
   let painted = false;
   try {
     const cached = localStorage.getItem(PROC_CACHE_KEY);
-    if (cached) { window.LOCAL_STATE = JSON.parse(cached); painted = mountPanelSafely(); }
+    if (cached) { payloadFromCache = true; window.LOCAL_STATE = JSON.parse(cached); painted = mountPanelSafely(); }
   } catch { /* ignore a corrupt cache */ }
 
   let payload;
@@ -844,10 +978,18 @@ async function initLocalPanel() {
     payload = await res.json();
     if (!payload || !Array.isArray(payload.processes)) throw new Error('bad payload');
   } catch {
+    // The fetch failed, so window.LOCAL_STATE (if anything) is still the
+    // stale cached payload — payloadFromCache stays true, on purpose.
     if (painted) unmountPanel();
+    // This is the terminal path: no sidecar, so nothing will repaint this
+    // column again this page load. It is the one place the mission poll
+    // should stop — a ticking fetch against a 404 helps nobody.
+    stopMissionPoll();
+    showSidecarHint();
     return;
   }
 
+  payloadFromCache = false;
   window.LOCAL_STATE = payload;
   try { localStorage.setItem(PROC_CACHE_KEY, JSON.stringify(payload)); } catch { /* quota */ }
 
@@ -855,3 +997,48 @@ async function initLocalPanel() {
 }
 
 initLocalPanel();
+
+// One fetch-and-render pass. Returns the interval (ms) the next pass should
+// wait, taken from the sidecar's x-mission-ttl-ms header so this file never
+// hardcodes a second copy of bin/mission.js's TTL that could drift out of
+// sync with it.
+async function pollMissionOnce() {
+  try {
+    const res = await fetch('/api/mission', { cache: 'no-store' });
+    if (!res.ok) return DEFAULT_MISSION_POLL_MS;
+    const headerMs = Number(res.headers.get('x-mission-ttl-ms'));
+    const pollMs = Number.isFinite(headerMs) && headerMs > 0 ? headerMs : DEFAULT_MISSION_POLL_MS;
+    const payload = await res.json();
+    if (!payload || payload.status === 'off') return pollMs;
+    window.MISSION_STATE = payload;
+    if (window.LOCAL_STATE) mountPanelSafely();
+    return pollMs;
+  } catch {
+    // A failed pass is not the end of the poll: retry at the default
+    // interval, and if the sidecar comes back the next pass reads its real
+    // TTL from the header again. The one case where no next pass happens is
+    // initLocalPanel's sidecar-gone path, which stops the poll outright —
+    // there the hint, not a retry, is the answer.
+    return DEFAULT_MISSION_POLL_MS;
+  }
+}
+
+// Fetched separately from /api/local on purpose: mc's `work` source carries
+// 180s internal timeouts, so coupling both into one payload would leave the
+// whole panel blank whenever one source is slow.
+//
+// Polls on an interval instead of fetching once: a page left open against a
+// stale snapshot shows "refrescando en segundo plano; la próxima pasada
+// trae lo nuevo" on the mission card (missionCard() in mission.js) — a
+// promise that was false until this loop existed, because nothing ever
+// fetched that next pass. `missionPollStopped` (set by unmountPanel) is
+// re-checked after every await, so a poll already in flight when the panel
+// dies still finishes cleanly instead of scheduling one more.
+async function initMissionPanel() {
+  if (missionPollStopped) return;
+  const pollMs = await pollMissionOnce();
+  if (missionPollStopped) return;
+  missionPollTimer = setTimeout(initMissionPanel, pollMs);
+}
+
+initMissionPanel();

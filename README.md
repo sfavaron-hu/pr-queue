@@ -33,6 +33,7 @@ agent (macOS) that keeps it alive across reboots. It prints its own uninstall co
 | `PRQ_WORKSPACE` | the parent directory of this checkout | Where to look for repos. Every direct subdirectory containing `.git` is scanned. |
 | `PRQ_PORT` | `7777` | Sidecar port. If it is taken, the sidecar exits with an error rather than picking another — a stable bookmark is the point. Must be an integer between 1 and 65535; anything else and the sidecar exits 1 with a message naming `PRQ_PORT`. |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Where Claude Code keeps its session indexes. |
+| `PRQ_MC_BIN` | `$CLAUDE_CONFIG_DIR/mission-control/bin/mc` | The `mc` CLI, if you run one. Its state becomes extra cards in the panel. Not there and not set? No new cards, no new chip — the panel is exactly what it was. Set explicitly and missing, though, is reported as broken: naming a path is saying you expect it to exist. |
 
 The default assumes pr-queue is cloned **next to** the repos it reports on. If yours
 live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
@@ -44,7 +45,9 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   config do not carry over. One-time cost, per origin.
 - **The panel is invisible without the sidecar.** On the deployed page `/api/local`
   404s and the panel simply never mounts. That is deliberate: the same `main` serves
-  both audiences, and someone who never runs the sidecar sees no change at all.
+  both audiences, and nothing about the review queue changes for someone who never
+  runs it. They do get one dismissible line telling them the panel exists — not
+  breaking anything for them was always the invariant, hiding it was never the point.
 - **No Claude Code? Still works.** You get worktrees and PRs, with no session rows,
   and a warning in the payload. Every source degrades on its own.
 - **Prunable worktrees show no git detail.** Their directory is gone, so `git status`
