@@ -50,9 +50,45 @@ function resolveMcBin(env, homeDir) {
   return { bin: path.join(root, 'mission-control', 'bin', 'mc'), configured: false };
 }
 
+// Same precedence family as resolveMcBin, and same no-hardcoded-home rule.
+// mc's own config.js resolves stateRoot the same way (MC_STATE_ROOT, else
+// `<checkout>/state`) — mirroring that here means a real mc install and this
+// reader agree on where the snapshot lives without pr-queue reading mc's
+// config module directly. `mcBin` is mc's resolved bin path (`<checkout>/
+// bin/mc`), so two `dirname`s land on `<checkout>`.
+function resolveSnapshotPath(env, mcBin) {
+  const e = env || {};
+  if (e.PRQ_MC_SNAPSHOT) return e.PRQ_MC_SNAPSHOT;
+  if (e.MC_STATE_ROOT) return path.join(e.MC_STATE_ROOT, 'snapshot.json');
+  const checkout = path.dirname(path.dirname(mcBin));
+  return path.join(checkout, 'state', 'snapshot.json');
+}
+
+// Mirrors mc's own exitFor precedence (mission-control/src/cli.js:87-93) just
+// enough to recover the one bit classifyMissionRead actually reads off a exec
+// result's exit code: whether the pass counts as `degraded`. A snapshot read
+// off disk carries no exit code, so this derives the same verdict from the
+// snapshot's own fields — ask pending or a blind source both outrank
+// degraded there, and have to outrank it here too, or a fast-path read would
+// paint amber over a snapshot mc itself would have called clean (ask) or red
+// (blind).
+const BLIND_SOURCE_STATUSES = ['absent', 'broken', 'no-check'];
+function snapshotDegraded(snapshot) {
+  if ((snapshot.ask || []).length) return false;
+  const sources = snapshot.sources || [];
+  if (sources.some((s) => BLIND_SOURCE_STATUSES.indexOf(s.status) !== -1)) return false;
+  return sources.some((s) => s.status === 'degraded');
+}
+
 function makeMissionReader(opts) {
   const exec = opts.exec || realExec;
   const exists = opts.exists || ((p) => fs.existsSync(p));
+  // Same non-throwing shape as `exists`: a missing/unreadable file is a normal
+  // outcome on this path (mc hasn't run yet, permissions, whatever), not an
+  // exception the caller has to guard against.
+  const readFile = opts.readFile || ((p) => {
+    try { return fs.readFileSync(p, 'utf8'); } catch (e) { return null; }
+  });
   const now = opts.now || Date.now;
   const ttlMs = typeof opts.ttlMs === 'number' ? opts.ttlMs : DEFAULT_TTL_MS;
   const staleAfterMs = typeof opts.staleAfterMs === 'number' ? opts.staleAfterMs : DEFAULT_STALE_AFTER_MS;
@@ -78,11 +114,40 @@ function makeMissionReader(opts) {
     return !(next.status === 'broken' && cached && cached.status !== 'broken');
   }
 
+  // Reads mc's own snapshot.json off disk instead of shelling out. Returns
+  // the same shape classifyMissionRead returns, or null if the file isn't
+  // there / doesn't parse / isn't shaped like a snapshot — any of which means
+  // "fall back to exec exactly like before", never a thrown error.
+  function tryReadSnapshot(bin) {
+    const snapPath = resolveSnapshotPath(env, bin);
+    const raw = readFile(snapPath);
+    if (!raw) return null;
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) { return null; }
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.sources)) return null;
+    // Route the already-parsed snapshot through classifyMissionRead so the
+    // parse-and-shape rules live in exactly one place; `code` is the one
+    // input it needs that the file doesn't carry, so it's synthesized above.
+    return classifyMissionRead({ configured: true, stdout: raw, code: snapshotDegraded(parsed) ? 4 : 0 });
+  }
+
   async function build(fresh, statusTimeoutMs) {
     const { bin, configured } = resolveMcBin(env, homeDir);
     if (!exists(bin)) {
       const read = classifyMissionRead({ missing: true, configured });
       return payloadFrom(read, bin, null);
+    }
+    // The whole point of this task: the foreground path must never be the one
+    // that triggers mc's rebuild (0.06s warm vs 133s cold, measured). Only the
+    // non-fresh path gets to take this shortcut — `fresh` is the escape hatch
+    // that explicitly asked mc to re-derive, and it still pays for that in full,
+    // uncached, below.
+    if (!fresh) {
+      const snapRead = tryReadSnapshot(bin);
+      if (snapRead) {
+        const ls = await exec([bin, 'lease'], { timeoutMs: EXEC_TIMEOUT_MS });
+        return payloadFrom(snapRead, bin, ls);
+      }
     }
     const statusArgv = fresh ? [bin, 'status', '--fresh'] : [bin, 'status'];
     const [st, ls] = await Promise.all([
@@ -243,5 +308,5 @@ function makeMissionReader(opts) {
   };
 }
 
-module.exports = { resolveMcBin, makeMissionReader, realExec, DEFAULT_TTL_MS, EXEC_TIMEOUT_MS,
+module.exports = { resolveMcBin, resolveSnapshotPath, makeMissionReader, realExec, DEFAULT_TTL_MS, EXEC_TIMEOUT_MS,
                    DEFAULT_STALE_AFTER_MS, DEFAULT_FRESH_TIMEOUT_MS };

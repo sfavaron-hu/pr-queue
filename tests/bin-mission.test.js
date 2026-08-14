@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { resolveMcBin, makeMissionReader, DEFAULT_STALE_AFTER_MS, DEFAULT_TTL_MS } = require('../bin/mission.js');
+const { resolveMcBin, resolveSnapshotPath, makeMissionReader, DEFAULT_STALE_AFTER_MS, DEFAULT_TTL_MS } = require('../bin/mission.js');
 
 const SNAP = JSON.stringify({ at: 1, generatedAt: '2026-08-12T17:00:00.000Z', sources: [{ name: 'work', status: 'ok', items: [] }], ask: [], deferred: [], take: {} });
 const LEASES = JSON.stringify({ active: [{ path: '/w/a', branch: null, forWhat: 'e2e', minutesLeft: 30 }], expired: [] });
@@ -386,4 +386,92 @@ test('un fresh disparado con un build no-fresh en vuelo no se cuelga de él', as
   release();
   await Promise.all([slow, forced]);
   assert.ok(calls.some(a => a.indexOf('--fresh') !== -1), 'el fresh nunca llegó a mc');
+});
+
+// --- lectura del snapshot de mc en disco, en vez de disparar el rebuild ---
+// Medido: `mc status` tarda 0.06s con la caché en disco de mc caliente y 133s
+// en frío. El foreground tenía un cap de 20s: cada vez que el panel se abría
+// después de un rato, la caché de mc (5min) ya había vencido, la llamada se
+// colgaba reconstruyendo, moría en el cap, y la card arrancaba en rojo. El
+// camino no-fresh no debe volver a disparar ese rebuild — lee lo que mc ya
+// dejó en disco.
+
+test('con un snapshot legible, una lectura no-fresh no ejecuta mc status (sólo lease)', async () => {
+  const exec = fakeExec((argv) => argv.indexOf('lease') !== -1
+    ? { code: 0, stdout: LEASES, stderr: '', timedOut: false }
+    // Si esto corriera, el test de abajo (exec.calls.length) lo detectaría —
+    // pero además, si el path del snapshot no se hubiese tomado, el status
+    // real fallaría al parsear esto y el payload saldría broken, no ok.
+    : { code: 1, stdout: 'no debería llegar a ejecutarse', stderr: 'boom', timedOut: false });
+  const readFile = (p) => { assert.equal(p, '/snap/snapshot.json'); return SNAP; };
+  const read = makeMissionReader({ exec, exists: () => true, readFile,
+    env: { PRQ_MC_BIN: '/opt/mc', PRQ_MC_SNAPSHOT: '/snap/snapshot.json' },
+    homeDir: '/h', now: () => Date.parse('2026-08-12T17:03:00.000Z') });
+  const p = await read({});
+  assert.equal(p.status, 'ok');
+  assert.equal(p.ageMs, 180000);              // derivado del generatedAt del archivo (17:00 → 17:03)
+  assert.equal(exec.calls.length, 1);
+  assert.ok(exec.calls[0].indexOf('lease') !== -1, 'el único exec tiene que ser el de lease: ' + JSON.stringify(exec.calls));
+});
+
+test('sin archivo de snapshot, una lectura no-fresh cae al exec de mc status como antes', async () => {
+  const exec = fakeExec(okHandler);
+  // MC_STATE_ROOT apunta a un dir real pero vacío: readFile por default hace
+  // fs.readFileSync real, que falla con ENOENT y cae al exec — el comportamiento
+  // viejo, sin ningún mock de IO extra.
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prq-mc-state-'));
+  const read = makeMissionReader({ exec, exists: () => true,
+    env: { PRQ_MC_BIN: '/opt/mc', MC_STATE_ROOT: emptyDir }, homeDir: '/h', now: () => 0 });
+  const p = await read({});
+  assert.equal(p.status, 'ok');
+  assert.equal(exec.calls.length, 2);          // status + lease, exactamente como hoy
+  fs.rmSync(emptyDir, { recursive: true, force: true });
+});
+
+test('un archivo de snapshot ilegible o basura también cae al exec, sin explotar', async () => {
+  const exec = fakeExec(okHandler);
+  const readFile = () => '{ esto no es json valido';
+  const read = makeMissionReader({ exec, exists: () => true, readFile,
+    env: { PRQ_MC_BIN: '/opt/mc', PRQ_MC_SNAPSHOT: '/snap/snapshot.json' }, homeDir: '/h', now: () => 0 });
+  const p = await read({});
+  assert.equal(p.status, 'ok');                // classifyMissionRead sobre el SNAP del exec fallback
+  assert.equal(exec.calls.length, 2);
+});
+
+test('un snapshot en disco viejo (más de staleAfterMs) se sirve igual y dispara un --fresh de fondo', async () => {
+  const exec = fakeExec((argv) => {
+    if (argv.indexOf('lease') !== -1) return { code: 0, stdout: LEASES, stderr: '', timedOut: false };
+    if (argv.indexOf('--fresh') !== -1) return { code: 0, stdout: SNAP, stderr: '', timedOut: false };
+    throw new Error('mc status sin --fresh no debería correr en el camino no-fresh: ' + JSON.stringify(argv));
+  });
+  const readFile = () => SNAP;                 // SNAP.generatedAt = 2026-08-12T17:00:00.000Z
+  const clock = Date.parse('2026-08-12T18:00:00.000Z');   // 1h después: ageMs 3600000 >> staleAfterMs
+  const read = makeMissionReader({ exec, exists: () => true, readFile,
+    env: { PRQ_MC_BIN: '/opt/mc', PRQ_MC_SNAPSHOT: '/snap/snapshot.json' },
+    homeDir: '/h', now: () => clock, staleAfterMs: 300000 });
+  const p = await read({});
+  assert.equal(p.status, 'ok');                // sirve el snapshot leído del archivo, no espera al refresco
+  assert.equal(p.ageMs, 3600000);
+  assert.equal(p.refreshing, true);
+  await new Promise(r => setImmediate(r));     // dejar correr el detached
+  assert.equal(exec.calls.filter(a => a.indexOf('--fresh') !== -1).length, 1);
+});
+
+test('resolveSnapshotPath: precedencia PRQ_MC_SNAPSHOT > MC_STATE_ROOT > derivado del binario', () => {
+  assert.equal(
+    resolveSnapshotPath({ PRQ_MC_SNAPSHOT: '/x/custom.json', MC_STATE_ROOT: '/x/state' }, '/opt/mc/bin/mc'),
+    '/x/custom.json');
+  assert.equal(
+    resolveSnapshotPath({ MC_STATE_ROOT: '/x/state' }, '/opt/mc/bin/mc'),
+    path.join('/x/state', 'snapshot.json'));
+  // Derivado: mc vive en <checkout>/bin/mc, su estado en <checkout>/state/snapshot.json.
+  assert.equal(
+    resolveSnapshotPath({}, '/opt/checkout/bin/mc'),
+    path.join('/opt/checkout', 'state', 'snapshot.json'));
+});
+
+test('resolveSnapshotPath derivado del binario no hardcodea ningún /Users ni /home', () => {
+  const derived = resolveSnapshotPath({}, '/some/weird/checkout/bin/mc');
+  assert.ok(!/\/Users\/[a-z]/i.test(derived), derived);
+  assert.ok(!/\/home\/[a-z]/i.test(derived), derived);
 });
