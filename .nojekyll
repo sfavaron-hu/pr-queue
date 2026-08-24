@@ -1,0 +1,19 @@
+Serve this repo as the plain static files it is, with no Jekyll build.
+
+GitHub Pages runs Jekyll by default, and Jekyll renders every .md in the repo
+as Liquid — including docs/superpowers/plans/*.md, which quote test fixtures.
+One of those fixtures contains a bare `{{`, and Liquid treats it as the start
+of a variable it never finds the end of:
+
+  Rendering Liquid: docs/superpowers/plans/2026-08-12-panel-mission-cards.md
+  Error: Liquid syntax error (line 657): Variable '{{', stderr: 'lease boom',
+  timedOut: false }' was not properly terminated with regexp: /\}\}/
+
+That broke every deploy from 2026-08-14 (when the file merged) to 2026-08-24,
+silently: the build fails, Pages keeps serving the last good commit, and the
+site looks fine while being ten days stale. Two PRs' worth of work never
+reached production.
+
+Nothing here needs Jekyll — no _config.yml, no Gemfile, no layouts, just
+index.html and its scripts. This file also stops Jekyll from hiding anything
+whose name starts with an underscore.
