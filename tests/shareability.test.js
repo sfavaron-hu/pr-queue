@@ -68,6 +68,18 @@ test('every README anchor the page links to names a real heading', () => {
   }
 });
 
+// Pages ran Jekyll over every .md in the repo, and a bare `{{` inside a quoted
+// test fixture in docs/superpowers/plans/ is a Liquid syntax error. That broke
+// the deploy for ten days without anyone noticing, because a failed build keeps
+// serving the last good commit — the site looks current and is stale. Nothing
+// here needs Jekyll, so .nojekyll turns it off; this test is what stops it from
+// being deleted as a stray dotfile.
+test('.nojekyll exists, because Jekyll cannot be trusted with these .md files', () => {
+  assert.ok(fs.existsSync(path.join(ROOT, '.nojekyll')),
+    '.nojekyll is missing: GitHub Pages will run Jekyll over every .md in ' +
+    'docs/ and fail on the first `{{` it finds in a quoted fixture');
+});
+
 test('the launchd installer derives its paths instead of baking them in', () => {
   const src = fs.readFileSync(path.join(ROOT, 'scripts/install-launchd.sh'), 'utf8');
   assert.match(src, /BASH_SOURCE/);
