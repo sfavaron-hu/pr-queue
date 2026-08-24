@@ -1,15 +1,48 @@
-// Local-only "procesos activos" panel.
+// The "Trabajo activo" panel: one card per process inside #own-column,
+// reusing the same .pr-card CSS the old "Mis PRs" list used.
 //
-// Mounts ONLY if /api/local answers. On GitHub Pages that request 404s and
-// this file does nothing at all, which is what keeps the shared deploy
-// byte-for-byte unchanged for everyone else.
+// It mounts ALWAYS, sidecar or no sidecar. When /api/local answers, a card is
+// a process: worktrees + Claude sessions + the PRs joined onto them. When it
+// doesn't (the deployed static page), the payload is emptyLocalPayload() and
+// every row comes out of synthesizeProcesses() — grouped by ticket, classified,
+// sorted and filtered by exactly the same pure code in classify.js, just with
+// nothing local to attach. That is the whole difference between the two
+// deploys now: the local-only affordances (cd/push/resume chips, aiTitle,
+// loose sessions, warnings, mission cards) are absent, and the con PR/sin PR
+// split is hidden because it cannot partition a list where every row is a PR.
 //
-// Mounted, it renders one card per active process inside #own-column,
-// reusing the same .pr-card CSS the "Mis PRs" list already uses, and swaps
-// that column's heading to "Trabajo activo". Unmounted, the column is
-// exactly what it always was: PR cards under a "Mis PRs" heading.
+// unmountPanel() survives as the crash fallback only: if a render throws, the
+// column falls back to render.js's flat PR list rather than going blank.
 
 const PROC_CACHE_KEY = 'prq_proc_cache';
+
+// What window.LOCAL_STATE holds when there is no sidecar. Every collector-fed
+// field is present and empty rather than absent, so nothing downstream needs a
+// "did the sidecar answer" branch: attachOwnPRs([], prs) matches nothing,
+// synthesizeProcesses() turns every PR into its own row, and the worktree /
+// session / warning / generatedAt segments of the card and meta line drop out
+// on their own because there is nothing to iterate.
+//
+// `local: false` is the one explicit marker, and only one thing reads it: the
+// "sin worktree local" note, which is news on a machine that has local work and
+// noise on every card of a page that can never have any.
+//
+// A factory, not a frozen constant: renderLocalPanel's very first act is
+// mergeLooseSessions(payload), which assigns payload.looseSessions. Against a
+// frozen object that write fails — silently in this file's sloppy mode, loudly
+// the day anything here becomes a module — and a shared mutable object would
+// carry state across mounts. A fresh one per call is neither.
+function emptyLocalPayload() {
+  return { local: false, processes: [], looseSessions: [], warnings: [],
+           workspaceRoot: null, generatedAt: null };
+}
+
+// Whether the payload carries local work at all. An older cached payload has
+// no `local` field and is real collector output, so absent means true — only
+// an explicit `false` (emptyLocalPayload) means "there is no sidecar".
+function hasLocalPayload(payload) {
+  return !!payload && payload.local !== false;
+}
 
 // Whether the real (unwrapped) window.renderOwnPRs has fired at least once
 // since this page load. Flipped inside mountPanel()'s wrap, never reset —
@@ -81,6 +114,7 @@ const procEl = {
   columnTitle: () => document.getElementById('own-column-title'),
   metaLine:    () => document.getElementById('proc-meta-line'),
   filterRow:   () => document.getElementById('proc-filter'),
+  filterMainRow: () => document.getElementById('proc-filter-main'),
   statusRow:   () => document.getElementById('proc-filter-status'),
 };
 
@@ -386,7 +420,14 @@ function filterEmptyHTML(label) {
 // 'con PR abierto', 'con PR draft'. Used by both the empty-result notice and
 // the meta line, so the two can never describe the same filter differently.
 function filterLabel() {
-  if (prFilter === PR_FILTER_ALL) return '';
+  // The status row can be the only row on screen (see renderFilterChips: the
+  // con/sin split is hidden when every row has a PR), so a selected status
+  // with no con/sin selection is a real, active filter — not the off state it
+  // used to be. It still describes itself as "con PR <status>", because that
+  // is what it keeps.
+  if (prFilter === PR_FILTER_ALL) {
+    return prStatusFilter === PR_FILTER_ALL ? '' : `con PR ${prStatusFilter}`;
+  }
   const base = `${prFilter} PR`;
   return prStatusFilter === PR_FILTER_ALL ? base : `${base} ${prStatusFilter}`;
 }
@@ -418,18 +459,35 @@ function paintChipRow(row, selector, dataKey, selected, counts, disabled) {
 // (not on `disabled`, which is about GitHub PR data) so the row stays
 // pixel-identical to pre-Task-6 for that teammate instead of shipping a
 // clickable chip with nothing behind it.
-function renderFilterChips(counts, statusCounts, disabled, mcAvailable) {
+// `splitMeaningful` (prSplitIsMeaningful in classify.js) decides whether the
+// con PR / sin PR chips exist at all. On the static deploy every row is
+// synthesized from a PR, so "sin PR" is always empty and "con PR" is the whole
+// list: two chips that cannot change what you see, which reads as a broken
+// filter rather than an inapplicable one. They are hidden, and the
+// abierto/draft row is promoted to stand on its own — unindented, and shown
+// without waiting for a con/sin selection that can no longer be made.
+function renderFilterChips(counts, statusCounts, disabled, mcAvailable, splitMeaningful) {
   const row = procEl.filterRow();
   if (!row) return;
   row.classList.remove('hidden');
   paintChipRow(row, '.proc-chip[data-pr-filter]', 'prFilter', prFilter, counts, disabled);
+  const splitOn = !!splitMeaningful;
+  row.querySelectorAll('.proc-chip[data-pr-filter]')
+     .forEach(chip => chip.classList.toggle('hidden', !splitOn));
   const mcChip = row.querySelector('.proc-chip[data-mc-filter]');
   if (mcChip) mcChip.classList.toggle('hidden', !mcAvailable);
+  // With every chip in it hidden the row is an empty flex box that still eats
+  // the parent's 6px gap, so it goes away as a row rather than as three
+  // invisible children.
+  const mainRow = procEl.filterMainRow();
+  if (mainRow) mainRow.classList.toggle('hidden', !splitOn && !mcAvailable);
 
   const statusRow = procEl.statusRow();
   if (!statusRow) return;
-  const showStatus = prFilter === 'con' && !disabled;
+  const showStatus = (prFilter === 'con' || !splitOn) && !disabled;
   statusRow.classList.toggle('hidden', !showStatus);
+  // Indented only while it is subordinate to a visible "con PR" chip.
+  statusRow.classList.toggle('proc-filter-sub', splitOn);
   if (showStatus) {
     paintChipRow(statusRow, '.proc-chip[data-pr-status]', 'prStatus', prStatusFilter, statusCounts, false);
   } else {
@@ -488,7 +546,11 @@ function prDataState() {
 // index.html's CSS so they never touch render.js's cards: .proc-ai-title
 // (the subordinate aiTitle line), .proc-identity (the wrapping key+repo
 // block), and .proc-has-pr (the PR-backed left accent).
-function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
+// `hasLocal` says whether the payload came from a sidecar at all (see
+// hasLocalPayload). It gates only the "sin worktree local" note: on a page
+// that can never have a worktree, printing it on every card states the
+// obvious once per row.
+function procCardHTML(row, now, workspaceRoot, prPending, stitched, hasLocal) {
   const p = row.proc;
   const prs = row.prs;
   const s = classify(p, prs, now);
@@ -508,8 +570,17 @@ function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   const titleText = subtitleFor(p, prs) || p.key;
   const linkPr = prs.find(x => x.title) || prs[0] || null;
   const titleUrl = linkPr ? linkPr.url : (diffs[0] ? diffs[0].url : null);
+  // `data-pr-id` is what the mark-as-read delegation keys off (see
+  // installActivityDelegation): opening a PR is the act of reading it, exactly
+  // as it was in the flat list. Only the PR the title actually links to gets
+  // marked — a multi-repo row's other PRs were not opened. Number() so a
+  // hostile/garbled id can never become an attribute payload; NaN drops the
+  // attribute entirely rather than emitting `data-pr-id="NaN"`.
+  const titleId = linkPr && Number.isFinite(Number(linkPr.id)) ? Number(linkPr.id) : null;
+  const titleAttrs = ' target="_blank" rel="noopener"' +
+    (titleId === null ? '' : ` data-pr-id="${titleId}"`);
   const titleInner = titleUrl
-    ? safeLinkHTML(titleUrl, titleText, ' target="_blank" rel="noopener"')
+    ? safeLinkHTML(titleUrl, titleText, titleAttrs)
     : escS(titleText);
 
   // Secondary line under the title, visibly subordinate (smaller, dimmer) —
@@ -519,8 +590,14 @@ function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   const aiTitle = aiTitleFor(p);
   const aiTitleHTML = aiTitle ? `<div class="proc-ai-title">${escS(aiTitle)}</div>` : '';
 
-  const repos = [...new Set(p.worktrees.map(w => w.repo))];
-  const repoLabel = repos.length ? repos.join(', ') : (p.synthetic ? 'sin worktree local' : '');
+  // Every repo this process touches, PR numbers included — see
+  // processRepoLabel. It used to be the worktree repos alone, which on the
+  // static deploy names nothing at all (there are no worktrees) and even with
+  // a sidecar dropped the `#number` that render.js's flat list always showed.
+  // The old "sin worktree local" text that used to fill this slot for a
+  // worktree-less row moved into an `identity` badge below, where it no longer
+  // competes with that information.
+  const repoLabel = processRepoLabel(p.worktrees, prs);
 
   const dirty = p.worktrees.reduce((n, w) => n + (w.dirty || 0), 0);
   // `unpushed` may be null (unknown, e.g. no base branch to diff against) on
@@ -552,6 +629,9 @@ function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   // ✗ Cambios / ✓ Aprobado, ⚡ Conflicts), aggregated across every PR in the
   // row, plus local worktree state and a gray timeAgo badge. No badge for
   // any of this when the row has no PR at all — there is nothing to report.
+  // Unseen comments and reviews across the row (rowNewActivity in classify.js),
+  // read by the eye badge below and by the corner dot on the card itself.
+  const act = rowNewActivity(row);
   const rightBadges = [];
   // A mergeado card's PR-status badges reduce to just "✓ Merged" — CI/Draft/
   // Aprobado/Conflicts describe an open PR's review lifecycle, none of which
@@ -561,10 +641,27 @@ function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   if (s === 'mergeado') {
     rightBadges.push('<span class="badge badge-green">✓ Merged</span>');
   } else if (prs.length) {
+    // Diff size first, matching the reading order of render.js's own card
+    // (size/lines, then CI, then review state). Only ever present for a
+    // single-PR row — see rowSizeStats for why a multi-repo row gets none —
+    // and never on a mergeado card, whose diff is no longer a decision.
+    const size = rowSizeStats(row);
+    if (size) {
+      rightBadges.push(sizeBadgeHTML(size.lines));
+      rightBadges.push(lineCountHTML(size.lines, size.additions, size.deletions));
+    }
     const ci = prs.some(x => x.ci === 'failed')  ? 'failed'
              : prs.some(x => x.ci === 'pending') ? 'pending'
              : prs.some(x => x.ci === 'green')   ? 'green' : 'unknown';
     rightBadges.push(ciBadge(ci));
+    // Unseen human comments, summed over the row. classify() already reads the
+    // same counter to put the card in TU TURNO, but the state badge only says
+    // *that* it's your move — this says how much is waiting. render.js's flat
+    // card had this and nothing in the panel replaced it, so replacing that
+    // list without it would have quietly dropped the count.
+    if (act.comments > 0) {
+      rightBadges.push(`<span class="badge badge-blue" data-tip="${act.comments} comentario${act.comments > 1 ? 's' : ''} sin leer">👁 ${act.comments}</span>`);
+    }
     if (prs.some(x => x.draft)) rightBadges.push('<span class="badge badge-amber" data-tip="PR en borrador, no listo para review">Draft</span>');
     if (prs.some(x => x.changesReq)) rightBadges.push('<span class="badge badge-red" data-tip="Alguien pidió cambios">✗ Cambios</span>');
     else if (prs.some(x => x.approved)) rightBadges.push('<span class="badge badge-green" data-tip="Tiene al menos un approve">✓ Aprobado</span>');
@@ -636,6 +733,11 @@ function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   const hasPr = prs.length > 0;
   const identity = [];
   if (!p.ticket) identity.push('<span class="badge badge-gray">sin ticket</span>');
+  // A PR with nothing checked out for it is worth flagging on a machine that
+  // does have worktrees — it's work you can't resume without cloning it first.
+  // On the static deploy it is true of every row by construction, so it says
+  // nothing and is left out entirely (see procCardHTML's `hasLocal`).
+  if (hasLocal && p.synthetic) identity.push('<span class="badge badge-gray">sin worktree local</span>');
   if (detached > 0) identity.push(`<span class="badge badge-gray">${detached} detached</span>`);
   if (!hasPr) {
     identity.push(prPending
@@ -649,13 +751,25 @@ function procCardHTML(row, now, workspaceRoot, prPending, stitched) {
   // loud signal).
   const cardCls = hasPr ? ' proc-has-pr' : '';
 
+  // The same unseen-review dot render.js's flat card used: a review is a
+  // decision someone made about your work, and it should read before the
+  // badges do. Reviews, not comments — the eye badge covers those.
+  //
+  // It sits INSIDE .pr-badges rather than absolutely positioned at the card's
+  // top-right corner the way render.js places it: that corner is where a
+  // process card puts its state badge, so the two would overlap. Scoped CSS in
+  // index.html (#work-list .new-review-dot) turns off the absolute positioning
+  // for this one placement.
+  const reviewDot = act.reviews > 0
+    ? '<span class="new-review-dot" data-tip="Review nuevo sin ver"></span>' : '';
+
   return `<div class="pr-card${cardCls}" data-proc-key="${esc(p.key)}">
     <div class="pr-top">
       <div style="margin:0;flex:1;min-width:0;">
         <div class="pr-title" style="margin:0;">${titleInner}</div>
         ${aiTitleHTML}
       </div>
-      <div class="pr-badges">${procStateBadgeHTML(s)}</div>
+      <div class="pr-badges">${reviewDot}${procStateBadgeHTML(s)}</div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
       <div class="proc-identity">
@@ -708,11 +822,19 @@ function renderLocalPanel() {
   // later repaint ('unavailable'); the initial 'loading' paint happens before
   // there is anything to click.
   if (prPending) prFilter = PR_FILTER_ALL;
-  // The status row only narrows "con PR". The moment that stops being the
-  // active filter its selection is dropped, so a hidden row can never keep
-  // filtering the list from behind the scenes.
-  if (prFilter !== 'con') prStatusFilter = PR_FILTER_ALL;
-  const filterActive = prFilter !== PR_FILTER_ALL;
+  // Whether the con PR / sin PR chips are on screen at all. Degenerate (and so
+  // hidden) whenever every row has a PR — always the case with no sidecar. The
+  // selection is dropped along with the chips, so a row that cannot be clicked
+  // can never keep filtering from behind.
+  const splitMeaningful = prSplitIsMeaningful(sorted) && !prPending;
+  if (!splitMeaningful) prFilter = PR_FILTER_ALL;
+  // The status row only narrows "con PR" — except when the con/sin row is
+  // hidden, where it stands on its own and its selection is the only filter
+  // there is. Outside those two cases the selection is dropped, so a hidden
+  // row can never keep filtering the list from behind the scenes.
+  if (splitMeaningful && prFilter !== 'con') prStatusFilter = PR_FILTER_ALL;
+  if (prPending) prStatusFilter = PR_FILTER_ALL;
+  const filterActive = prFilter !== PR_FILTER_ALL || prStatusFilter !== PR_FILTER_ALL;
   const withPR = filterRowsByPR(sorted, prFilter);
   const visible = filterRowsByPRStatus(withPR, prStatusFilter);
   const conCount = sorted.filter(rowHasPR).length;
@@ -726,6 +848,7 @@ function renderLocalPanel() {
     abierto: withPR.filter(rowHasOpenPR).length,
     draft:   withPR.filter(rowHasDraftPR).length,
   };
+  const hasLocal = hasLocalPayload(payload);
 
   // mission-control's cards are fetched independently (initMissionPanel) and
   // may not have arrived yet, or may be off entirely — both render the panel
@@ -753,7 +876,7 @@ function renderLocalPanel() {
   const listHTML = topCards
     + (prShowNotice ? prNoticeHTML() : '')
     + (filterActive && !visible.length ? filterEmptyHTML(filterLabel()) : '')
-    + visible.map(r => procCardHTML(r, now, payload.workspaceRoot, prPending, stitch.perKey[r.proc.key] || null)).join('')
+    + visible.map(r => procCardHTML(r, now, payload.workspaceRoot, prPending, stitch.perKey[r.proc.key] || null, hasLocal)).join('')
     + ((!filterActive && (payload.looseSessions || []).length) ? looseRowHTML(payload.looseSessions) : '')
     + bottomCards;
 
@@ -792,7 +915,18 @@ function renderLocalPanel() {
   // Checked directly against status rather than trusting `mission` to always
   // exclude 'off' (which initMissionPanel happens to guarantee today) — the
   // chip's visibility rule shouldn't silently depend on that staying true.
-  renderFilterChips(filterCounts, statusCounts, prPending, !!(mission && mission.status !== 'off'));
+  renderFilterChips(filterCounts, statusCounts, prPending, !!(mission && mission.status !== 'off'), splitMeaningful);
+  // The badge next to the heading counted render.js's open own-PRs; with the
+  // panel always mounted the list under it is cards, so the badge counts those
+  // instead. Set after renderFilterChips and before the meta line for no
+  // reason beyond keeping the DOM writes together; renderOwnPRs sets the same
+  // node first on every GitHub answer, and this always runs after it (the wrap
+  // calls through, then repaints).
+  const countBadge = document.getElementById('own-count');
+  if (countBadge) {
+    countBadge.textContent = sorted.length > 0 ? String(sorted.length) : '';
+    countBadge.style.display = sorted.length > 0 ? '' : 'none';
+  }
   procEl.metaLine().textContent = metaText;
   procEl.metaLine().classList.remove('hidden');
   // Hovering surfaces the actual warning messages — otherwise "· N warnings"
@@ -863,6 +997,33 @@ function installFilterDelegation() {
   });
 }
 
+// Opening a PR from its card is the act of reading it — the same rule
+// render.js's flat list followed, ported here because replacing that list
+// without it would leave the 👁 count and the review dot with no way to ever
+// clear, and TU TURNO permanently stuck on a comment already read.
+//
+// Delegated on #work-list for the same reason the copy chips are: every
+// repaint replaces its innerHTML. Writes through state.ownActivity /
+// saveOwnActivity (both globals from render.js) so the seen-set is the very
+// same one enrichOwnPR reads on the next poll — otherwise the counters would
+// come straight back.
+function installActivityDelegation() {
+  procEl.workList().addEventListener('click', (e) => {
+    const link = e.target.closest('a[data-pr-id]');
+    if (!link) return;
+    const id = Number(link.dataset.prId);
+    const pr = (state.ownPRs || []).find(p => p.id === id);
+    // A merged PR (from state.mergedPRs) has no comment/review ids to store
+    // and no counters to clear, so there is deliberately nothing to do.
+    if (!pr) return;
+    state.ownActivity[id] = { commentIds: pr.allCommentIds || [],
+                              reviewIds:  pr.allReviewIds  || [] };
+    saveOwnActivity();
+    pr.newComments = 0; pr.newApprovals = 0; pr.newChanges = 0;
+    renderLocalPanel();
+  });
+}
+
 let procMounted = false;
 
 // Everything that makes the panel visible and interactive, exactly once.
@@ -875,23 +1036,40 @@ function mountPanel() {
 
   installCopyDelegation();
   installFilterDelegation();
-
-  if (typeof window.renderOwnPRs === 'function' && !window.renderOwnPRs.__procWrapped) {
-    const inner = window.renderOwnPRs;
-    const wrapped = function () {
-      // Every real invocation — including this very first one — means
-      // GitHub has answered at least once this page load. Set before
-      // calling through, so the renderLocalPanel() a few lines down (and
-      // any other observer of ownPRsFired) sees the post-answer state.
-      ownPRsFired = true;
-      const out = inner.apply(this, arguments);
-      try { renderLocalPanel(); } catch (e) { console.warn('proc panel render failed', e); }
-      return out;
-    };
-    wrapped.__procWrapped = true;
-    window.renderOwnPRs = wrapped;
-  }
+  installActivityDelegation();
 }
+
+// The renderOwnPRs wrap, installed at file load rather than on mount — it is
+// the only signal for "GitHub has answered at least once" (see prDataState) and
+// it depends on nothing the payload provides.
+//
+// It used to live inside mountPanel(), which meant it was installed only after
+// the /api/local fetch resolved. With a sidecar that ordering held by luck (the
+// collector answers in milliseconds, loadOwnPRs takes several round trips), but
+// the panel now also mounts on the *failure* path — and a failing fetch against
+// a static host can easily lose that race, leaving ownPRsFired false forever
+// and the meta line stuck on "cargando PRs…". Installing it eagerly removes the
+// race instead of relying on winning it. Safe to call before any payload
+// exists: renderLocalPanel() returns immediately while window.LOCAL_STATE is
+// null.
+function installOwnPRsWrap() {
+  if (typeof window.renderOwnPRs !== 'function' || window.renderOwnPRs.__procWrapped) return;
+  const inner = window.renderOwnPRs;
+  const wrapped = function () {
+    // Every real invocation — including this very first one — means
+    // GitHub has answered at least once this page load. Set before
+    // calling through, so the renderLocalPanel() a few lines down (and
+    // any other observer of ownPRsFired) sees the post-answer state.
+    ownPRsFired = true;
+    const out = inner.apply(this, arguments);
+    try { renderLocalPanel(); } catch (e) { console.warn('proc panel render failed', e); }
+    return out;
+  };
+  wrapped.__procWrapped = true;
+  window.renderOwnPRs = wrapped;
+}
+
+installOwnPRsWrap();
 
 // The panel must never survive a failed fetch, and a bug in it must never
 // cost the user sight of their own PRs. A stale cached payload rendered as
@@ -925,8 +1103,23 @@ function unmountPanel() {
     filterRow.classList.add('hidden');
     resetChipRow(filterRow);
   }
+  // Both inner rows go back to how index.html ships them: the main row shown
+  // (its own parent is what hides it), the status row hidden and indented.
+  const mainRow = procEl.filterMainRow();
+  if (mainRow) mainRow.classList.remove('hidden');
   const statusRow = procEl.statusRow();
-  if (statusRow) statusRow.classList.add('hidden');
+  if (statusRow) {
+    statusRow.classList.add('hidden');
+    statusRow.classList.add('proc-filter-sub');
+  }
+  // The heading badge counted cards while the panel was up; hand it back to
+  // the number render.js's own list shows under it.
+  const countBadge = document.getElementById('own-count');
+  if (countBadge) {
+    const n = (typeof state !== 'undefined' && state.ownPRs) ? state.ownPRs.length : 0;
+    countBadge.textContent = n > 0 ? String(n) : '';
+    countBadge.style.display = n > 0 ? '' : 'none';
+  }
   procEl.columnTitle().textContent = 'Mis PRs';
   // Mirrors the class added in renderLocalPanel(): the throw-safety wrapper
   // (mountPanelSafely) and the sidecar-gone path in initLocalPanel() both
@@ -965,10 +1158,9 @@ function showSidecarHint() {
 }
 
 async function initLocalPanel() {
-  let painted = false;
   try {
     const cached = localStorage.getItem(PROC_CACHE_KEY);
-    if (cached) { payloadFromCache = true; window.LOCAL_STATE = JSON.parse(cached); painted = mountPanelSafely(); }
+    if (cached) { payloadFromCache = true; window.LOCAL_STATE = JSON.parse(cached); mountPanelSafely(); }
   } catch { /* ignore a corrupt cache */ }
 
   let payload;
@@ -978,12 +1170,24 @@ async function initLocalPanel() {
     payload = await res.json();
     if (!payload || !Array.isArray(payload.processes)) throw new Error('bad payload');
   } catch {
-    // The fetch failed, so window.LOCAL_STATE (if anything) is still the
-    // stale cached payload — payloadFromCache stays true, on purpose.
-    if (painted) unmountPanel();
-    // This is the terminal path: no sidecar, so nothing will repaint this
-    // column again this page load. It is the one place the mission poll
-    // should stop — a ticking fetch against a 404 helps nobody.
+    // No sidecar (or it broke). This used to unmount the panel and hand the
+    // column back to render.js's flat PR list; now it mounts the panel over an
+    // empty local payload instead, so the deployed page gets the whole
+    // PR-derived half of the view — cards grouped by ticket, states, ordering
+    // and the abierto/draft filter — and only the local affordances are
+    // missing. Everything downstream is the same code path as with a sidecar.
+    //
+    // The cached payload is dropped rather than kept: a stale worktree list
+    // rendered as if it were current is the one thing worse than no worktree
+    // list at all, and that was the whole reason this branch unmounted before.
+    // payloadFromCache goes back to false along with it — there is no cached
+    // payload in play any more, so nothing should be suppressed as if there
+    // were (compareLinkAllowed).
+    window.LOCAL_STATE = emptyLocalPayload();
+    payloadFromCache = false;
+    mountPanelSafely();
+    // No sidecar means nothing will ever answer /api/mission either — a
+    // ticking fetch against a 404 helps nobody.
     stopMissionPoll();
     showSidecarHint();
     return;

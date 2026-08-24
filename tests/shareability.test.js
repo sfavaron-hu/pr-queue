@@ -37,6 +37,37 @@ test('no committed code contains a hardcoded home directory', () => {
   }
 });
 
+// The sidecar hint links into the README by anchor. Nothing checked that the
+// anchor still names a heading, so renaming one silently broke the link — which
+// is exactly what happened when "The active-processes panel (local only)" became
+// "The sidecar (local only)". Note what this can and cannot catch: it proves the
+// link and the heading agree WITHIN a commit, not that the deployed page's link
+// resolves — a heading rename always breaks the live link until it merges.
+function githubSlug(heading) {
+  return heading.toLowerCase()
+    .replace(/[^\w\s-]/g, '')   // GitHub drops punctuation, parens included
+    .trim()
+    .replace(/\s+/g, '-');
+}
+
+test('every README anchor the page links to names a real heading', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+
+  const slugs = new Set(
+    [...readme.matchAll(/^#{1,6}\s+(.+?)\s*$/gm)].map((m) => githubSlug(m[1])));
+
+  // Only self-links into this repo's own README carry an anchor we own.
+  const links = [...html.matchAll(/sfavaron-hu\/pr-queue#([\w-]+)/g)].map((m) => m[1]);
+  assert.ok(links.length > 0, 'expected at least one README anchor link in index.html');
+
+  for (const slug of links) {
+    assert.ok(slugs.has(slug),
+      `index.html links to README#${slug}, which no heading produces. ` +
+      `Headings produce: ${[...slugs].join(', ')}`);
+  }
+});
+
 test('the launchd installer derives its paths instead of baking them in', () => {
   const src = fs.readFileSync(path.join(ROOT, 'scripts/install-launchd.sh'), 'utf8');
   assert.match(src, /BASH_SOURCE/);
