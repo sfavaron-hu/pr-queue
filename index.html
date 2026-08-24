@@ -730,14 +730,21 @@ body.proc-panel-active #own-loading { display: none; }
   flex-wrap: wrap;
 }
 #sidecar-hint span { flex: 1; min-width: 250px; }
+/* Underlined with text-decoration rather than a border-bottom. A border is part
+   of the box model, so it made this link 2px taller than the button beside it
+   and — the two being centred against each other — pushed its text baseline
+   1.75px above the button's (measured). An underline is not layout: it draws
+   below the baseline and moves nothing. text-underline-offset buys back the
+   breathing room the old padding-bottom was there for. */
 #sidecar-hint a {
   color: var(--accent);
-  text-decoration: none;
-  border-bottom: 1px solid rgba(96,165,250,0.3);
-  transition: border-color 0.15s;
-  padding-bottom: 1px;
+  text-decoration: underline;
+  text-decoration-color: rgba(96,165,250,0.35);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.15s;
 }
-#sidecar-hint a:hover { border-color: var(--accent); }
+#sidecar-hint a:hover { text-decoration-color: var(--accent); }
 #sidecar-hint button {
   background: none;
   border: none;
@@ -746,6 +753,10 @@ body.proc-panel-active #own-loading { display: none; }
   padding: 0;
   font-size: 13px;
   font-family: var(--font);
+  /* Form controls don't inherit line-height from the UA stylesheet, so this
+     button's line box was 16px against the link's 19.5px — enough to offset
+     the two baselines even once the border above stopped adding height. */
+  line-height: inherit;
   transition: opacity 0.15s;
   flex-shrink: 0;
 }
