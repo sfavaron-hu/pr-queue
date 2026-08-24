@@ -1,19 +1,32 @@
 # pr-queue
 
-Dashboard for the PR review queue (other people's PRs worth reviewing, plus your own),
-with an optional local panel showing your **active processes** — worktrees, Claude Code
-sessions and PRs grouped by ticket-or-branch.
+Dashboard for the PR review queue (other people's PRs worth reviewing) next to a
+**Trabajo activo** panel for your own work: PRs grouped by ticket-or-branch, each
+card classified by whose turn it is. With a local sidecar running, the same cards
+also carry your worktrees and Claude Code sessions.
 
 ## The review queue
 
 Static site, no build step. Open the deployed page, paste a GitHub PAT with `repo`
 scope, pick your tribe label. Everything is stored in your browser's localStorage.
 
-## The active-processes panel (local only)
+## The Trabajo activo panel
 
-The panel needs a small local sidecar, because it reads your filesystem: git worktrees,
-their dirty/unpushed state, and `claude agents --json`. **None of that leaves your
-machine** — the deployed page has no access to it and never will.
+The right-hand column, always on. What it can show depends on what it can read.
+
+**Everything GitHub knows works on the deployed page**, with no sidecar and no
+install: your own PRs grouped by ticket (a ticket with a PR in two repos is one
+card), the *tu turno / esperando / en pausa / frío / mergeado* state on each,
+state-then-recency ordering, the `abierto` / `draft` filter, and the CI / review /
+size badges. All of it is the same code in `classify.js`, which is pure and has no
+idea whether a sidecar answered.
+
+**Everything about your filesystem needs the sidecar** below, because it reads your
+machine: git worktrees and their dirty/unpushed state, `claude agents --json`, the
+`cd` / `push` / `resume` / `prune` chips, and the mission-control cards. **None of
+that leaves your machine** — the deployed page has no access to it and never will.
+
+## The sidecar (local only)
 
 ```bash
 git clone https://github.com/sfavaron-hu/pr-queue.git
@@ -43,11 +56,23 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
 - **You have to re-enter your PAT.** `localhost:7777` is a different browser origin
   from the deployed page, so it has its own localStorage. Your token and tribe/repo
   config do not carry over. One-time cost, per origin.
-- **The panel is invisible without the sidecar.** On the deployed page `/api/local`
-  404s and the panel simply never mounts. That is deliberate: the same `main` serves
-  both audiences, and nothing about the review queue changes for someone who never
-  runs it. They do get one dismissible line telling them the panel exists — not
-  breaking anything for them was always the invariant, hiding it was never the point.
+- **Without the sidecar the panel mounts anyway, over an empty local payload.**
+  `/api/local` 404s, `window.LOCAL_STATE` becomes `emptyLocalPayload()`, and every
+  row comes out of `synthesizeProcesses()` — one card per PR, or per ticket when
+  several PRs share one. Nothing branches on "did the sidecar answer": the
+  worktree/session/warning segments of a card simply have nothing to iterate. This
+  replaced an earlier invariant ("someone who never runs the sidecar sees no change
+  at all"), on purpose: the PR-derived half of the panel is better than the flat
+  list it used to fall back to, and it costs a teammate nothing to receive.
+- **`render.js`'s flat "Mis PRs" list is now the crash fallback only.** If a panel
+  render throws, `unmountPanel()` hands the column back to it rather than leaving it
+  blank. It is not reachable any other way.
+- **`con PR` / `sin PR` hides itself when it cannot partition.** Every row on the
+  deployed page has a PR, so "sin PR" would always be 0 and "con PR" always
+  everything — two chips that can't change the list read as broken, not as
+  inapplicable. They go away and `abierto` / `draft` is promoted to stand alone
+  (see `prSplitIsMeaningful`). With a sidecar whose every worktree happens to have
+  a PR, the same thing correctly happens.
 - **No Claude Code? Still works.** You get worktrees and PRs, with no session rows,
   and a warning in the payload. Every source degrades on its own.
 - **Prunable worktrees show no git detail.** Their directory is gone, so `git status`
@@ -63,7 +88,8 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   unreviewed PR or CI in flight — not your move, however old. *En pausa* is neither:
   typically no PR yet, just a worktree that was set down — calling it "esperando" would
   claim someone is blocking work when no one is. *Frío* is nothing from anyone in 14 days.
-- **`con PR` / `sin PR` is a filter with an off state.** Neither chip selected means
+- **`con PR` / `sin PR` is a filter with an off state** (when it is shown at all —
+  see above). Neither chip selected means
   *todos*; clicking the lit chip turns it off, clicking the other one replaces it. The
   chips stay **disabled until GitHub's PR data lands** — until then every card looks
   "sin PR", so either chip would hide real work; their counts are blanked rather than
@@ -72,10 +98,14 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   "Sesiones sin worktree" row only appears with the filter off: it isn't a process and
   has no PR to file it under. In a background tab the chips can stay disabled for a
   while: `loadOwnPRs` skips hidden tabs, so PR data only lands once you look at it.
-- **`abierto` / `draft` is a second row, and only under `con PR`.** Asking which PR
-  status to keep has no answer for a row with no PR, so the row appears when `con PR`
-  lights up and its selection is dropped when that chip goes off — a hidden row never
-  keeps filtering from behind. `abierto` means open **and not a draft**: draft is the
+- **`abierto` / `draft` is a second row, subordinate to `con PR` only while that
+  chip exists.** Asking which PR status to keep has no answer for a row with no PR,
+  so while the `con PR` row is on screen this one appears when `con PR` lights up and
+  its selection is dropped when that chip goes off — a hidden row never keeps
+  filtering from behind. When the `con PR` split is hidden as degenerate (the
+  deployed page: every row has a PR), this row is unindented, shown unconditionally,
+  and its selection is the only filter there is. `abierto` means open **and not a
+  draft**: draft is the
   distinction being drawn, so the two are a split, not a superset. Their counts can sum
   to less than `con PR` (a *mergeado* row is neither) and can overlap (a multi-repo
   process with a draft in one repo and a ready PR in another is both) — the numbers on
