@@ -292,6 +292,87 @@ function filterRowsByPRStatus(rows, mode) {
   return test ? list.filter(test) : list.slice();
 }
 
+// Whether the "con PR / sin PR" split can partition anything at all. It can
+// only when at least one row has no PR — i.e. only when the payload brought
+// local work (a worktree or a session) that GitHub knows nothing about.
+//
+// The static deploy has no sidecar, so every row is synthesized from a PR:
+// "sin PR" is always 0 and "con PR" is always everything, and two chips that
+// cannot change the list are worse than no chips — they read as a filter that
+// is broken. Also true (correctly) of a sidecar whose every worktree already
+// has a PR. Callers hide the first chip row when this is false and show the
+// abierto/draft row on its own instead, since *that* split still partitions.
+function prSplitIsMeaningful(rows) {
+  return (rows || []).some(function (r) { return !rowHasPR(r); });
+}
+
+// The `+N −M` / size-badge stats a PR card shows, for a row that has exactly
+// one PR carrying them. Deliberately NOT summed across a multi-PR row: the
+// size badge is a bucket (XS/S/M/L/XL) and bucketing the sum of two repos'
+// diffs describes neither of them — a 40-line copy tweak next to a 900-line
+// refactor would read as one L. `null` means "don't show it", which is the
+// honest answer for a row that has no single diff to size.
+//
+// A PR that predates the fields (an older cache) or a merged PR out of
+// loadOwnPRs's second query (which never fetches additions/deletions) carries
+// no numbers, and returns null too rather than rendering a confident 0.
+function rowSizeStats(row) {
+  var prs = (row && row.prs) || [];
+  if (prs.length !== 1) return null;
+  var pr = prs[0];
+  if (typeof pr.additions !== 'number' || typeof pr.deletions !== 'number') return null;
+  return { additions: pr.additions, deletions: pr.deletions,
+           lines: pr.additions + pr.deletions };
+}
+
+// Unseen human activity across every PR in the row: comments the owner hasn't
+// opened, and reviews (approvals + change requests) they haven't seen. Summed,
+// unlike rowSizeStats — a count of unread things genuinely adds up across
+// repos, and the row is the thing the owner clicks.
+function rowNewActivity(row) {
+  var comments = 0, reviews = 0;
+  ((row && row.prs) || []).forEach(function (p) {
+    comments += p.newComments  || 0;
+    reviews  += (p.newApprovals || 0) + (p.newChanges || 0);
+  });
+  return { comments: comments, reviews: reviews };
+}
+
+// The `repo #number` line under a card's process key: every repo the process
+// touches, each annotated with the PR number(s) it has there.
+//
+// Built from the union of worktree repos and PR repos rather than one or the
+// other, because either alone loses something real. Worktrees alone (what the
+// panel used to print) drop the PR number — which is exactly what render.js's
+// flat "Mis PRs" list showed in this slot, and the only thing distinguishing
+// two PRs in the same repo. PRs alone drop a repo that has a worktree but no
+// PR yet, which is a multi-repo process's whole point: `humand-web #9884 ·
+// material-hu` says the second repo is still local, and dropping it would
+// leave the row's own `diff material-hu` chip referring to a repo the card
+// never names.
+//
+// Worktree order first (it is the payload's, i.e. the collector's), then any
+// PR repo not already named. A PR missing `repo` or a numeric `number`
+// contributes nothing rather than `undefined #undefined`; two PRs in one repo
+// share its entry (`pr-queue #12 #14`).
+function processRepoLabel(worktrees, prs) {
+  var names = [];
+  var seen = {};
+  function push(n) { if (n && !seen[n]) { seen[n] = true; names.push(n); } }
+  (worktrees || []).forEach(function (w) { push(w.repo); });
+  (prs || []).forEach(function (pr) { push(pr.repo); });
+
+  var numbers = {};
+  (prs || []).forEach(function (pr) {
+    if (!pr.repo || typeof pr.number !== 'number') return;
+    (numbers[pr.repo] = numbers[pr.repo] || []).push('#' + pr.number);
+  });
+
+  return names.map(function (n) {
+    return numbers[n] ? n + ' ' + numbers[n].join(' ') : n;
+  }).join(' · ');
+}
+
 // `headRef` is the preferred source, but it can be absent: the panel enriches
 // merged PRs with one (github.js fetchHeadRef) and that extra GET is allowed to
 // fail. The title is the fallback because a Jira ticket normally appears there
@@ -382,6 +463,9 @@ if (typeof module !== 'undefined' && module.exports) {
                      rowHasDraftPR: rowHasDraftPR, nextChipFilter: nextChipFilter,
                      filterRowsByPR: filterRowsByPR,
                      filterRowsByPRStatus: filterRowsByPRStatus,
+                     prSplitIsMeaningful: prSplitIsMeaningful,
+                     processRepoLabel: processRepoLabel,
+                     rowSizeStats: rowSizeStats, rowNewActivity: rowNewActivity,
                      prTicket: prTicket, attachOwnPRs: attachOwnPRs,
                      synthesizeProcesses: synthesizeProcesses,
                      PR_CONTRACT_FIELDS: PR_CONTRACT_FIELDS };
