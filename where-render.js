@@ -4,8 +4,12 @@
 var WHERE_ICON = { 'SÍ': '✓', 'NO': '✗', 'DESCONOCIDO': '?' };
 
 function whereRowHTML(row) {
+  // Un ref resuelto no alcanza para callar la razon: si no hay status (el
+  // compare fallo) el motivo tiene que verse igual que en cualquier otra fila
+  // no-PROBADO, no quedar detras de un ref que ya no explica nada solo.
   var detail = row.ref
-    ? esc(row.ref) + (row.status ? ' · ' + esc(row.status) : '')
+    ? esc(row.ref) + (row.status ? ' · ' + esc(row.status)
+                       : row.reason ? ' · ' + esc(row.reason) : '')
     : esc(row.reason || 'sin ref');
   var cmd = row.command
     ? '<code class="where-cmd" title="click para copiar">' + esc(row.command) + '</code>'
@@ -60,6 +64,8 @@ function renderWhere(report) {
       + (cands ? '<ul class="where-cands">' + cands + '</ul>' : '');
     return;
   }
+
+  document.getElementById('where-parent').classList.add('hidden');
 
   var backports = report.backports.length
     ? '<div class="where-bp">backports: ' + report.backports.map(function (b) {
