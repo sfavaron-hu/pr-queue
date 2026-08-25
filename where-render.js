@@ -24,9 +24,13 @@ function whereRowHTML(row) {
 
 function whereRepoHTML(r) {
   if (r.model === 'unknown') {
+    // La busqueda es org-wide: cualquier repo de HumandDev puede caer aca,
+    // y ahi los tres entornos son DESCONOCIDO, no solo stg/prd (ese era el
+    // caso especifico de humand-main-api, no la regla general). La etiqueta
+    // no puede nombrar entornos que no midio.
     return '<div class="where-repo"><b>' + esc(r.repo) + '</b>'
          + '<div class="where-row" data-conf="DESCONOCIDO">'
-         + '<span class="where-env">stg / prd</span><span class="where-val">?</span>'
+         + '<span class="where-env">entornos</span><span class="where-val">?</span>'
          + '<span class="where-detail">' + esc(r.reason) + '</span></div></div>';
   }
   var cross = '';
@@ -42,7 +46,7 @@ function whereRepoHTML(r) {
   }
   return '<div class="where-repo"><b>' + esc(r.repo) + '</b> '
        + '<a href="' + esc(r.pr.url) + '" target="_blank" rel="noopener">#' + r.pr.number + '</a> '
-       + '<code>' + esc(r.pr.mergeCommitSha.slice(0, 7)) + '</code>'
+       + '<code>' + esc((r.pr.mergeCommitSha || '').slice(0, 7)) + '</code>'
        + r.rows.map(whereRowHTML).join('') + cross + '</div>';
 }
 

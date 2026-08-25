@@ -121,7 +121,7 @@ los datos, exportada vía el bloque `module.exports` del final del archivo
 | `compare` falla en un repo | ese repo pasa a `PARCIAL`, los demás siguen |
 | `GET /pulls/{n}` falla en un PR | ese PR no cuenta, pero se cuenta: el reporte baja a `PARCIAL` y dice cuántos no se pudieron leer, nunca `NO_RESUELTO` con una afirmación no medida |
 | el run de CD existe pero su release no se pudo leer | nota propia en el cruce de prd, no la de "sin run" — son dos llamadas distintas |
-| clave sin formato de ticket | validación antes de gastar llamadas |
+| clave sin formato de ticket | validación antes de gastar llamadas, también para la clave del padre |
 
 Regla transversal: ningún fallo de red se convierte en `NO`. Un entorno que no se pudo
 leer es `DESCONOCIDO`, nunca "no está".

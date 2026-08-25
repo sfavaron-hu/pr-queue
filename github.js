@@ -209,7 +209,7 @@ async function whereCompare(repo, base, head) {
 
 // Solo fetchea y empareja: cual de los matches es "el actual" es un juicio y
 // vive en where.js (latestTag). El fetch de tags vive en whereRepoData, una
-// vez por repo, no una vez por target (6 targets = 6 GETs identicos si esto
+// vez por repo, no una vez por target (5 targets = 5 GETs identicos si esto
 // tambien fetcheara).
 function whereMatchTag(tags, env, region) {
   const names = (tags || []).map(t => t.name);

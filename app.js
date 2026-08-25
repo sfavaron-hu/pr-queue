@@ -282,15 +282,21 @@ if (state.token) {
 // ── /where: buscador de ticket ──────────────────────────────────
 var whereForm = document.getElementById('where-form');
 if (whereForm) {
+  var WHERE_KEY_RE = /^[A-Z][A-Z0-9]+-\d+$/;
   whereForm.addEventListener('submit', function (e) {
     e.preventDefault();
     document.getElementById('error-msg').classList.add('hidden');
     var key = document.getElementById('where-key').value.trim().toUpperCase();
-    if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key)) {
+    if (!WHERE_KEY_RE.test(key)) {
       showError('/where: "' + key + '" no tiene forma de clave de ticket');
       return;
     }
-    runWhere(key, document.getElementById('where-parent').value.trim().toUpperCase() || null);
+    var parentKey = document.getElementById('where-parent').value.trim().toUpperCase() || null;
+    if (parentKey && !WHERE_KEY_RE.test(parentKey)) {
+      showError('/where: la clave del padre "' + parentKey + '" no tiene forma de clave de ticket');
+      return;
+    }
+    runWhere(key, parentKey);
   });
 }
 document.addEventListener('click', function (e) {
