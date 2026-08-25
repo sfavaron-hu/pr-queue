@@ -41,6 +41,7 @@ test('sin PR propio el reporte es NO_RESUELTO aunque haya candidatos del padre',
   assert.strictEqual(r.confidence, 'NO_RESUELTO');
   assert.strictEqual(r.parentOnly, true);
   assert.strictEqual(r.candidates.length, 1);
+  assert.strictEqual(r.repos.length, 0);
 });
 
 test('si las dos fuentes de prd discrepan, todo el reporte baja a PARCIAL', () => {
@@ -84,4 +85,24 @@ test('mobile devuelve las seis filas', () => {
   }));
   assert.deepStrictEqual(r.repos[0].rows.map(x => x.id),
     ['dev', 'dev-eu', 'stg', 'stg-eu', 'prd', 'prd-eu']);
+});
+
+test('ref error + prod disagreement nunca cae a PARCIAL: DESCONOCIDO se mantiene', () => {
+  const i = input();
+  i.perRepo['humand-web'].refs.prd = { error: '404 variable no existe' };
+  i.perRepo['humand-web'].compares.prd = null;
+  i.perRepo['humand-web'].releaseRun.targetCommitish = 'release-2026.08.19';
+  const r = buildWhereReport(i);
+  const prdRow = r.repos[0].rows[2];
+  assert.strictEqual(prdRow.value, 'DESCONOCIDO');
+  assert.strictEqual(prdRow.confidence, 'DESCONOCIDO');
+});
+
+test('prd PROBADO + prod disagreement degrada a PARCIAL', () => {
+  const i = input();
+  i.perRepo['humand-web'].releaseRun.targetCommitish = 'release-2026.08.19';
+  const r = buildWhereReport(i);
+  const prdRow = r.repos[0].rows[2];
+  assert.strictEqual(prdRow.confidence, 'PARCIAL');
+  assert.strictEqual(prdRow.value, 'NO');
 });

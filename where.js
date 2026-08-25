@@ -133,7 +133,7 @@ function buildWhereReport(input) {
     var rows = envTargets(repo).map(function (t) {
       var v = targetVerdict(data.refs[t.id], data.compares[t.id]);
       if (v.confidence !== 'PROBADO') degraded = true;
-      if (cross && cross.agree === false && t.env === 'prd') v.confidence = 'PARCIAL';
+      if (cross && cross.agree === false && t.env === 'prd' && v.confidence === 'PROBADO') v.confidence = 'PARCIAL';
       return {
         id: t.id, env: t.env, region: t.region,
         value: v.value, confidence: v.confidence, ref: v.ref,
