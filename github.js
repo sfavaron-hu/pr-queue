@@ -199,12 +199,14 @@ async function whereCompare(repo, base, head) {
   }
 }
 
-// Solo empareja: el fetch de tags vive en whereRepoData, una vez por repo, no
-// una vez por target (6 targets = 6 GETs identicos si esto tambien fetcheara).
+// Solo fetchea y empareja: cual de los matches es "el actual" es un juicio y
+// vive en where.js (latestTag). El fetch de tags vive en whereRepoData, una
+// vez por repo, no una vez por target (6 targets = 6 GETs identicos si esto
+// tambien fetcheara).
 function whereMatchTag(tags, env, region) {
-  const re = tagMatcher(env, region);
-  const hit = (tags || []).find(t => re.test(t.name));
-  return hit ? { ref: hit.name } : { error: `sin tag ${env}${region ? '-' + region : ''}` };
+  const names = (tags || []).map(t => t.name);
+  const hit = latestTag(names, env, region);
+  return hit ? { ref: hit } : { error: `sin tag ${env}${region ? '-' + region : ''}` };
 }
 
 async function whereReleaseRun(repo) {

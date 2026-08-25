@@ -47,6 +47,41 @@ function tagMatcher(env, region) {
   return new RegExp('^v\\d+\\.\\d+\\.\\d+-' + suffix + '-\\d+$');
 }
 
+// (major, minor, patch, build) — todos numericos, para que "10" no ordene
+// antes que "9". Solo se llama sobre nombres que ya matchearon tagMatcher.
+var TAG_TUPLE_RE = /^v(\d+)\.(\d+)\.(\d+)-.+-(\d+)$/;
+function tagTuple(name) {
+  var m = TAG_TUPLE_RE.exec(name);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])] : [0, 0, 0, 0];
+}
+
+function compareTuples(a, b) {
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+// GitHub /tags ordena lexicografico descendente, no por version: con un
+// contador de build multi-digito eso pone v4.3.4-dev-9 antes que
+// v4.3.4-dev-11. "Cual es el tag actual" es un juicio — vive aca, no en
+// github.js — y se decide comparando tuplas numericas sobre TODOS los
+// matches, nunca tomando el primero de la lista.
+function latestTag(tags, env, region) {
+  var re = tagMatcher(env, region);
+  var best = null;
+  var bestTuple = null;
+  (tags || []).forEach(function (name) {
+    if (!re.test(name)) return;
+    var tuple = tagTuple(name);
+    if (!best || compareTuples(tuple, bestTuple) > 0) {
+      best = name;
+      bestTuple = tuple;
+    }
+  });
+  return best;
+}
+
 function searchQuery(key, org) {
   return key + ' org:' + org + ' is:pr';
 }
@@ -163,7 +198,8 @@ function buildWhereReport(input) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { WHERE_UNKNOWN: WHERE_UNKNOWN, ENV_MODELS: ENV_MODELS,
                      envModel: envModel, envTargets: envTargets,
-                     tagMatcher: tagMatcher, searchQuery: searchQuery, resolvePRs: resolvePRs,
+                     tagMatcher: tagMatcher, latestTag: latestTag,
+                     searchQuery: searchQuery, resolvePRs: resolvePRs,
                      targetVerdict: targetVerdict, prodCross: prodCross, reproCommand: reproCommand,
                      buildWhereReport: buildWhereReport };
 }
