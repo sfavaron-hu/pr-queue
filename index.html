@@ -685,6 +685,114 @@ body.proc-panel-active #own-loading { display: none; }
 #own-pr-list .btn-sm, #work-list .btn-sm   { font-size: 11px; padding: 3px 8px; }
 #own-pr-list .pr-author img, #work-list .pr-author img { width: 14px; height: 14px; }
 
+/* ── /where: buscador de ticket ── */
+.where-box { margin-bottom: 14px; }
+.where-box form { display: flex; flex-direction: column; gap: 6px; }
+.where-box .input { font-size: 12px; padding: 6px 10px; }
+.where-box .btn { align-self: flex-start; }
+
+.where-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 10px 0 6px;
+}
+.where-conf { font-family: var(--mono); color: var(--text); text-transform: none; letter-spacing: normal; }
+
+.where-repo {
+  background: rgba(127,127,127,.06);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.where-repo b { color: var(--text); }
+.where-repo > a { color: var(--accent); text-decoration: none; }
+.where-repo > a:hover { text-decoration: underline; }
+.where-repo > code {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.where-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 11.5px;
+}
+.where-env { font-family: var(--mono); color: var(--muted); width: 62px; flex-shrink: 0; }
+.where-val { width: 12px; text-align: center; font-weight: 700; }
+.where-detail { flex: 1; min-width: 0; color: var(--muted); }
+
+/* La confianza de la fila, no el valor SÍ/NO/DESCONOCIDO, es lo que se
+   colorea: PROBADO es lo unico que se midio de verdad. */
+.where-row[data-conf="PROBADO"] .where-val { color: var(--green); }
+.where-row[data-conf="PARCIAL"] .where-val { color: var(--amber); }
+.where-row[data-conf="PARCIAL"] .where-detail { color: var(--amber); }
+.where-row[data-conf="DESCONOCIDO"] .where-val { color: var(--muted); }
+.where-row[data-conf="DESCONOCIDO"] .where-detail { color: var(--text); opacity: .7; }
+
+.where-cmd {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--bg);
+  padding: 3px 7px;
+  border-radius: 3px;
+  border: 1px dashed var(--border);
+  cursor: pointer;
+  white-space: pre-wrap;
+  word-break: break-all;
+  transition: border-color 0.15s, background 0.15s;
+}
+.where-cmd:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.where-warn {
+  background: rgba(251,191,36,0.08);
+  border: 1px solid rgba(251,191,36,0.25);
+  border-radius: 6px;
+  padding: 7px 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--amber);
+  line-height: 1.5;
+}
+
+/* Nota apagada: no es una discrepancia, es una medicion que nunca se pudo
+   hacer. Silenciar esto seria indistinguible de "prd esta bien". */
+.where-note {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.where-bp { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.where-bp a { color: var(--accent); text-decoration: none; }
+.where-bp a:hover { text-decoration: underline; }
+
+.where-cands {
+  margin: 8px 0 0 16px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.where-cands a { color: var(--accent); text-decoration: none; }
+.where-cands a:hover { text-decoration: underline; }
+.where-cands i { opacity: .7; }
+
 /* ── Tooltip ── */
 #tip {
   position: fixed;
@@ -936,6 +1044,14 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
     <div class="own-column-header">
       <span id="own-column-title">Mis PRs</span> <span class="count-badge" id="own-count"></span>
     </div>
+    <div class="where-box">
+      <form id="where-form" autocomplete="off">
+        <input type="text" id="where-key" class="input" placeholder="SQSH-1234" />
+        <input type="text" id="where-parent" class="input hidden" placeholder="clave del padre" />
+        <button type="submit" class="btn btn-primary" id="where-btn">¿Dónde está?</button>
+      </form>
+      <div id="where-result"></div>
+    </div>
     <div class="proc-meta-line hidden" id="proc-meta-line"></div>
     <div class="proc-filter hidden" id="proc-filter">
       <div class="proc-filter-row" id="proc-filter-main">
@@ -967,6 +1083,7 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
 <script src="where.js"></script>
 <script src="mission.js"></script>
 <script src="render.js"></script>
+<script src="where-render.js"></script>
 <script src="app.js"></script>
 <script src="local.js"></script>
 

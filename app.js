@@ -278,3 +278,22 @@ if (state.token) {
     }).catch(() => { loadPRs(); });
   }
 }
+
+// ── /where: buscador de ticket ──────────────────────────────────
+var whereForm = document.getElementById('where-form');
+if (whereForm) {
+  whereForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var key = document.getElementById('where-key').value.trim().toUpperCase();
+    if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key)) {
+      showError('/where: "' + key + '" no tiene forma de clave de ticket');
+      return;
+    }
+    runWhere(key, document.getElementById('where-parent').value.trim().toUpperCase() || null);
+  });
+}
+document.addEventListener('click', function (e) {
+  if (e.target.classList && e.target.classList.contains('where-cmd')) {
+    navigator.clipboard.writeText(e.target.textContent);
+  }
+});
