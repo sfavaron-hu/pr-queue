@@ -20,7 +20,7 @@ test('web resuelve stg y prd por variable de Actions', () => {
 
 test('hu-translations usa ramas fijas', () => {
   assert.deepStrictEqual(envModel('hu-translations'),
-    { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod' });
+    { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod', trunk: 'main' });
 });
 
 test('mobile son seis destinos, no tres', () => {

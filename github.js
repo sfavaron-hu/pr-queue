@@ -253,11 +253,11 @@ async function whereRepoData(repo) {
            prodVar: prd.ref, releaseRun };
 }
 
-// El representante de cada repo se elige por `resolvePRs(pulls, key).contributing`
-// — el mismo array que usara buildWhereReport — para que fila mostrada y estado
-// de compare vengan siempre del mismo PR. `pulls` se ordena por numero antes de
-// elegir para que dos recomputos de la misma consulta acuerden el mismo sha:
-// `search/issues` no devuelve orden estable.
+// El representante de cada repo se elige por `representativeByRepo` (where.js)
+// — la misma funcion que usara buildWhereReport — para que fila mostrada y
+// estado de compare vengan siempre del mismo PR. `pulls` se ordena por numero
+// antes de elegir para que dos recomputos de la misma consulta acuerden el
+// mismo sha: `search/issues` no devuelve orden estable.
 async function whereFetchAll(key, parentKey) {
   let items = await whereSearchPRs(key);
   if (items.length === 0 && parentKey) {
@@ -273,8 +273,7 @@ async function whereFetchAll(key, parentKey) {
   }
   pulls.sort((a, b) => a.number - b.number);
 
-  const byRepo = {};
-  resolvePRs(pulls, key).contributing.forEach(p => { if (!byRepo[p.repo]) byRepo[p.repo] = p; });
+  const byRepo = representativeByRepo(pulls, key);
 
   const perRepo = {};
   for (const repo of Object.keys(byRepo)) {

@@ -21,7 +21,9 @@ con la evidencia cruda y el comando que lo reproduce: la página no pide que le 
 **1 · ticket → PRs.** `GET /search/issues?q=<KEY>+org:HumandDev+is:pr`, y por hit
 `GET /repos/{o}/{r}/pulls/{n}` para `merged`, `merge_commit_sha`, `base.ref`, `head.ref`.
 
-Solo los PRs con `base.ref === 'develop'` alimentan el cómputo. Los `backport/*-fix-*` se
+Solo los PRs mergeados al **tronco** del repo alimentan el cómputo — `develop` para
+`humand-web`, `humand-backoffice`, `humand-mobile` y `humand-main-api`; `main` para
+`material-hu` y `hu-translations`, que no tienen rama `develop`. Los `backport/*-fix-*` se
 listan como evidencia adicional — son consecuencia del tren, no origen del cambio.
 
 Sin hits por clave propia el resultado es `NO_RESUELTO` y la UI ofrece un campo para la
@@ -34,10 +36,14 @@ admin:
 | repo | dev | stg | prd |
 |---|---|---|---|
 | `humand-web`, `humand-backoffice` | `develop` | var `REACT_STAGING_BRANCH` | var `REACT_PRODUCTION_BRANCH` |
-| `material-hu` | `develop` | idem | idem |
+| `material-hu` | `main` | idem | idem |
 | `hu-translations` | `main` | `staging` | `prod` |
 | `humand-mobile` | último tag `v*-dev-*` | `v*-stg-*` | `v*-prod-*` |
 | `humand-main-api` | `develop` | `DESCONOCIDO` | `DESCONOCIDO` |
+
+`material-hu` no tiene rama `develop` (`GET /git/ref/heads/develop` 404). Medido contra los
+últimos 30 PRs cerrados+mergeados: `main` 26 / `develop` 0. Su tronco y su ref `dev` son
+los dos `main`; lo mismo mide `hu-translations` (`main` 27 / `develop` 0).
 
 `humand-main-api` figura `branch_model: release-date` en `repos.json`, pero sus variables
 son `AWS_DEV_ACCOUNT` / `AWS_PFM_ACCOUNT` / `LOKALISE_PROJECT_ID` — ninguna `REACT_*`.
@@ -61,7 +67,7 @@ conocidas.
 
 | Nivel | Condición | Qué se muestra |
 |---|---|---|
-| `PROBADO` | clave propia + PR mergeado a `develop` + `compare` `ahead`/`identical` | PR, sha, ref, fecha, comando |
+| `PROBADO` | clave propia + PR mergeado al tronco del repo + `compare` `ahead`/`identical` | PR, sha, ref, fecha, comando |
 | `PARCIAL` | resuelto en unos repos y no en otros; repo sin modelo; o las dos fuentes de prd discrepan | además, qué quedó sin resolver y por qué |
 | `NO_RESUELTO` | sin hits por clave propia; solo candidatos del padre | los candidatos, marcados como "del padre, no prueba nada" |
 | `DESCONOCIDO` | el repo no tiene modelo de entorno conocido (`humand-main-api`) | la fila visible, sin veredicto, con el motivo |
@@ -83,8 +89,8 @@ Sin build step: scripts planos en `index.html:963-970`, en ese orden.
 
 | archivo | qué hace | puro |
 |---|---|---|
-| `github.js` | agrega `searchPRsByKey`, `repoVariable`, `compareRefs`, `latestTag`, `lastReleaseRun` | no (I/O) |
-| `where.js` (nuevo) | recibe lo fetcheado y devuelve veredictos + confianza + evidencia | **sí** |
+| `github.js` | agrega `searchPRsByKey`, `repoVariable`, `compareRefs`, `lastReleaseRun`; fetchea tags y llama a `latestTag` | no (I/O) |
+| `where.js` (nuevo) | recibe lo fetcheado y devuelve veredictos + confianza + evidencia; incluye `latestTag` — cuál tag es "el actual" es un juicio, no un fetch | **sí** |
 | `where-render.js` (nuevo) | filas por repo/entorno, bloque de evidencia, comando copiable | no (DOM) |
 
 `where.js` sigue el contrato de `classify.js`: función pura, sin saber de dónde vinieron

@@ -66,3 +66,18 @@ test('un backport sin mergear de clave ajena no aparece en backports', () => {
   ], 'SQSH-1');
   assert.strictEqual(r.backports.length, 0, 'backports debe estar vacío para unmerged');
 });
+
+test('material-hu no tiene develop: un PR mergeado a main aporta', () => {
+  const r = resolvePRs([pull({ repo: 'material-hu', baseRef: 'main' })], 'SQSH-1');
+  assert.strictEqual(r.contributing.length, 1);
+});
+
+test('un PR de material-hu mergeado a develop no aporta: esa rama no existe ahi', () => {
+  const r = resolvePRs([pull({ repo: 'material-hu', baseRef: 'develop' })], 'SQSH-1');
+  assert.strictEqual(r.contributing.length, 0);
+});
+
+test('hu-translations tambien usa main como tronco', () => {
+  const r = resolvePRs([pull({ repo: 'hu-translations', baseRef: 'main' })], 'SQSH-1');
+  assert.strictEqual(r.contributing.length, 1);
+});

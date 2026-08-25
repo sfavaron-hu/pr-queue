@@ -6,13 +6,19 @@ var WHERE_UNKNOWN = 'DESCONOCIDO';
 // Medido el 2026-08-25 contra la API con un PAT `repo` sin admin.
 // 'react' = la rama de cada entorno vive en una variable de Actions.
 // 'tags'  = no hay ramas de entorno; el entorno esta en el nombre del tag.
+// `trunk` es la rama a la que se mergean los PRs que cuentan como origen del
+// cambio (resolvePRs la usa) — no siempre coincide con el ref `dev` que se
+// mide como destino de despliegue, aunque en la mayoria de estos repos son
+// la misma rama.
+// material-hu no tiene rama `develop` (verificado: `git/ref/heads/develop`
+// 404): su tronco y su entorno dev son los dos `main`.
 var ENV_MODELS = {
-  'humand-web':        { kind: 'react', dev: 'develop' },
-  'humand-backoffice': { kind: 'react', dev: 'develop' },
-  'material-hu':       { kind: 'react', dev: 'develop' },
-  'hu-translations':   { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod' },
-  'humand-mobile':     { kind: 'tags', regions: ['', 'eu'] },
-  'humand-main-api':   { kind: 'unknown', dev: 'develop',
+  'humand-web':        { kind: 'react', dev: 'develop', trunk: 'develop' },
+  'humand-backoffice': { kind: 'react', dev: 'develop', trunk: 'develop' },
+  'material-hu':       { kind: 'react', dev: 'main', trunk: 'main' },
+  'hu-translations':   { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod', trunk: 'main' },
+  'humand-mobile':     { kind: 'tags', trunk: 'develop', regions: ['', 'eu'] },
+  'humand-main-api':   { kind: 'unknown', trunk: 'develop',
                          reason: 'sin variables REACT_*; despliega por AWS (AWS_DEV_ACCOUNT/AWS_PFM_ACCOUNT)' },
 };
 
@@ -86,15 +92,18 @@ function searchQuery(key, org) {
   return key + ' org:' + org + ' is:pr';
 }
 
-// Solo los PRs mergeados a develop mueven el commit por los entornos. Los
-// backport/* existen por el tren y se muestran como evidencia, no como origen.
-// Un hit cuyo matchedKey no es la clave consultada vino por la clave del padre,
+// Solo los PRs mergeados al tronco del repo mueven el commit por los
+// entornos (cada repo declara el suyo en ENV_MODELS: 'develop' para la
+// mayoria, 'main' para material-hu y hu-translations). Los backport/*
+// existen por el tren y se muestran como evidencia, no como origen. Un hit
+// cuyo matchedKey no es la clave consultada vino por la clave del padre,
 // que comparten todos los sub-tickets: sirve para mirar, no prueba nada.
 function resolvePRs(pulls, key) {
   var own = pulls.filter(function (p) { return p.matchedKey === key; });
+  function isTrunk(p) { return p.baseRef === envModel(p.repo).trunk; }
   return {
     contributing: own.filter(function (p) {
-      return p.merged && p.baseRef === 'develop' && !BACKPORT_RE.test(p.headRef || '');
+      return p.merged && isTrunk(p) && !BACKPORT_RE.test(p.headRef || '');
     }),
     backports: own.filter(function (p) {
       return p.merged && BACKPORT_RE.test(p.headRef || '');
@@ -104,6 +113,18 @@ function resolvePRs(pulls, key) {
     candidates: pulls,
     parentOnly: own.length === 0 && pulls.length > 0,
   };
+}
+
+// El representante de cada repo es el primer PR (contributing, ordenado por
+// numero antes de llamar) mergeado a su tronco: fila mostrada y estado de
+// compare tienen que venir siempre del mismo PR. Compartida por where.js
+// (buildWhereReport) y github.js (whereFetchAll) para que no puedan divergir.
+function representativeByRepo(pulls, key) {
+  var byRepo = {};
+  resolvePRs(pulls, key).contributing.forEach(function (p) {
+    if (!byRepo[p.repo]) byRepo[p.repo] = p;
+  });
+  return byRepo;
 }
 
 // Un fallo de lectura jamas se convierte en "no esta": la diferencia entre
@@ -148,10 +169,7 @@ function reproCommand(org, repo, sha, ref) {
 
 function buildWhereReport(input) {
   var resolved = resolvePRs(input.pulls || [], input.key);
-  var byRepo = {};
-  resolved.contributing.forEach(function (p) {
-    if (!byRepo[p.repo]) byRepo[p.repo] = p;
-  });
+  var byRepo = representativeByRepo(input.pulls || [], input.key);
 
   var degraded = false;
   var repos = Object.keys(byRepo).sort().map(function (repo) {
@@ -200,6 +218,7 @@ if (typeof module !== 'undefined' && module.exports) {
                      envModel: envModel, envTargets: envTargets,
                      tagMatcher: tagMatcher, latestTag: latestTag,
                      searchQuery: searchQuery, resolvePRs: resolvePRs,
+                     representativeByRepo: representativeByRepo,
                      targetVerdict: targetVerdict, prodCross: prodCross, reproCommand: reproCommand,
                      buildWhereReport: buildWhereReport };
 }
