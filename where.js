@@ -92,6 +92,10 @@ function targetVerdict(refInfo, compareStatus) {
 // con event=release dice que DESPLEGO. El 2026-08-11 discreparon. Se reportan las
 // dos y el veredicto baja a PARCIAL; elegir una es inventar.
 function prodCross(varBranch, releaseRun) {
+  if (!varBranch) {
+    return { agree: null, varBranch: varBranch,
+             note: 'no se pudo leer REACT_PRODUCTION_BRANCH' };
+  }
   if (!releaseRun) {
     return { agree: null, varBranch: varBranch,
              note: 'sin run de CD con event=release y conclusion=success' };

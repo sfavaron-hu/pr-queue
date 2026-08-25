@@ -46,6 +46,13 @@ test('cuando discrepan no se elige una: se reportan las dos', () => {
   assert.strictEqual(c.target, 'release-2026.08.11');
 });
 
+test('sin variable de produccion el cruce no afirma nada, y no es un NO', () => {
+  const c = prodCross(undefined,
+    { tag: '2026.08.11.03', targetCommitish: 'release-2026.08.11', createdAt: '2026-08-20T15:41:21Z' });
+  assert.strictEqual(c.agree, null);
+  assert.match(c.note, /REACT_PRODUCTION_BRANCH|variable/);
+});
+
 test('sin run de release el cruce no afirma nada', () => {
   const c = prodCross('release-2026.08.11', null);
   assert.strictEqual(c.agree, null);

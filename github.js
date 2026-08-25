@@ -175,7 +175,10 @@ async function whereRepoVariable(repo, name) {
   try {
     const d = await apiFetch(`${API}/repos/${state.config.org}/${repo}/actions/variables/${name}`);
     return { ref: d.value };
-  } catch (e) { return { error: String(e.message || e) }; }
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return { error: String(e.message || e) };
+  }
 }
 
 // Un rate limit no puede degradarse a PARCIAL en silencio: si la API dejo de
@@ -196,13 +199,12 @@ async function whereCompare(repo, base, head) {
   }
 }
 
-async function whereLatestTag(repo, env, region) {
-  try {
-    const re = tagMatcher(env, region);
-    const tags = await apiFetch(`${API}/repos/${state.config.org}/${repo}/tags?per_page=100`);
-    const hit = (tags || []).find(t => re.test(t.name));
-    return hit ? { ref: hit.name } : { error: `sin tag ${env}${region ? '-' + region : ''}` };
-  } catch (e) { return { error: String(e.message || e) }; }
+// Solo empareja: el fetch de tags vive en whereRepoData, una vez por repo, no
+// una vez por target (6 targets = 6 GETs identicos si esto tambien fetcheara).
+function whereMatchTag(tags, env, region) {
+  const re = tagMatcher(env, region);
+  const hit = (tags || []).find(t => re.test(t.name));
+  return hit ? { ref: hit.name } : { error: `sin tag ${env}${region ? '-' + region : ''}` };
 }
 
 async function whereReleaseRun(repo) {
@@ -230,7 +232,14 @@ async function whereRepoData(repo) {
   }
   if (model.kind === 'tags') {
     const refs = {};
-    for (const t of envTargets(repo)) refs[t.id] = await whereLatestTag(repo, t.env, t.region);
+    try {
+      const tags = await apiFetch(`${API}/repos/${state.config.org}/${repo}/tags?per_page=100`);
+      for (const t of envTargets(repo)) refs[t.id] = whereMatchTag(tags, t.env, t.region);
+    } catch (e) {
+      if (whereIsRateLimit(e)) throw e;
+      const msg = String(e.message || e);
+      for (const t of envTargets(repo)) refs[t.id] = { error: msg };
+    }
     return { refs, compares: {} };
   }
   const [stg, prd, releaseRun] = await Promise.all([
@@ -254,7 +263,11 @@ async function whereFetchAll(key, parentKey) {
   }
   const pulls = [];
   for (const it of items.filter(i => i.pullsUrl)) {
-    try { pulls.push(await wherePullDetail(it)); } catch { /* un PR ilegible no invalida el resto */ }
+    try { pulls.push(await wherePullDetail(it)); }
+    catch (e) {
+      if (whereIsRateLimit(e)) throw e;
+      /* un PR ilegible no invalida el resto */
+    }
   }
   pulls.sort((a, b) => a.number - b.number);
 
