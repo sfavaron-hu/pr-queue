@@ -103,6 +103,7 @@ los datos, exportada vía el bloque `module.exports` del final del archivo
 |---|---|
 | sin PAT | el mismo cartel de conexión que ya usa la página |
 | 403 rate limit | se muestra el reset y **no** se dibuja veredicto parcial silencioso |
+| 403 sin nombrar rate limit (permiso, SAML/org-access) | no se relanza: es local a ese destino, degrada ese repo a `DESCONOCIDO` como cualquier otro `{error}` en banda |
 | 404 en una variable de repo | ese repo pasa a `DESCONOCIDO`, no rompe la consulta |
 | `compare` falla en un repo | ese repo pasa a `PARCIAL`, los demás siguen |
 | clave sin formato de ticket | validación antes de gastar llamadas |

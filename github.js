@@ -184,8 +184,16 @@ async function whereRepoVariable(repo, name) {
 // Un rate limit no puede degradarse a PARCIAL en silencio: si la API dejo de
 // contestar, el reporte entero es sospechoso y tiene que gritar. Cualquier otro
 // fallo si es local a este destino.
+//
+// GitHub tambien devuelve 403 para "Resource not accessible by personal
+// access token" y para denegaciones SAML/org-access — mas probable en
+// actions/variables con un PAT angosto. Esos son fallos LOCALES a ese
+// destino, no del rate limit global, asi que el mensaje tiene que nombrar el
+// rate limit explicitamente. GitHub lo hace con dos frases: "API rate limit
+// exceeded" y "You have exceeded a secondary rate limit" — ambas matchean.
 function whereIsRateLimit(e) {
-  return /^GitHub 403/.test(String(e && e.message || e));
+  var msg = String(e && e.message || e);
+  return /^GitHub 403/.test(msg) && /rate limit/i.test(msg);
 }
 
 async function whereCompare(repo, base, head) {
