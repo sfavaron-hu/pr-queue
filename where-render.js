@@ -74,10 +74,10 @@ function renderWhere(report) {
     }).join('');
     document.getElementById('where-parent').classList.remove('hidden');
     var warn = report.failedPulls
-      ? '<div class="where-warn">No se pudo confirmar si hay PR mergeado a develop con esta clave: '
+      ? '<div class="where-warn">No se pudo confirmar si hay PR mergeado al tronco con esta clave: '
         + report.failedPulls + (report.failedPulls === 1 ? ' PR no se pudo leer.' : ' PRs no se pudieron leer.')
         + '</div>'
-      : '<div class="where-warn">Sin PR mergeado a develop con esta clave. '
+      : '<div class="where-warn">Sin PR mergeado al tronco con esta clave. '
         + 'Si el trabajo vive en un PR titulado con la clave del padre, tipeala arriba.</div>';
     box.innerHTML = head + warn + (cands ? '<ul class="where-cands">' + cands + '</ul>' : '');
     return;

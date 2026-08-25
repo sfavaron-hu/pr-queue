@@ -43,7 +43,7 @@ admin:
 | `material-hu` | `main` | idem | idem |
 | `hu-translations` | `main` | `staging` | `prod` |
 | `humand-mobile` | último tag `v*-dev-*` | `v*-stg-*` | `v*-prod-*` |
-| `humand-main-api` | `develop` | `DESCONOCIDO` | `DESCONOCIDO` |
+| `humand-main-api` | `DESCONOCIDO` | `DESCONOCIDO` | `DESCONOCIDO` |
 
 `material-hu` no tiene rama `develop` (`GET /git/ref/heads/develop` 404). Medido contra los
 últimos 30 PRs cerrados+mergeados: `main` 26 / `develop` 0. Su tronco y su ref `dev` son
@@ -60,7 +60,8 @@ más recientes: 0 `dev-eu` (el último fue `v4.2.7`, ya fuera de esa ventana), 2
 para siempre, una señal de degradación que no informa nada; los destinos son `dev`, `stg`,
 `stg-eu`, `prd`, `prd-eu`. `v4.3.4-prod-1` y `v4.3.3-prod-eu-1` son despliegues distintos;
 una fila "prd ✓" sin región miente. Su `target_commitish` es `develop` e inservible para
-ancestría: resolver el tag a sha con `GET /git/ref/tags/<tag>` y comparar contra el tag.
+ancestría: el nombre del tag se pasa tal cual como `head` a `compare` — GitHub lo resuelve
+del lado del servidor, no hay un `GET /git/ref/tags/<tag>` intermedio.
 
 Elegir "el tag actual" de cada destino no es tomar el primero de `/tags`: ese endpoint
 ordena lexicográfico descendente, y con un contador de build multi-dígito eso pone
@@ -98,7 +99,7 @@ gh api "repos/HumandDev/humand-web/actions/runs?event=release&status=success&per
 
 ## Módulos
 
-Sin build step: scripts planos en `index.html:963-970`, en ese orden.
+Sin build step: scripts planos en `index.html:1079-1088`, en ese orden.
 
 | archivo | qué hace | puro |
 |---|---|---|
