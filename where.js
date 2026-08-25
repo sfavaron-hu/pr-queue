@@ -19,6 +19,7 @@ var ENV_MODELS = {
 var ENVS = ['dev', 'stg', 'prd'];
 var TAG_SEGMENT = { dev: 'dev', stg: 'stg', prd: 'prod' };
 var BACKPORT_RE = /^backport\//;
+var CONTAINED = ['ahead', 'identical'];
 
 function envModel(repo) {
   return ENV_MODELS[repo] || { kind: 'unknown', reason: 'repo sin modelo declarado' };
@@ -70,8 +71,45 @@ function resolvePRs(pulls, key) {
   };
 }
 
+// Un fallo de lectura jamas se convierte en "no esta": la diferencia entre
+// "medi y no esta" y "no pude medir" es la razon de ser del nivel de confianza.
+function targetVerdict(refInfo, compareStatus) {
+  if (!refInfo || refInfo.error) {
+    return { value: WHERE_UNKNOWN, confidence: WHERE_UNKNOWN,
+             reason: (refInfo && refInfo.error) || 'ref no resuelto' };
+  }
+  if (compareStatus == null) {
+    return { value: WHERE_UNKNOWN, confidence: 'PARCIAL', ref: refInfo.ref,
+             reason: 'compare fallo' };
+  }
+  return {
+    value: CONTAINED.indexOf(compareStatus) !== -1 ? 'SÍ' : 'NO',
+    confidence: 'PROBADO', ref: refInfo.ref, status: compareStatus,
+  };
+}
+
+// REACT_PRODUCTION_BRANCH dice que rama esta DESIGNADA prod; el ultimo run de CD
+// con event=release dice que DESPLEGO. El 2026-08-11 discreparon. Se reportan las
+// dos y el veredicto baja a PARCIAL; elegir una es inventar.
+function prodCross(varBranch, releaseRun) {
+  if (!releaseRun) {
+    return { agree: null, varBranch: varBranch,
+             note: 'sin run de CD con event=release y conclusion=success' };
+  }
+  return {
+    agree: releaseRun.targetCommitish === varBranch,
+    varBranch: varBranch, tag: releaseRun.tag,
+    runAt: releaseRun.createdAt, target: releaseRun.targetCommitish,
+  };
+}
+
+function reproCommand(org, repo, sha, ref) {
+  return 'gh api "repos/' + org + '/' + repo + '/compare/' + sha + '...' + ref + '" --jq .status';
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { WHERE_UNKNOWN: WHERE_UNKNOWN, ENV_MODELS: ENV_MODELS,
                      envModel: envModel, envTargets: envTargets,
-                     tagMatcher: tagMatcher, searchQuery: searchQuery, resolvePRs: resolvePRs };
+                     tagMatcher: tagMatcher, searchQuery: searchQuery, resolvePRs: resolvePRs,
+                     targetVerdict: targetVerdict, prodCross: prodCross, reproCommand: reproCommand };
 }
