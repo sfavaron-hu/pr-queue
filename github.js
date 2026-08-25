@@ -217,18 +217,28 @@ function whereMatchTag(tags, env, region) {
   return hit ? { ref: hit } : { error: `sin tag ${env}${region ? '-' + region : ''}` };
 }
 
+// Dos llamadas distintas, dos catches distintos: si la segunda (leer el
+// release del tag) falla, eso no es lo mismo que "no hay run de CD" — la
+// primera llamada si establecio que el run existe. Confundirlas le hace
+// decir a prodCross una razon que nunca midio (ver where.js#prodCross).
 async function whereReleaseRun(repo) {
+  let run;
   try {
     const d = await apiFetch(
       `${API}/repos/${state.config.org}/${repo}/actions/runs?event=release&status=success&per_page=1`);
-    const run = (d.workflow_runs || [])[0];
-    if (!run) return null;
+    run = (d.workflow_runs || [])[0];
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return null;
+  }
+  if (!run) return null;
+  try {
     const rel = await apiFetch(
       `${API}/repos/${state.config.org}/${repo}/releases/tags/${encodeURIComponent(run.head_branch)}`);
     return { tag: run.head_branch, createdAt: run.created_at, targetCommitish: rel.target_commitish };
   } catch (e) {
     if (whereIsRateLimit(e)) throw e;
-    return null;
+    return { error: String(e.message || e), tag: run.head_branch, createdAt: run.created_at };
   }
 }
 

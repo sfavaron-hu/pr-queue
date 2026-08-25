@@ -106,6 +106,7 @@ los datos, exportada vía el bloque `module.exports` del final del archivo
 | 403 sin nombrar rate limit (permiso, SAML/org-access) | no se relanza: es local a ese destino, degrada ese repo a `DESCONOCIDO` como cualquier otro `{error}` en banda |
 | 404 en una variable de repo | ese repo pasa a `DESCONOCIDO`, no rompe la consulta |
 | `compare` falla en un repo | ese repo pasa a `PARCIAL`, los demás siguen |
+| el run de CD existe pero su release no se pudo leer | nota propia en el cruce de prd, no la de "sin run" — son dos llamadas distintas |
 | clave sin formato de ticket | validación antes de gastar llamadas |
 
 Regla transversal: ningún fallo de red se convierte en `NO`. Un entorno que no se pudo

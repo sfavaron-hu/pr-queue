@@ -59,6 +59,13 @@ test('sin run de release el cruce no afirma nada', () => {
   assert.match(c.note, /event=release/);
 });
 
+test('un release lookup fallido no se confunde con "sin run": nota propia', () => {
+  const c = prodCross('release-2026.08.11', { error: 'GitHub 404: Not Found', tag: '2026.08.11.03' });
+  assert.strictEqual(c.agree, null);
+  assert.ok(!/^sin run de CD/.test(c.note), 'no debe reusar la nota de "sin run"');
+  assert.match(c.note, /2026.08.11.03|release/);
+});
+
 test('el comando reproducible es pegable tal cual', () => {
   assert.strictEqual(reproCommand('HumandDev', 'humand-web', 'abc123', 'develop'),
     'gh api "repos/HumandDev/humand-web/compare/abc123...develop" --jq .status');

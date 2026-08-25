@@ -156,6 +156,14 @@ function prodCross(varBranch, releaseRun) {
     return { agree: null, varBranch: varBranch,
              note: 'sin run de CD con event=release y conclusion=success' };
   }
+  // El run existe (event=release, conclusion=success): eso ya se establecio.
+  // Lo que fallo fue leer el release del tag que ese run produjo — un fallo
+  // distinto, que no puede salir con la misma nota o mentiria sobre cual de
+  // las dos llamadas fallo.
+  if (releaseRun.error) {
+    return { agree: null, varBranch: varBranch, tag: releaseRun.tag,
+             note: 'hay run de CD (' + releaseRun.tag + ') pero no se pudo leer su release: ' + releaseRun.error };
+  }
   return {
     agree: releaseRun.targetCommitish === varBranch,
     varBranch: varBranch, tag: releaseRun.tag,
