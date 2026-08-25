@@ -68,8 +68,8 @@ conocidas.
 | Nivel | Condición | Qué se muestra |
 |---|---|---|
 | `PROBADO` | clave propia + PR mergeado al tronco del repo + `compare` `ahead`/`identical` | PR, sha, ref, fecha, comando |
-| `PARCIAL` | resuelto en unos repos y no en otros; repo sin modelo; o las dos fuentes de prd discrepan | además, qué quedó sin resolver y por qué |
-| `NO_RESUELTO` | sin hits por clave propia; solo candidatos del padre | los candidatos, marcados como "del padre, no prueba nada" |
+| `PARCIAL` | resuelto en unos repos y no en otros; repo sin modelo; las dos fuentes de prd discrepan; o algún PR no se pudo leer | además, qué quedó sin resolver y por qué, y cuántos PRs no se pudieron leer |
+| `NO_RESUELTO` | sin hits por clave propia, y ningún fetch de detalle de PR falló; solo candidatos del padre | los candidatos, marcados como "del padre, no prueba nada" |
 | `DESCONOCIDO` | el repo no tiene modelo de entorno conocido (`humand-main-api`) | la fila visible, sin veredicto, con el motivo |
 
 **El cruce de prd.** `REACT_PRODUCTION_BRANCH` dice qué rama está *designada* prod; el
@@ -106,6 +106,7 @@ los datos, exportada vía el bloque `module.exports` del final del archivo
 | 403 sin nombrar rate limit (permiso, SAML/org-access) | no se relanza: es local a ese destino, degrada ese repo a `DESCONOCIDO` como cualquier otro `{error}` en banda |
 | 404 en una variable de repo | ese repo pasa a `DESCONOCIDO`, no rompe la consulta |
 | `compare` falla en un repo | ese repo pasa a `PARCIAL`, los demás siguen |
+| `GET /pulls/{n}` falla en un PR | ese PR no cuenta, pero se cuenta: el reporte baja a `PARCIAL` y dice cuántos no se pudieron leer, nunca `NO_RESUELTO` con una afirmación no medida |
 | el run de CD existe pero su release no se pudo leer | nota propia en el cruce de prd, no la de "sin run" — son dos llamadas distintas |
 | clave sin formato de ticket | validación antes de gastar llamadas |
 

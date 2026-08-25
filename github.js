@@ -282,11 +282,16 @@ async function whereFetchAll(key, parentKey) {
     items = (await whereSearchPRs(parentKey)).map(i => ({ ...i, matchedKey: parentKey }));
   }
   const pulls = [];
+  // Un PR ilegible no invalida el resto, pero tampoco desaparece sin dejar
+  // rastro: se cuenta, y esa cuenta viaja en el payload para que where.js
+  // pueda degradar el veredicto en vez de dibujar un reporte que parece
+  // completo con un repo faltante.
+  let failedPulls = 0;
   for (const it of items.filter(i => i.pullsUrl)) {
     try { pulls.push(await wherePullDetail(it)); }
     catch (e) {
       if (whereIsRateLimit(e)) throw e;
-      /* un PR ilegible no invalida el resto */
+      failedPulls++;
     }
   }
   pulls.sort((a, b) => a.number - b.number);
@@ -305,5 +310,5 @@ async function whereFetchAll(key, parentKey) {
     }
     perRepo[repo] = data;
   }
-  return { key, org: state.config.org, pulls, perRepo };
+  return { key, org: state.config.org, pulls, perRepo, failedPulls };
 }

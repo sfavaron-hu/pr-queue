@@ -106,3 +106,20 @@ test('prd PROBADO + prod disagreement degrada a PARCIAL', () => {
   assert.strictEqual(prdRow.confidence, 'PARCIAL');
   assert.strictEqual(prdRow.value, 'NO');
 });
+
+test('un PR ilegible degrada a PARCIAL aunque el resto salga PROBADO', () => {
+  const r = buildWhereReport(input({ failedPulls: 1 }));
+  assert.strictEqual(r.confidence, 'PARCIAL');
+  assert.strictEqual(r.failedPulls, 1);
+});
+
+test('sin failedPulls el reporte no se degrada por eso', () => {
+  const r = buildWhereReport(input());
+  assert.strictEqual(r.failedPulls, 0);
+});
+
+test('todos los PRs ilegibles: PARCIAL, no NO_RESUELTO con una afirmacion falsa', () => {
+  const r = buildWhereReport(input({ pulls: [], failedPulls: 3 }));
+  assert.strictEqual(r.confidence, 'PARCIAL');
+  assert.strictEqual(r.failedPulls, 3);
+});

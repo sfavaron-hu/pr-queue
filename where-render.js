@@ -46,22 +46,36 @@ function whereRepoHTML(r) {
        + r.rows.map(whereRowHTML).join('') + cross + '</div>';
 }
 
+function whereFailedNote(report) {
+  if (!report.failedPulls) return '';
+  var n = report.failedPulls;
+  return '<div class="where-note">' + n + (n === 1 ? ' PR no se pudo leer' : ' PRs no se pudieron leer') + '</div>';
+}
+
 function renderWhere(report) {
   var box = document.getElementById('where-result');
   var head = '<div class="where-head">' + esc(report.key)
            + ' · <span class="where-conf">' + esc(report.confidence) + '</span></div>';
 
-  if (report.confidence === 'NO_RESUELTO') {
+  // repos vacio cubre dos causas distintas: sin ningun PR de clave propia
+  // (NO_RESUELTO), o PRs de clave propia que existieron pero no se pudieron
+  // leer (PARCIAL, failedPulls > 0) — el aviso tiene que decir cual paso, no
+  // afirmar "sin PR mergeado" cuando lo unico que se sabe es que la lectura
+  // fallo.
+  if (report.repos.length === 0) {
     var cands = report.candidates.map(function (c) {
       return '<li><a href="' + esc(c.url) + '" target="_blank" rel="noopener">'
            + esc(c.repo) + ' #' + c.number + '</a> — ' + esc(c.title)
            + (report.parentOnly ? ' <i>(hit por la clave del padre: no prueba nada)</i>' : '') + '</li>';
     }).join('');
     document.getElementById('where-parent').classList.remove('hidden');
-    box.innerHTML = head
-      + '<div class="where-warn">Sin PR mergeado a develop con esta clave. '
-      + 'Si el trabajo vive en un PR titulado con la clave del padre, tipeala arriba.</div>'
-      + (cands ? '<ul class="where-cands">' + cands + '</ul>' : '');
+    var warn = report.failedPulls
+      ? '<div class="where-warn">No se pudo confirmar si hay PR mergeado a develop con esta clave: '
+        + report.failedPulls + (report.failedPulls === 1 ? ' PR no se pudo leer.' : ' PRs no se pudieron leer.')
+        + '</div>'
+      : '<div class="where-warn">Sin PR mergeado a develop con esta clave. '
+        + 'Si el trabajo vive en un PR titulado con la clave del padre, tipeala arriba.</div>';
+    box.innerHTML = head + warn + (cands ? '<ul class="where-cands">' + cands + '</ul>' : '');
     return;
   }
 
@@ -72,7 +86,7 @@ function renderWhere(report) {
         return '<a href="' + esc(b.url) + '" target="_blank" rel="noopener">#' + b.number + '</a>';
       }).join(' ') + '</div>'
     : '';
-  box.innerHTML = head + report.repos.map(whereRepoHTML).join('') + backports;
+  box.innerHTML = head + whereFailedNote(report) + report.repos.map(whereRepoHTML).join('') + backports;
 }
 
 async function runWhere(key, parentKey) {

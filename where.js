@@ -178,8 +178,9 @@ function reproCommand(org, repo, sha, ref) {
 function buildWhereReport(input) {
   var resolved = resolvePRs(input.pulls || [], input.key);
   var byRepo = representativeByRepo(input.pulls || [], input.key);
+  var failedPulls = input.failedPulls || 0;
 
-  var degraded = false;
+  var degraded = failedPulls > 0;
   var repos = Object.keys(byRepo).sort().map(function (repo) {
     var pr = byRepo[repo];
     var data = (input.perRepo || {})[repo] || { refs: {}, compares: {} };
@@ -210,14 +211,17 @@ function buildWhereReport(input) {
     return { repo: repo, model: model.kind, pr: pr, rows: rows, prodCross: cross };
   });
 
+  // Un PR ilegible nunca puede terminar en NO_RESUELTO: esa etiqueta dice
+  // "sin PR mergeado", una afirmacion que un fetch fallido jamas establecio.
   var confidence = resolved.contributing.length === 0
-    ? 'NO_RESUELTO'
+    ? (failedPulls > 0 ? 'PARCIAL' : 'NO_RESUELTO')
     : (degraded ? 'PARCIAL' : 'PROBADO');
 
   return {
     key: input.key, confidence: confidence, repos: repos,
     contributing: resolved.contributing, backports: resolved.backports,
     candidates: resolved.candidates, parentOnly: resolved.parentOnly,
+    failedPulls: failedPulls,
   };
 }
 
