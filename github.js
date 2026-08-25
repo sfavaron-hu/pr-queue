@@ -271,28 +271,44 @@ async function whereRepoData(repo) {
            prodVar: prd.ref, releaseRun };
 }
 
+// Un PR ilegible no invalida el resto, pero tampoco desaparece sin dejar
+// rastro: se cuenta, y esa cuenta viaja en el payload para que where.js
+// pueda degradar el veredicto en vez de dibujar un reporte que parece
+// completo con un repo faltante.
+async function wherePullDetails(items) {
+  const pulls = [];
+  let failed = 0;
+  for (const it of items.filter(i => i.pullsUrl)) {
+    try { pulls.push(await wherePullDetail(it)); }
+    catch (e) {
+      if (whereIsRateLimit(e)) throw e;
+      failed++;
+    }
+  }
+  return { pulls, failed };
+}
+
 // El representante de cada repo se elige por `representativeByRepo` (where.js)
 // — la misma funcion que usara buildWhereReport — para que fila mostrada y
 // estado de compare vengan siempre del mismo PR. `pulls` se ordena por numero
 // antes de elegir para que dos recomputos de la misma consulta acuerden el
 // mismo sha: `search/issues` no devuelve orden estable.
+//
+// El fallback a la clave del padre dispara cuando la clave propia no aporto
+// ningun PR "contributing" (mergeado al tronco) — no cuando la busqueda no
+// trajo hits. Un PR abierto, un backport/* o un deps/* de clave propia hacen
+// que la busqueda por clave propia no este vacia, pero no prueban nada:
+// sin este chequeo el fallback nunca dispara y el panel NO_RESUELTO le pide
+// al usuario tipear el valor que ya esta en la caja.
 async function whereFetchAll(key, parentKey) {
-  let items = await whereSearchPRs(key);
-  if (items.length === 0 && parentKey) {
-    items = (await whereSearchPRs(parentKey)).map(i => ({ ...i, matchedKey: parentKey }));
-  }
-  const pulls = [];
-  // Un PR ilegible no invalida el resto, pero tampoco desaparece sin dejar
-  // rastro: se cuenta, y esa cuenta viaja en el payload para que where.js
-  // pueda degradar el veredicto en vez de dibujar un reporte que parece
-  // completo con un repo faltante.
-  let failedPulls = 0;
-  for (const it of items.filter(i => i.pullsUrl)) {
-    try { pulls.push(await wherePullDetail(it)); }
-    catch (e) {
-      if (whereIsRateLimit(e)) throw e;
-      failedPulls++;
-    }
+  const items = await whereSearchPRs(key);
+  let { pulls, failed: failedPulls } = await wherePullDetails(items);
+
+  if (parentKey && resolvePRs(pulls, key).contributing.length === 0) {
+    const parentItems = await whereSearchPRs(parentKey);
+    const parentResult = await wherePullDetails(parentItems);
+    pulls = pulls.concat(parentResult.pulls);
+    failedPulls += parentResult.failed;
   }
   pulls.sort((a, b) => a.number - b.number);
 

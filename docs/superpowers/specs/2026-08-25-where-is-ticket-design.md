@@ -26,9 +26,13 @@ Solo los PRs mergeados al **tronco** del repo alimentan el cómputo — `develop
 `material-hu` y `hu-translations`, que no tienen rama `develop`. Los `backport/*-fix-*` se
 listan como evidencia adicional — son consecuencia del tren, no origen del cambio.
 
-Sin hits por clave propia el resultado es `NO_RESUELTO` y la UI ofrece un campo para la
-clave del padre. Un hit que viene solo del padre **nunca** sube de `NO_RESUELTO`: el padre
-lo comparten todos los sub-tickets, y está verificado que devuelve PRs de hermanos.
+Sin ningún PR "contributing" por clave propia (mergeado al tronco) el resultado es
+`NO_RESUELTO` y la UI ofrece un campo para la clave del padre. Esto dispara también cuando
+la clave propia sí tuvo hits pero ninguno contribuye — un PR abierto, un `backport/*`, un
+`deps/*` — no solo cuando la búsqueda no trajo nada: de lo contrario el fallback nunca
+dispara y el panel le pide al usuario tipear la clave que ya escribió. Un hit que viene
+solo del padre **nunca** sube de `NO_RESUELTO`: el padre lo comparten todos los
+sub-tickets, y está verificado que devuelve PRs de hermanos.
 
 **2 · refs de cada entorno.** Leídos en vivo, medidos el 25/08/2026 con un PAT `repo` sin
 admin:
@@ -69,7 +73,7 @@ conocidas.
 |---|---|---|
 | `PROBADO` | clave propia + PR mergeado al tronco del repo + `compare` `ahead`/`identical` | PR, sha, ref, fecha, comando |
 | `PARCIAL` | resuelto en unos repos y no en otros; repo sin modelo; las dos fuentes de prd discrepan; o algún PR no se pudo leer | además, qué quedó sin resolver y por qué, y cuántos PRs no se pudieron leer |
-| `NO_RESUELTO` | sin hits por clave propia, y ningún fetch de detalle de PR falló; solo candidatos del padre | los candidatos, marcados como "del padre, no prueba nada" |
+| `NO_RESUELTO` | sin PRs "contributing" por clave propia, y ningún fetch de detalle de PR falló; solo candidatos del padre | los candidatos, marcados como "del padre, no prueba nada" |
 | `DESCONOCIDO` | el repo no tiene modelo de entorno conocido (`humand-main-api`) | la fila visible, sin veredicto, con el motivo |
 
 **El cruce de prd.** `REACT_PRODUCTION_BRANCH` dice qué rama está *designada* prod; el
