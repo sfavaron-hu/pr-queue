@@ -148,3 +148,130 @@ async function enrichOwnPR(pr) {
       humanReviews: humanRevs.length };
   } catch { return null; }
 }
+
+// ── /where: ¿en que entorno esta este ticket? ────────────────────
+
+// Cada fetcher devuelve un error en banda en vez de tirar: un entorno que no
+// se pudo leer tiene que llegar a where.js como DESCONOCIDO, no romper la consulta.
+async function whereSearchPRs(key) {
+  const q = encodeURIComponent(searchQuery(key, state.config.org));
+  const data = await apiFetch(`${API}/search/issues?q=${q}&per_page=50`);
+  return (data.items || []).map(it => ({
+    repoUrl: it.repository_url, pullsUrl: it.pull_request && it.pull_request.url,
+    number: it.number, title: it.title, url: it.html_url, matchedKey: key,
+  }));
+}
+
+async function wherePullDetail(item) {
+  const d = await apiFetch(item.pullsUrl);
+  return {
+    repo: d.base.repo.name, number: d.number, url: d.html_url, title: d.title,
+    merged: !!d.merged_at, mergeCommitSha: d.merge_commit_sha,
+    baseRef: d.base.ref, headRef: d.head.ref, matchedKey: item.matchedKey,
+  };
+}
+
+async function whereRepoVariable(repo, name) {
+  try {
+    const d = await apiFetch(`${API}/repos/${state.config.org}/${repo}/actions/variables/${name}`);
+    return { ref: d.value };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+
+// Un rate limit no puede degradarse a PARCIAL en silencio: si la API dejo de
+// contestar, el reporte entero es sospechoso y tiene que gritar. Cualquier otro
+// fallo si es local a este destino.
+function whereIsRateLimit(e) {
+  return /^GitHub 403/.test(String(e && e.message || e));
+}
+
+async function whereCompare(repo, base, head) {
+  try {
+    const d = await apiFetch(
+      `${API}/repos/${state.config.org}/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
+    return d.status;
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return null;
+  }
+}
+
+async function whereLatestTag(repo, env, region) {
+  try {
+    const re = tagMatcher(env, region);
+    const tags = await apiFetch(`${API}/repos/${state.config.org}/${repo}/tags?per_page=100`);
+    const hit = (tags || []).find(t => re.test(t.name));
+    return hit ? { ref: hit.name } : { error: `sin tag ${env}${region ? '-' + region : ''}` };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+
+async function whereReleaseRun(repo) {
+  try {
+    const d = await apiFetch(
+      `${API}/repos/${state.config.org}/${repo}/actions/runs?event=release&status=success&per_page=1`);
+    const run = (d.workflow_runs || [])[0];
+    if (!run) return null;
+    const rel = await apiFetch(
+      `${API}/repos/${state.config.org}/${repo}/releases/tags/${encodeURIComponent(run.head_branch)}`);
+    return { tag: run.head_branch, createdAt: run.created_at, targetCommitish: rel.target_commitish };
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return null;
+  }
+}
+
+async function whereRepoData(repo) {
+  const model = envModel(repo);
+  if (model.kind === 'unknown') return { refs: {}, compares: {} };
+
+  if (model.kind === 'fixed') {
+    return { refs: { dev: { ref: model.dev }, stg: { ref: model.stg }, prd: { ref: model.prd } },
+             compares: {} };
+  }
+  if (model.kind === 'tags') {
+    const refs = {};
+    for (const t of envTargets(repo)) refs[t.id] = await whereLatestTag(repo, t.env, t.region);
+    return { refs, compares: {} };
+  }
+  const [stg, prd, releaseRun] = await Promise.all([
+    whereRepoVariable(repo, 'REACT_STAGING_BRANCH'),
+    whereRepoVariable(repo, 'REACT_PRODUCTION_BRANCH'),
+    whereReleaseRun(repo),
+  ]);
+  return { refs: { dev: { ref: model.dev }, stg, prd }, compares: {},
+           prodVar: prd.ref, releaseRun };
+}
+
+// El representante de cada repo se elige por `resolvePRs(pulls, key).contributing`
+// — el mismo array que usara buildWhereReport — para que fila mostrada y estado
+// de compare vengan siempre del mismo PR. `pulls` se ordena por numero antes de
+// elegir para que dos recomputos de la misma consulta acuerden el mismo sha:
+// `search/issues` no devuelve orden estable.
+async function whereFetchAll(key, parentKey) {
+  let items = await whereSearchPRs(key);
+  if (items.length === 0 && parentKey) {
+    items = (await whereSearchPRs(parentKey)).map(i => ({ ...i, matchedKey: parentKey }));
+  }
+  const pulls = [];
+  for (const it of items.filter(i => i.pullsUrl)) {
+    try { pulls.push(await wherePullDetail(it)); } catch { /* un PR ilegible no invalida el resto */ }
+  }
+  pulls.sort((a, b) => a.number - b.number);
+
+  const byRepo = {};
+  resolvePRs(pulls, key).contributing.forEach(p => { if (!byRepo[p.repo]) byRepo[p.repo] = p; });
+
+  const perRepo = {};
+  for (const repo of Object.keys(byRepo)) {
+    const data = await whereRepoData(repo);
+    const pr = byRepo[repo];
+    for (const t of envTargets(repo)) {
+      const info = data.refs[t.id];
+      data.compares[t.id] = info && info.ref
+        ? await whereCompare(repo, pr.mergeCommitSha, info.ref)
+        : null;
+    }
+    perRepo[repo] = data;
+  }
+  return { key, org: state.config.org, pulls, perRepo };
+}
