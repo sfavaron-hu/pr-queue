@@ -45,8 +45,32 @@ function tagMatcher(env, region) {
   return new RegExp('^v\\d+\\.\\d+\\.\\d+-' + suffix + '-\\d+$');
 }
 
+function searchQuery(key, org) {
+  return key + ' org:' + org + ' is:pr';
+}
+
+// Solo los PRs mergeados a develop mueven el commit por los entornos. Los
+// backport/* existen por el tren y se muestran como evidencia, no como origen.
+// Un hit cuyo matchedKey no es la clave consultada vino por la clave del padre,
+// que comparten todos los sub-tickets: sirve para mirar, no prueba nada.
+function resolvePRs(pulls, key) {
+  var own = pulls.filter(function (p) { return p.matchedKey === key; });
+  return {
+    contributing: own.filter(function (p) {
+      return p.merged && p.baseRef === 'develop';
+    }),
+    backports: own.filter(function (p) {
+      return p.merged && /^backport\//.test(p.headRef || '');
+    }).concat(pulls.filter(function (p) {
+      return p.matchedKey !== key && /^backport\//.test(p.headRef || '');
+    })),
+    candidates: pulls,
+    parentOnly: own.length === 0 && pulls.length > 0,
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { WHERE_UNKNOWN: WHERE_UNKNOWN, ENV_MODELS: ENV_MODELS,
                      envModel: envModel, envTargets: envTargets,
-                     tagMatcher: tagMatcher };
+                     tagMatcher: tagMatcher, searchQuery: searchQuery, resolvePRs: resolvePRs };
 }
