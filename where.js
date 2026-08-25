@@ -17,7 +17,10 @@ var ENV_MODELS = {
   'humand-backoffice': { kind: 'react', dev: 'develop', trunk: 'develop' },
   'material-hu':       { kind: 'react', dev: 'main', trunk: 'main' },
   'hu-translations':   { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod', trunk: 'main' },
-  'humand-mobile':     { kind: 'tags', trunk: 'develop', regions: ['', 'eu'] },
+  // dev-eu no se genera: mobile no publico un tag dev-eu desde v4.2.7, fuera
+  // de la ventana de 100 tags. stg y prd si tienen variante -eu.
+  'humand-mobile':     { kind: 'tags', trunk: 'develop',
+                         regions: { dev: [''], stg: ['', 'eu'], prd: ['', 'eu'] } },
   'humand-main-api':   { kind: 'unknown', trunk: 'develop',
                          reason: 'sin variables REACT_*; despliega por AWS (AWS_DEV_ACCOUNT/AWS_PFM_ACCOUNT)' },
 };
@@ -38,7 +41,7 @@ function envTargets(repo) {
   }
   var out = [];
   ENVS.forEach(function (e) {
-    m.regions.forEach(function (r) {
+    (m.regions[e] || ['']).forEach(function (r) {
       out.push({ env: e, region: r, id: r ? e + '-' + r : e });
     });
   });

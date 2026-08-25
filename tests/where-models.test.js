@@ -23,9 +23,13 @@ test('hu-translations usa ramas fijas', () => {
     { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod', trunk: 'main' });
 });
 
-test('mobile son seis destinos, no tres', () => {
+// Medido en vivo el 25/08/2026: mobile no publica dev-eu (el ultimo fue
+// v4.2.7, fuera de la ventana de 100 tags), pero si stg-eu y prod-eu. Generar
+// un destino dev-eu que la app jamas publica lo deja DESCONOCIDO para
+// siempre, una senal de degradacion que no informa nada.
+test('mobile no genera dev-eu: nunca lo publica', () => {
   const ids = envTargets('humand-mobile').map(t => t.id);
-  assert.deepStrictEqual(ids, ['dev', 'dev-eu', 'stg', 'stg-eu', 'prd', 'prd-eu']);
+  assert.deepStrictEqual(ids, ['dev', 'stg', 'stg-eu', 'prd', 'prd-eu']);
 });
 
 test('los demas repos son tres destinos', () => {

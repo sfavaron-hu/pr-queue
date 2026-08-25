@@ -72,19 +72,19 @@ test('un compare caido deja PARCIAL, no NO', () => {
   assert.strictEqual(r.confidence, 'PARCIAL');
 });
 
-test('mobile devuelve las seis filas', () => {
+test('mobile devuelve cinco filas, sin dev-eu', () => {
   const r = buildWhereReport(input({
-    pulls: [Object.assign({}, PULL, { repo: 'humand-mobile' })],
+    pulls: [Object.assign({}, PULL, { repo: 'humand-mobile', baseRef: 'develop' })],
     perRepo: { 'humand-mobile': {
-      refs: { dev: { ref: 'v4.3.5-dev-1' }, 'dev-eu': { ref: 'v4.3.4-dev-eu-1' },
+      refs: { dev: { ref: 'v4.3.5-dev-1' },
               stg: { ref: 'v4.3.5-stg-1' }, 'stg-eu': { ref: 'v4.3.4-stg-eu-4' },
               prd: { ref: 'v4.3.4-prod-1' }, 'prd-eu': { ref: 'v4.3.3-prod-eu-1' } },
-      compares: { dev: 'ahead', 'dev-eu': 'ahead', stg: 'ahead', 'stg-eu': 'behind',
+      compares: { dev: 'ahead', stg: 'ahead', 'stg-eu': 'behind',
                   prd: 'behind', 'prd-eu': 'behind' },
     } },
   }));
   assert.deepStrictEqual(r.repos[0].rows.map(x => x.id),
-    ['dev', 'dev-eu', 'stg', 'stg-eu', 'prd', 'prd-eu']);
+    ['dev', 'stg', 'stg-eu', 'prd', 'prd-eu']);
 });
 
 test('ref error + prod disagreement nunca cae a PARCIAL: DESCONOCIDO se mantiene', () => {

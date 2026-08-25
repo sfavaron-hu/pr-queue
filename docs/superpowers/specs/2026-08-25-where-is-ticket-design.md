@@ -53,10 +53,19 @@ los dos `main`; lo mismo mide `hu-translations` (`main` 27 / `develop` 0).
 son `AWS_DEV_ACCOUNT` / `AWS_PFM_ACCOUNT` / `LOKALISE_PROJECT_ID` — ninguna `REACT_*`.
 Despliega por otro camino; queda declarado sin veredicto hasta leer su `cd.yml`.
 
-`humand-mobile` son **6 destinos, no 3**: los tags son `v<semver>-<env>-<n>` con una
-variante regional `-eu` (`v4.3.4-prod-1` y `v4.3.3-prod-eu-1` son despliegues distintos).
-Una fila "prd ✓" sin región miente. Su `target_commitish` es `develop` e inservible para
+`humand-mobile` son **5 destinos, no 3**: los tags son `v<semver>-<env>-<n>` con una
+variante regional `-eu`, pero no simétrica por entorno — medido en la ventana de 100 tags
+más recientes: 0 `dev-eu` (el último fue `v4.2.7`, ya fuera de esa ventana), 20 `stg-eu`,
+8 `prod-eu`. Generar un destino `dev-eu` que la app nunca publica lo deja `DESCONOCIDO`
+para siempre, una señal de degradación que no informa nada; los destinos son `dev`, `stg`,
+`stg-eu`, `prd`, `prd-eu`. `v4.3.4-prod-1` y `v4.3.3-prod-eu-1` son despliegues distintos;
+una fila "prd ✓" sin región miente. Su `target_commitish` es `develop` e inservible para
 ancestría: resolver el tag a sha con `GET /git/ref/tags/<tag>` y comparar contra el tag.
+
+Elegir "el tag actual" de cada destino no es tomar el primero de `/tags`: ese endpoint
+ordena lexicográfico descendente, y con un contador de build multi-dígito eso pone
+`v4.3.4-dev-9` antes que `v4.3.4-dev-11`. Se comparan todos los matches por tupla numérica
+`(major, minor, patch, build)`.
 
 **3 · commit → entorno.** `GET /repos/{o}/{r}/compare/{merge_sha}...{env_ref}`; `status` en
 `ahead` o `identical` significa que el commit está contenido en ese ref.
