@@ -18,6 +18,7 @@ var ENV_MODELS = {
 
 var ENVS = ['dev', 'stg', 'prd'];
 var TAG_SEGMENT = { dev: 'dev', stg: 'stg', prd: 'prod' };
+var BACKPORT_RE = /^backport\//;
 
 function envModel(repo) {
   return ENV_MODELS[repo] || { kind: 'unknown', reason: 'repo sin modelo declarado' };
@@ -57,12 +58,12 @@ function resolvePRs(pulls, key) {
   var own = pulls.filter(function (p) { return p.matchedKey === key; });
   return {
     contributing: own.filter(function (p) {
-      return p.merged && p.baseRef === 'develop';
+      return p.merged && p.baseRef === 'develop' && !BACKPORT_RE.test(p.headRef || '');
     }),
     backports: own.filter(function (p) {
-      return p.merged && /^backport\//.test(p.headRef || '');
+      return p.merged && BACKPORT_RE.test(p.headRef || '');
     }).concat(pulls.filter(function (p) {
-      return p.matchedKey !== key && /^backport\//.test(p.headRef || '');
+      return p.merged && p.matchedKey !== key && BACKPORT_RE.test(p.headRef || '');
     })),
     candidates: pulls,
     parentOnly: own.length === 0 && pulls.length > 0,

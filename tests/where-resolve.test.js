@@ -52,3 +52,17 @@ test('sin ningun hit no es parentOnly: no hay nada que mostrar', () => {
   assert.strictEqual(r.parentOnly, false);
   assert.strictEqual(r.candidates.length, 0);
 });
+
+test('un backport mergeado a develop de clave propia va a backports, no a contributing', () => {
+  const r = resolvePRs([pull({ headRef: 'backport/hot-fix-pr-1-to-release-2026.08.19' })], 'SQSH-1');
+  assert.strictEqual(r.contributing.length, 0, 'contributing debe estar vacío');
+  assert.strictEqual(r.backports.length, 1, 'backports debe tener 1');
+  assert.strictEqual(r.backports[0].headRef, 'backport/hot-fix-pr-1-to-release-2026.08.19');
+});
+
+test('un backport sin mergear de clave ajena no aparece en backports', () => {
+  const r = resolvePRs([
+    pull({ merged: false, matchedKey: 'SQSH-0', headRef: 'backport/parent-fix-to-release-2026.08.19' })
+  ], 'SQSH-1');
+  assert.strictEqual(r.backports.length, 0, 'backports debe estar vacío para unmerged');
+});
