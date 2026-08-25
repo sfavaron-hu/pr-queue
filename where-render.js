@@ -70,7 +70,7 @@ function renderWhere(report) {
     var cands = report.candidates.map(function (c) {
       return '<li><a href="' + esc(c.url) + '" target="_blank" rel="noopener">'
            + esc(c.repo) + ' #' + c.number + '</a> — ' + esc(c.title)
-           + (report.parentOnly ? ' <i>(hit por la clave del padre: no prueba nada)</i>' : '') + '</li>';
+           + (c.matchedKey !== report.key ? ' <i>(hit por la clave del padre: no prueba nada)</i>' : '') + '</li>';
     }).join('');
     document.getElementById('where-parent').classList.remove('hidden');
     var warn = report.failedPulls

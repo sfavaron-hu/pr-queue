@@ -64,6 +64,17 @@ test('un repo sin modelo sale DESCONOCIDO con motivo y no rompe el resto', () =>
   assert.strictEqual(r.repos.find(x => x.repo === 'humand-web').rows[0].value, 'SÍ');
 });
 
+test('un repo ausente de ENV_MODELS con PR mergeado a develop aporta y sale unknown, no NO_RESUELTO', () => {
+  const r = buildWhereReport(input({
+    pulls: [Object.assign({}, PULL, { repo: 'humand-infra' })],
+    perRepo: {},
+  }));
+  assert.strictEqual(r.confidence, 'PARCIAL');
+  assert.strictEqual(r.repos.length, 1);
+  assert.strictEqual(r.repos[0].model, 'unknown');
+  assert.strictEqual(r.repos[0].reason, 'repo sin modelo declarado');
+});
+
 test('un compare caido deja PARCIAL, no NO', () => {
   const i = input();
   i.perRepo['humand-web'].compares.prd = null;

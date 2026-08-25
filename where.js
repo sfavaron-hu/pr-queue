@@ -31,7 +31,7 @@ var BACKPORT_RE = /^backport\//;
 var CONTAINED = ['ahead', 'identical'];
 
 function envModel(repo) {
-  return ENV_MODELS[repo] || { kind: 'unknown', reason: 'repo sin modelo declarado' };
+  return ENV_MODELS[repo] || { kind: 'unknown', reason: 'repo sin modelo declarado', trunk: 'develop' };
 }
 
 function envTargets(repo) {
