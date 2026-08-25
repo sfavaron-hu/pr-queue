@@ -107,9 +107,59 @@ function reproCommand(org, repo, sha, ref) {
   return 'gh api "repos/' + org + '/' + repo + '/compare/' + sha + '...' + ref + '" --jq .status';
 }
 
+function buildWhereReport(input) {
+  var resolved = resolvePRs(input.pulls || [], input.key);
+  var byRepo = {};
+  resolved.contributing.forEach(function (p) {
+    if (!byRepo[p.repo]) byRepo[p.repo] = p;
+  });
+
+  var degraded = false;
+  var repos = Object.keys(byRepo).sort().map(function (repo) {
+    var pr = byRepo[repo];
+    var data = (input.perRepo || {})[repo] || { refs: {}, compares: {} };
+    var model = envModel(repo);
+
+    if (model.kind === 'unknown') {
+      degraded = true;
+      return { repo: repo, model: 'unknown', reason: model.reason, pr: pr, rows: [], prodCross: null };
+    }
+
+    var cross = model.kind === 'react'
+      ? prodCross(data.prodVar, data.releaseRun)
+      : null;
+    if (cross && cross.agree === false) degraded = true;
+
+    var rows = envTargets(repo).map(function (t) {
+      var v = targetVerdict(data.refs[t.id], data.compares[t.id]);
+      if (v.confidence !== 'PROBADO') degraded = true;
+      if (cross && cross.agree === false && t.env === 'prd') v.confidence = 'PARCIAL';
+      return {
+        id: t.id, env: t.env, region: t.region,
+        value: v.value, confidence: v.confidence, ref: v.ref,
+        status: v.status, reason: v.reason,
+        command: v.ref ? reproCommand(input.org, repo, pr.mergeCommitSha, v.ref) : null,
+      };
+    });
+
+    return { repo: repo, model: model.kind, pr: pr, rows: rows, prodCross: cross };
+  });
+
+  var confidence = resolved.contributing.length === 0
+    ? 'NO_RESUELTO'
+    : (degraded ? 'PARCIAL' : 'PROBADO');
+
+  return {
+    key: input.key, confidence: confidence, repos: repos,
+    contributing: resolved.contributing, backports: resolved.backports,
+    candidates: resolved.candidates, parentOnly: resolved.parentOnly,
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { WHERE_UNKNOWN: WHERE_UNKNOWN, ENV_MODELS: ENV_MODELS,
                      envModel: envModel, envTargets: envTargets,
                      tagMatcher: tagMatcher, searchQuery: searchQuery, resolvePRs: resolvePRs,
-                     targetVerdict: targetVerdict, prodCross: prodCross, reproCommand: reproCommand };
+                     targetVerdict: targetVerdict, prodCross: prodCross, reproCommand: reproCommand,
+                     buildWhereReport: buildWhereReport };
 }

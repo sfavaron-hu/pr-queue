@@ -1,0 +1,87 @@
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { buildWhereReport } = require('../where.js');
+
+const PULL = { repo: 'humand-web', number: 9884, url: 'https://x/9884', title: 'SQSH-1 x',
+               merged: true, mergeCommitSha: 'abc123', baseRef: 'develop',
+               headRef: 'feat/SQSH-1-x', matchedKey: 'SQSH-1' };
+
+function input(over) {
+  return Object.assign({
+    key: 'SQSH-1', org: 'HumandDev', pulls: [PULL],
+    perRepo: {
+      'humand-web': {
+        refs: { dev: { ref: 'develop' }, stg: { ref: 'release-2026.08.19' }, prd: { ref: 'release-2026.08.11' } },
+        compares: { dev: 'ahead', stg: 'ahead', prd: 'behind' },
+        prodVar: 'release-2026.08.11',
+        releaseRun: { tag: '2026.08.11.03', targetCommitish: 'release-2026.08.11', createdAt: '2026-08-20T15:41:21Z' },
+      },
+    },
+  }, over);
+}
+
+test('un ticket resuelto en un repo sale PROBADO con las tres filas', () => {
+  const r = buildWhereReport(input());
+  assert.strictEqual(r.confidence, 'PROBADO');
+  const rows = r.repos[0].rows;
+  assert.deepStrictEqual(rows.map(x => x.id), ['dev', 'stg', 'prd']);
+  assert.deepStrictEqual(rows.map(x => x.value), ['SÍ', 'SÍ', 'NO']);
+});
+
+test('cada fila trae el comando que la reproduce', () => {
+  const r = buildWhereReport(input());
+  assert.strictEqual(r.repos[0].rows[0].command,
+    'gh api "repos/HumandDev/humand-web/compare/abc123...develop" --jq .status');
+});
+
+test('sin PR propio el reporte es NO_RESUELTO aunque haya candidatos del padre', () => {
+  const r = buildWhereReport(input({
+    pulls: [Object.assign({}, PULL, { matchedKey: 'SQSH-0' })],
+  }));
+  assert.strictEqual(r.confidence, 'NO_RESUELTO');
+  assert.strictEqual(r.parentOnly, true);
+  assert.strictEqual(r.candidates.length, 1);
+});
+
+test('si las dos fuentes de prd discrepan, todo el reporte baja a PARCIAL', () => {
+  const i = input();
+  i.perRepo['humand-web'].releaseRun.targetCommitish = 'release-2026.08.19';
+  const r = buildWhereReport(i);
+  assert.strictEqual(r.confidence, 'PARCIAL');
+  assert.strictEqual(r.repos[0].prodCross.agree, false);
+});
+
+test('un repo sin modelo sale DESCONOCIDO con motivo y no rompe el resto', () => {
+  const i = input();
+  i.pulls = [PULL, Object.assign({}, PULL, { repo: 'humand-main-api', number: 7 })];
+  i.perRepo['humand-main-api'] = { refs: { dev: { ref: 'develop' } }, compares: { dev: 'ahead' } };
+  const r = buildWhereReport(i);
+  const api = r.repos.find(x => x.repo === 'humand-main-api');
+  assert.strictEqual(api.model, 'unknown');
+  assert.match(api.reason, /AWS/);
+  assert.strictEqual(r.confidence, 'PARCIAL');
+  assert.strictEqual(r.repos.find(x => x.repo === 'humand-web').rows[0].value, 'SÍ');
+});
+
+test('un compare caido deja PARCIAL, no NO', () => {
+  const i = input();
+  i.perRepo['humand-web'].compares.prd = null;
+  const r = buildWhereReport(i);
+  assert.strictEqual(r.repos[0].rows[2].value, 'DESCONOCIDO');
+  assert.strictEqual(r.confidence, 'PARCIAL');
+});
+
+test('mobile devuelve las seis filas', () => {
+  const r = buildWhereReport(input({
+    pulls: [Object.assign({}, PULL, { repo: 'humand-mobile' })],
+    perRepo: { 'humand-mobile': {
+      refs: { dev: { ref: 'v4.3.5-dev-1' }, 'dev-eu': { ref: 'v4.3.4-dev-eu-1' },
+              stg: { ref: 'v4.3.5-stg-1' }, 'stg-eu': { ref: 'v4.3.4-stg-eu-4' },
+              prd: { ref: 'v4.3.4-prod-1' }, 'prd-eu': { ref: 'v4.3.3-prod-eu-1' } },
+      compares: { dev: 'ahead', 'dev-eu': 'ahead', stg: 'ahead', 'stg-eu': 'behind',
+                  prd: 'behind', 'prd-eu': 'behind' },
+    } },
+  }));
+  assert.deepStrictEqual(r.repos[0].rows.map(x => x.id),
+    ['dev', 'dev-eu', 'stg', 'stg-eu', 'prd', 'prd-eu']);
+});
