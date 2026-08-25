@@ -284,6 +284,7 @@ var whereForm = document.getElementById('where-form');
 if (whereForm) {
   whereForm.addEventListener('submit', function (e) {
     e.preventDefault();
+    document.getElementById('error-msg').classList.add('hidden');
     var key = document.getElementById('where-key').value.trim().toUpperCase();
     if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key)) {
       showError('/where: "' + key + '" no tiene forma de clave de ticket');

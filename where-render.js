@@ -91,6 +91,10 @@ function renderWhere(report) {
 
 async function runWhere(key, parentKey) {
   var box = document.getElementById('where-result');
+  // Un error de una consulta anterior (403, clave malformada) no puede
+  // quedar colgado debajo de un reporte que si resolvio: se limpia al
+  // arrancar cada consulta, no solo cuando el panel de PRs carga.
+  document.getElementById('error-msg').classList.add('hidden');
   box.innerHTML = '<div class="where-head">buscando ' + esc(key) + '…</div>';
   try {
     renderWhere(buildWhereReport(await whereFetchAll(key, parentKey)));
