@@ -242,6 +242,53 @@ async function whereReleaseRun(repo) {
   }
 }
 
+// main-api: stg y prd solo tienen sentido leyendo TODOS los runs del
+// workflow y filtrando conclusion/status en JS. `?status=success` en el
+// endpoint por-workflow devolvio corridas de julio mientras la consulta sin
+// filtrar devolvia corridas de hoy — trampa medida en vivo el 26/08/2026,
+// repos/HumandDev/humand-main-api/actions/workflows/stg.yml/runs. No
+// reagregar ese filtro de query.
+async function whereBackendWorkflowRun(repo, workflowFile, predicate) {
+  try {
+    const d = await apiFetch(
+      `${API}/repos/${state.config.org}/${repo}/actions/workflows/${workflowFile}/runs?per_page=50`);
+    return (d.workflow_runs || []).find(predicate) || null;
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return { error: String(e.message || e) };
+  }
+}
+
+function whereBackendRunOk(r) {
+  return r.status === 'completed' && r.conclusion === 'success';
+}
+
+// stg es siempre workflow_dispatch: no hay rama de destino, solo el nombre
+// del run trae lo que la persona tipeo (ver parseStgRunName en where.js).
+// `head_branch` de estos runs es de donde se DISPARO el dispatch (casi
+// siempre develop) — nunca lo que se desplego, usarlo produciria un
+// veredicto confiadamente equivocado.
+async function whereBackendStgRef(repo) {
+  const run = await whereBackendWorkflowRun(repo, 'stg.yml', whereBackendRunOk);
+  if (!run) return { error: 'sin run de stg exitoso' };
+  if (run.error) return run;
+  const ref = parseStgRunName(run.display_title);
+  return ref ? { ref } : { error: 'run de stg sin ref parseable en el nombre: ' + JSON.stringify(run.display_title || '') };
+}
+
+// prd dispara por `release: [released]`: a diferencia de stg, GitHub resuelve
+// `head_branch` al tag mismo para ese evento (medido: "release-2026.08.20.01"),
+// asi que no hace falta parsear nada — pero si filtrar por event==='release'
+// en JS, porque el workflow tambien acepta workflow_dispatch manual y esos
+// runs no deberian contar como "lo que llego a prod".
+async function whereBackendPrdRef(repo) {
+  const run = await whereBackendWorkflowRun(repo, 'prd.yml',
+    r => r.event === 'release' && whereBackendRunOk(r));
+  if (!run) return { error: 'sin run de prd con event=release exitoso' };
+  if (run.error) return run;
+  return { ref: run.head_branch };
+}
+
 async function whereRepoData(repo) {
   const model = envModel(repo);
   if (model.kind === 'unknown') return { refs: {}, compares: {} };
@@ -261,6 +308,13 @@ async function whereRepoData(repo) {
       for (const t of envTargets(repo)) refs[t.id] = { error: msg };
     }
     return { refs, compares: {} };
+  }
+  if (model.kind === 'backend') {
+    const [stg, prd] = await Promise.all([
+      whereBackendStgRef(repo),
+      whereBackendPrdRef(repo),
+    ]);
+    return { refs: { dev: { ref: model.dev }, stg, prd }, compares: {} };
   }
   // prd se mide contra el tag desplegado (releaseRun.tag = head_branch del
   // ultimo run de CD event=release exitoso), nunca contra la variable — esa
