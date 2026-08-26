@@ -12,7 +12,7 @@ con la evidencia cruda y el comando que lo reproduce: la página no pide que le 
 |---|---|
 | Entrada | una clave de ticket (`SQSH-1234`); opcional, la clave del padre tipeada a mano |
 | Salida | por repo y entorno: `SÍ` / `NO` / `DESCONOCIDO`, con nivel de confianza y evidencia |
-| Alcance | los 6 repos definidos en `config/repos.json` con `branch_model` (5 `scan:true` + `material-hu`); `humand-main-api` sale `DESCONOCIDO` a propósito |
+| Alcance | los 6 repos definidos en `config/repos.json` con `branch_model` (5 `scan:true` + `material-hu`); los 6 tienen modelo de entorno, `humand-main-api` incluido |
 | Cache | ninguno. Cada consulta recomputa contra la API |
 | Credencial | el PAT `repo` que pr-queue ya guarda en localStorage. Ninguna otra |
 
@@ -34,16 +34,15 @@ dispara y el panel le pide al usuario tipear la clave que ya escribió. Un hit q
 solo del padre **nunca** sube de `NO_RESUELTO`: el padre lo comparten todos los
 sub-tickets, y está verificado que devuelve PRs de hermanos.
 
-**2 · refs de cada entorno.** Leídos en vivo, medidos el 25/08/2026 con un PAT `repo` sin
+**2 · refs de cada entorno.** Leídos en vivo, medidos el 25-26/08/2026 con un PAT `repo` sin
 admin:
 
 | repo | dev | stg | prd |
 |---|---|---|---|
 | `humand-web`, `humand-backoffice` | `develop` | var `REACT_STAGING_BRANCH` | tag desplegado (`head_branch` del último run de CD `event=release` exitoso) |
-| `material-hu` | `main` | idem | idem |
-| `hu-translations` | `main` | `staging` | `prod` |
+| `material-hu`, `hu-translations` | `main` | `staging` | `prod` |
 | `humand-mobile` | último tag `v*-dev-*` | `v*-stg-*` | `v*-prod-*` |
-| `humand-main-api` | `DESCONOCIDO` | `DESCONOCIDO` | `DESCONOCIDO` |
+| `humand-main-api` | `develop` | nombre del run de stg exitoso (`display_title`, parseado) | `head_branch` del run de prd `event=release` exitoso |
 
 `REACT_PRODUCTION_BRANCH` no resuelve prd. Esa variable nombra la rama
 DESIGNADA prod el día que el tren la *corta* — días antes de que nada
@@ -55,11 +54,33 @@ realmente desplegado). Sigue siendo evidencia, pero secundaria: es el
 
 `material-hu` no tiene rama `develop` (`GET /git/ref/heads/develop` 404). Medido contra los
 últimos 30 PRs cerrados+mergeados: `main` 26 / `develop` 0. Su tronco y su ref `dev` son
-los dos `main`; lo mismo mide `hu-translations` (`main` 27 / `develop` 0).
+los dos `main`; lo mismo mide `hu-translations` (`main` 27 / `develop` 0). `material-hu` sí
+carga variables `REACT_*`, pero no despliega desde ellas — no tiene ningún run de CD con
+`event=release` — así que modelarlo en la familia `react` (como se hacía antes) deja prd
+`DESCONOCIDO` para siempre por falta de esa fuente, no porque el repo no tenga prd. Sus tres
+entornos son `main`/`staging`/`prod` directamente, igual que `hu-translations`.
 
-`humand-main-api` figura `branch_model: release-date` en `repos.json`, pero sus variables
-son `AWS_DEV_ACCOUNT` / `AWS_PFM_ACCOUNT` / `LOKALISE_PROJECT_ID` — ninguna `REACT_*`.
-Despliega por otro camino; queda declarado sin veredicto hasta leer su `cd.yml`.
+`humand-main-api` tiene un workflow por entorno
+(`.github/workflows/{dev,stg,prd}.yml`), de forma propia — no la de `react`:
+
+- **dev**: `push` a `develop`, igual que el frontend.
+- **stg**: dispara *solo* por `workflow_dispatch` — una persona tipea el ref a mano. No hay
+  rama de destino que leer: el `head_branch` del run dice desde dónde se lanzó el dispatch
+  (casi siempre `develop`), nunca qué se desplegó. El ref tipeado sobrevive únicamente en el
+  nombre del run — `run-name: "STG deploy - ${{ inputs.ref }}"` — que hay que parsear
+  (`display_title`, medido: a veces con doble espacio; runs previos al `run-name:` leen
+  "Stg deployment" liso, sin ref → `DESCONOCIDO`, nunca una adivinanza). Por ser siempre
+  manual, **stg de main-api puede moverse para atrás**: es una foto de lo último que alguien
+  desplegó, no un estado monótono.
+- **prd**: dispara por `release: [released]`. Acá `head_branch` alcanza sin parsear nada —
+  para ese evento GitHub lo resuelve al tag mismo (medido: `release-2026.08.20.01`). El tag
+  de main-api lleva el prefijo `release-`, a diferencia del frontend (`2026.08.19.05`); no se
+  normaliza, viaja tal cual al `compare`.
+
+Los runs se leen sin filtrar por query (`?status=success` en el endpoint por-workflow
+devolvió corridas de julio mientras la consulta sin filtrar traía corridas de hoy — medido
+26/08/2026 contra `stg.yml`); el filtro de `conclusion`/`status`, y en prd también de
+`event`, se aplica en JS sobre la lista completa.
 
 `humand-mobile` son **5 destinos, no 3**: los tags son `v<semver>-<env>-<n>` con una
 variante regional `-eu`, pero no simétrica por entorno — medido en la ventana de 100 tags
@@ -92,7 +113,7 @@ conocidas.
 | `PROBADO` | clave propia + PR mergeado al tronco del repo + `compare` `ahead`/`identical`; en prd, también `NO` cuando el tag no lo contiene y la rama designada sí (o cuando tampoco la contiene: ambos casos están tan medidos como el `SÍ`) | PR, sha, ref, fecha, comando; en prd `NO` con evidencia de tren, además la rama y la fecha estimada de despliegue |
 | `PARCIAL` | resuelto en unos repos y no en otros; repo sin modelo; algún PR no se pudo leer; algún `compare` falló (incluido, en prd, el compare contra la rama designada cuando el tag ya dijo `NO`) | además, qué quedó sin resolver y por qué, y cuántos PRs no se pudieron leer |
 | `NO_RESUELTO` | sin PRs "contributing" por clave propia, y ningún fetch de detalle de PR falló; solo candidatos del padre | los candidatos, marcados como "del padre, no prueba nada" |
-| `DESCONOCIDO` | el repo no tiene modelo de entorno conocido (`humand-main-api`); en prd, también sin run de CD `event=release` exitoso, o con la rama designada ilegible mientras el tag dice `NO` (sin ella no se puede saber si está en el tren) | la fila visible, sin veredicto, con el motivo |
+| `DESCONOCIDO` | el repo no tiene modelo de entorno conocido; en prd, también sin run de CD `event=release` exitoso, o con la rama designada ilegible mientras el tag dice `NO` (sin ella no se puede saber si está en el tren); en `humand-main-api` stg, también un run de stg sin ref parseable en el nombre | la fila visible, sin veredicto, con el motivo |
 
 **El cruce de prd.** prd se mide contra el *tag desplegado*: el `head_branch` del
 último run de CD con `event=release` + `conclusion=success`. Esa es la única fuente que
@@ -124,8 +145,8 @@ Sin build step: scripts planos en `index.html:1079-1088`, en ese orden.
 
 | archivo | qué hace | puro |
 |---|---|---|
-| `github.js` | agrega `searchPRsByKey`, `repoVariable`, `compareRefs`, `lastReleaseRun`; fetchea tags y llama a `latestTag` | no (I/O) |
-| `where.js` (nuevo) | recibe lo fetcheado y devuelve veredictos + confianza + evidencia; incluye `latestTag` — cuál tag es "el actual" es un juicio, no un fetch | **sí** |
+| `github.js` | agrega `searchPRsByKey`, `repoVariable`, `compareRefs`, `lastReleaseRun`, `whereBackendStgRef`, `whereBackendPrdRef`; fetchea tags y llama a `latestTag`; para `humand-main-api` fetchea sin filtrar y llama a `parseStgRunName` | no (I/O) |
+| `where.js` (nuevo) | recibe lo fetcheado y devuelve veredictos + confianza + evidencia; incluye `latestTag` y `parseStgRunName` — cuál tag es "el actual" y qué ref trae el nombre de un run son juicios, no fetches | **sí** |
 | `where-render.js` (nuevo) | filas por repo/entorno, bloque de evidencia, comando copiable | no (DOM) |
 
 `where.js` sigue el contrato de `classify.js`: función pura, sin saber de dónde vinieron
@@ -155,7 +176,11 @@ Fixtures con la forma cruda de la API — payload de `search/issues`, de `pulls/
 `compare` — y los casos que importan: hit del padre no promociona, PR no mergeado no
 cuenta, prd mide contra el tag y no contra la rama designada, "en la rama pero no en el
 tag" sale `NO` `PROBADO` con evidencia de tren (no `PARCIAL`), el mismatch tag/rama es nota
-sin degradar, repo sin modelo sale `DESCONOCIDO`, fallo de red no produce `NO`.
+sin degradar, repo sin modelo sale `DESCONOCIDO`, fallo de red no produce `NO`. Para
+`humand-main-api` (`tests/where-backend.test.js`): `parseStgRunName` contra el nombre real
+del run y su variante con doble espacio, el formato viejo sin ref y un título vacío/ausente
+(los cuatro casos de `parseStgRunName`), y que el reporte produzca tres filas reales en vez
+de la fila `unknown`.
 
 ## Fuera de alcance
 
@@ -164,4 +189,3 @@ sin degradar, repo sin modelo sale `DESCONOCIDO`, fallo de red no produce `NO`.
   `Access-Control-Allow-Origin`. La clave del padre se tipea.
 - Adopción en mobile: `prod` significa publicado, no instalado. Se muestran como hechos
   distintos, no se estima el segundo.
-- `humand-main-api` stg/prd, hasta iterar sobre su `cd.yml`.
