@@ -779,6 +779,11 @@ body.proc-panel-active #own-loading { display: none; }
   line-height: 1.4;
 }
 
+/* El tren: prd NO pero el commit ya esta en la rama designada. No es un
+   estado de error (no colorea con el amber de PARCIAL) — es evidencia extra
+   sobre un NO que ya esta PROBADO. */
+.where-train { flex-basis: 100%; font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+
 .where-bp { font-size: 11px; color: var(--muted); margin-top: 4px; }
 .where-bp a { color: var(--accent); text-decoration: none; }
 .where-bp a:hover { text-decoration: underline; }

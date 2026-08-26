@@ -14,11 +14,19 @@ function whereRowHTML(row) {
   var cmd = row.command
     ? '<code class="where-cmd" title="click para copiar">' + esc(row.command) + '</code>'
     : '';
+  // El tren: prd NO pero el commit ya esta en la rama designada. La fecha es
+  // una prediccion (branch + 7 dias, el tren corre semanal) — se rotula
+  // "estimado" siempre, nunca como si fuera una medicion mas.
+  var train = row.train
+    ? '<div class="where-train">esta en <b>' + esc(row.train.branch) + '</b>, esperando al tren'
+      + (row.train.estimate ? ' · estimado ' + esc(row.train.estimate) + ' (estimado)' : '')
+      + '</div>'
+    : '';
   return '<div class="where-row" data-conf="' + esc(row.confidence) + '">'
        +   '<span class="where-env">' + esc(row.id) + '</span>'
        +   '<span class="where-val">' + WHERE_ICON[row.value] + '</span>'
        +   '<span class="where-detail">' + detail + '</span>'
-       +   cmd
+       +   cmd + train
        + '</div>';
 }
 
@@ -33,10 +41,12 @@ function whereRepoHTML(r) {
          + '<span class="where-env">entornos</span><span class="where-val">?</span>'
          + '<span class="where-detail">' + esc(r.reason) + '</span></div></div>';
   }
+  // prd ya se mide contra el tag (prdVerdict): esta discrepancia no cambia el
+  // veredicto, solo cuenta de donde salio el tag. Nota apagada, no warning.
   var cross = '';
   if (r.prodCross && r.prodCross.agree === false) {
-    cross = '<div class="where-warn">prd discrepa: la variable dice <b>' + esc(r.prodCross.varBranch)
-          + '</b> y el ultimo release (' + esc(r.prodCross.tag) + ', ' + esc(r.prodCross.runAt)
+    cross = '<div class="where-note">tag publicado desde otra rama: la designada es <b>' + esc(r.prodCross.varBranch)
+          + '</b>, el release (' + esc(r.prodCross.tag) + ', ' + esc(r.prodCross.runAt)
           + ') salio de <b>' + esc(r.prodCross.target) + '</b></div>';
   } else if (r.prodCross && r.prodCross.agree === null) {
     // Ninguna disputa: simplemente el cruce nunca se pudo hacer. Se muestra

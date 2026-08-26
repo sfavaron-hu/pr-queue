@@ -262,13 +262,22 @@ async function whereRepoData(repo) {
     }
     return { refs, compares: {} };
   }
-  const [stg, prd, releaseRun] = await Promise.all([
+  // prd se mide contra el tag desplegado (releaseRun.tag = head_branch del
+  // ultimo run de CD event=release exitoso), nunca contra la variable — esa
+  // solo nombra la rama DESIGNADA prod el dia que se corta. `prd.ref` sale de
+  // `releaseRun` incluso si su lookup de `releases/tags/<tag>` fallo (el tag
+  // ya se supo por la primera llamada, dentro de whereReleaseRun); sin ningun
+  // run exitoso no hay tag y prd queda sin ref, DESCONOCIDO en where.js.
+  const [stg, prodVar, releaseRun] = await Promise.all([
     whereRepoVariable(repo, 'REACT_STAGING_BRANCH'),
     whereRepoVariable(repo, 'REACT_PRODUCTION_BRANCH'),
     whereReleaseRun(repo),
   ]);
+  const prd = releaseRun
+    ? { ref: releaseRun.tag }
+    : { error: 'sin run de CD con event=release y conclusion=success' };
   return { refs: { dev: { ref: model.dev }, stg, prd }, compares: {},
-           prodVar: prd.ref, releaseRun };
+           prodVar, releaseRun };
 }
 
 // Un PR ilegible no invalida el resto, pero tampoco desaparece sin dejar
@@ -323,6 +332,19 @@ async function whereFetchAll(key, parentKey) {
       data.compares[t.id] = info && info.ref
         ? await whereCompare(repo, pr.mergeCommitSha, info.ref)
         : null;
+    }
+    // La rama designada (REACT_PRODUCTION_BRANCH) solo hace falta como
+    // segunda lectura cuando el tag ya dijo NO — es el "juicio" de where.js
+    // (prdVerdict) el que decide si el commit esta en el tren; aca solo se
+    // evita el fetch cuando el tag ya cerro el caso (SÍ, o ni siquiera se
+    // pudo leer/comparar) para no gastar una llamada que where.js no va a usar.
+    if (envModel(repo).kind === 'react') {
+      const prdRef = data.refs.prd;
+      const prdStatus = data.compares.prd;
+      const tagSaysNo = prdRef && prdRef.ref && prdStatus != null && !CONTAINED.includes(prdStatus);
+      if (tagSaysNo && data.prodVar && data.prodVar.ref) {
+        data.branchCompare = await whereCompare(repo, pr.mergeCommitSha, data.prodVar.ref);
+      }
     }
     perRepo[repo] = data;
   }
