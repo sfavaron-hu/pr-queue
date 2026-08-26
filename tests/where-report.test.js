@@ -58,12 +58,12 @@ test('si la rama designada y el target_commitish del release discrepan, es nota,
 
 test('un repo sin modelo sale DESCONOCIDO con motivo y no rompe el resto', () => {
   const i = input();
-  i.pulls = [PULL, Object.assign({}, PULL, { repo: 'humand-main-api', number: 7 })];
-  i.perRepo['humand-main-api'] = { refs: { dev: { ref: 'develop' } }, compares: { dev: 'ahead' } };
+  i.pulls = [PULL, Object.assign({}, PULL, { repo: 'humand-infra', number: 7 })];
+  i.perRepo['humand-infra'] = { refs: { dev: { ref: 'develop' } }, compares: { dev: 'ahead' } };
   const r = buildWhereReport(i);
-  const api = r.repos.find(x => x.repo === 'humand-main-api');
-  assert.strictEqual(api.model, 'unknown');
-  assert.match(api.reason, /AWS/);
+  const infra = r.repos.find(x => x.repo === 'humand-infra');
+  assert.strictEqual(infra.model, 'unknown');
+  assert.match(infra.reason, /sin modelo declarado/);
   assert.strictEqual(r.confidence, 'PARCIAL');
   assert.strictEqual(r.repos.find(x => x.repo === 'humand-web').rows[0].value, 'SÍ');
 });

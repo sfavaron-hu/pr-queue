@@ -2,10 +2,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { envModel, envTargets, tagMatcher, WHERE_UNKNOWN } = require('../where.js');
 
-test('main-api queda declarado sin modelo, con motivo', () => {
+// main-api tiene su propio modelo (ver tests/where-backend.test.js): un
+// workflow por entorno, con la ref de stg viviendo en el nombre del run en
+// vez de en una rama o variable.
+test('main-api tiene modelo backend, no unknown', () => {
   const m = envModel('humand-main-api');
-  assert.strictEqual(m.kind, 'unknown');
-  assert.match(m.reason, /REACT_\*/);
+  assert.strictEqual(m.kind, 'backend');
 });
 
 test('un repo que no conocemos tambien es unknown', () => {
@@ -20,6 +22,16 @@ test('web resuelve stg y prd por variable de Actions', () => {
 
 test('hu-translations usa ramas fijas', () => {
   assert.deepStrictEqual(envModel('hu-translations'),
+    { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod', trunk: 'main' });
+});
+
+// material-hu tiene las mismas tres ramas fijas que hu-translations
+// (main/staging/prod, sin develop) — no la familia 'react' de variables de
+// Actions. Carga REACT_* pero no despliega desde ahi (medido 25/08/2026: sin
+// ningun run de CD con event=release, prd quedaba DESCONOCIDO por falta de
+// esa fuente, no porque el repo no tenga entorno prd).
+test('material-hu usa ramas fijas, igual que hu-translations', () => {
+  assert.deepStrictEqual(envModel('material-hu'),
     { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod', trunk: 'main' });
 });
 
