@@ -287,13 +287,17 @@ if (whereForm) {
     e.preventDefault();
     document.getElementById('error-msg').classList.add('hidden');
     var key = document.getElementById('where-key').value.trim().toUpperCase();
+    if (!key) {
+      showError('Escribí la clave del ticket que querés buscar, por ejemplo SQSH-4232.');
+      return;
+    }
     if (!WHERE_KEY_RE.test(key)) {
-      showError('/where: "' + key + '" no tiene forma de clave de ticket');
+      showError('"' + key + '" no parece una clave de ticket. Van con letras, guión y número, por ejemplo SQSH-4232.');
       return;
     }
     var parentKey = document.getElementById('where-parent').value.trim().toUpperCase() || null;
     if (parentKey && !WHERE_KEY_RE.test(parentKey)) {
-      showError('/where: la clave del padre "' + parentKey + '" no tiene forma de clave de ticket');
+      showError('"' + parentKey + '" no parece una clave de ticket. La del padre va en el mismo formato, por ejemplo SQSH-4230.');
       return;
     }
     runWhere(key, parentKey);

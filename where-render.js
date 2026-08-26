@@ -88,7 +88,7 @@ function renderWhere(report) {
         + report.failedPulls + (report.failedPulls === 1 ? ' PR no se pudo leer.' : ' PRs no se pudieron leer.')
         + '</div>'
       : '<div class="where-warn">Sin PR mergeado al tronco con esta clave. '
-        + 'Si el trabajo vive en un PR titulado con la clave del padre, tipeala arriba.</div>';
+        + 'Si el trabajo vive en un PR titulado con la clave del padre, tipeála arriba.</div>';
     box.innerHTML = head + warn + (cands ? '<ul class="where-cands">' + cands + '</ul>' : '');
     return;
   }
@@ -114,6 +114,6 @@ async function runWhere(key, parentKey) {
     renderWhere(buildWhereReport(await whereFetchAll(key, parentKey)));
   } catch (e) {
     box.innerHTML = '';
-    showError('/where: ' + (e.message || e));
+    showError('No se pudo consultar GitHub: ' + (e.message || e));
   }
 }
