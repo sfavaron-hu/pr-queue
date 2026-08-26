@@ -6,15 +6,19 @@ const PULL = { repo: 'humand-web', number: 9884, url: 'https://x/9884', title: '
                merged: true, mergeCommitSha: 'abc123', baseRef: 'develop',
                headRef: 'feat/SQSH-1-x', matchedKey: 'SQSH-1' };
 
+// prd mide contra el tag desplegado (2026.08.19.03), no contra la rama
+// designada (prodVar). El fixture base deja al commit fuera de las dos, para
+// que quede un NO probado y sin nota de tren por default.
 function input(over) {
   return Object.assign({
     key: 'SQSH-1', org: 'HumandDev', pulls: [PULL],
     perRepo: {
       'humand-web': {
-        refs: { dev: { ref: 'develop' }, stg: { ref: 'release-2026.08.19' }, prd: { ref: 'release-2026.08.11' } },
-        compares: { dev: 'ahead', stg: 'ahead', prd: 'behind' },
-        prodVar: 'release-2026.08.11',
-        releaseRun: { tag: '2026.08.11.03', targetCommitish: 'release-2026.08.11', createdAt: '2026-08-20T15:41:21Z' },
+        refs: { dev: { ref: 'develop' }, stg: { ref: 'release-2026.08.19' }, prd: { ref: '2026.08.19.03' } },
+        compares: { dev: 'ahead', stg: 'ahead', prd: 'diverged' },
+        prodVar: { ref: 'release-2026.08.11' },
+        branchCompare: 'diverged',
+        releaseRun: { tag: '2026.08.19.03', targetCommitish: 'release-2026.08.19', createdAt: '2026-08-20T15:41:21Z' },
       },
     },
   }, over);
@@ -44,11 +48,11 @@ test('sin PR propio el reporte es NO_RESUELTO aunque haya candidatos del padre',
   assert.strictEqual(r.repos.length, 0);
 });
 
-test('si las dos fuentes de prd discrepan, todo el reporte baja a PARCIAL', () => {
+test('si la rama designada y el target_commitish del release discrepan, es nota, no degradacion', () => {
   const i = input();
-  i.perRepo['humand-web'].releaseRun.targetCommitish = 'release-2026.08.19';
+  i.perRepo['humand-web'].releaseRun.targetCommitish = 'release-2026.08.25';
   const r = buildWhereReport(i);
-  assert.strictEqual(r.confidence, 'PARCIAL');
+  assert.strictEqual(r.confidence, 'PROBADO');
   assert.strictEqual(r.repos[0].prodCross.agree, false);
 });
 
@@ -109,13 +113,15 @@ test('ref error + prod disagreement nunca cae a PARCIAL: DESCONOCIDO se mantiene
   assert.strictEqual(prdRow.confidence, 'DESCONOCIDO');
 });
 
-test('prd PROBADO + prod disagreement degrada a PARCIAL', () => {
+test('mergeado a la rama designada pero no en el tag: NO probado con tren, no PARCIAL', () => {
   const i = input();
-  i.perRepo['humand-web'].releaseRun.targetCommitish = 'release-2026.08.19';
+  i.perRepo['humand-web'].branchCompare = 'ahead';
   const r = buildWhereReport(i);
   const prdRow = r.repos[0].rows[2];
-  assert.strictEqual(prdRow.confidence, 'PARCIAL');
   assert.strictEqual(prdRow.value, 'NO');
+  assert.strictEqual(prdRow.confidence, 'PROBADO');
+  assert.strictEqual(r.confidence, 'PROBADO');
+  assert.strictEqual(prdRow.train.branch, 'release-2026.08.11');
 });
 
 test('un PR ilegible degrada a PARCIAL aunque el resto salga PROBADO', () => {

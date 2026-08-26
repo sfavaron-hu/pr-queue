@@ -147,9 +147,58 @@ function targetVerdict(refInfo, compareStatus) {
   };
 }
 
+// release-YYYY.MM.DD despliega 7 dias despues del corte (medido: el tren
+// corre semanal). Esto es una prediccion, no una medicion — el Release
+// Manager decide el corte el mismo dia — asi que quien la muestra la rotula
+// como estimado, nunca como un hecho.
+var RELEASE_BRANCH_RE = /^release-(\d{4})\.(\d{2})\.(\d{2})$/;
+function trainDate(branch) {
+  var m = RELEASE_BRANCH_RE.exec(branch || '');
+  if (!m) return null;
+  var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  d.setUTCDate(d.getUTCDate() + 7);
+  function pad(n) { return n < 10 ? '0' + n : String(n); }
+  return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+}
+
+// prd mide contra el tag desplegado (el head_branch del ultimo run de CD
+// event=release exitoso — whereReleaseRun), nunca contra
+// REACT_PRODUCTION_BRANCH: esa variable nombra la rama DESIGNADA prod el dia
+// que se CORTA, dias antes de que nada despliegue desde ahi (medido
+// 2026-08-25: SQSH-4325 comparaba `ahead` contra la rama recien cortada y
+// `diverged` contra el tag realmente desplegado — la fila afirmaba prd ✓
+// para un commit que no estaba en produccion).
+//
+// Cuando el tag dice NO, la rama designada se chequea aparte: contenido ahi
+// es "mergeado, esperando al tren" — un NO tan medido como cualquier otro,
+// no un DESCONOCIDO — y viaja como evidencia (`train`) en la fila. Sin poder
+// leer esa rama o su compare no se puede afirmar ninguna de las dos lecturas
+// (¿no esta en ningun lado, o esta en el tren?): degrada.
+function prdVerdict(tagRef, tagCompareStatus, branch) {
+  var v = targetVerdict(tagRef, tagCompareStatus);
+  if (v.value !== 'NO' || v.confidence !== 'PROBADO') return v;
+
+  var b = branch || {};
+  if (!b.ref) {
+    return { value: WHERE_UNKNOWN, confidence: WHERE_UNKNOWN, ref: v.ref, status: v.status,
+             reason: 'no esta en el tag desplegado y no se pudo leer REACT_PRODUCTION_BRANCH '
+                     + 'para saber si esta en el tren' + (b.error ? ': ' + b.error : '') };
+  }
+  if (b.compareStatus == null) {
+    return { value: WHERE_UNKNOWN, confidence: 'PARCIAL', ref: v.ref, status: v.status,
+             reason: 'no esta en el tag desplegado y el compare contra ' + b.ref + ' fallo' };
+  }
+  if (CONTAINED.indexOf(b.compareStatus) === -1) return v;
+
+  return { value: v.value, confidence: v.confidence, ref: v.ref, status: v.status,
+           train: { branch: b.ref, estimate: trainDate(b.ref) } };
+}
+
 // REACT_PRODUCTION_BRANCH dice que rama esta DESIGNADA prod; el ultimo run de CD
-// con event=release dice que DESPLEGO. El 2026-08-11 discreparon. Se reportan las
-// dos y el veredicto baja a PARCIAL; elegir una es inventar.
+// con event=release dice que DESPLEGO. El 2026-08-11 discreparon: se publico un
+// tag sobre la rama recien cortada. Con prd medido contra el tag directamente
+// (prdVerdict) esto ya no afecta la correctitud del veredicto — el tag manda,
+// sea cual sea su origen — asi que es nota informativa, nunca degrada.
 function prodCross(varBranch, releaseRun) {
   if (!varBranch) {
     return { agree: null, varBranch: varBranch,
@@ -194,19 +243,24 @@ function buildWhereReport(input) {
       return { repo: repo, model: 'unknown', reason: model.reason, pr: pr, rows: [], prodCross: null };
     }
 
+    // Cross es informativo solamente (ver prodCross arriba): no toca `degraded`.
     var cross = model.kind === 'react'
-      ? prodCross(data.prodVar, data.releaseRun)
+      ? prodCross(data.prodVar && data.prodVar.ref, data.releaseRun)
       : null;
-    if (cross && cross.agree === false) degraded = true;
 
     var rows = envTargets(repo).map(function (t) {
-      var v = targetVerdict(data.refs[t.id], data.compares[t.id]);
+      var v = (model.kind === 'react' && t.id === 'prd')
+        ? prdVerdict(data.refs.prd, data.compares.prd, {
+            ref: data.prodVar && data.prodVar.ref,
+            error: data.prodVar && data.prodVar.error,
+            compareStatus: data.branchCompare,
+          })
+        : targetVerdict(data.refs[t.id], data.compares[t.id]);
       if (v.confidence !== 'PROBADO') degraded = true;
-      if (cross && cross.agree === false && t.env === 'prd' && v.confidence === 'PROBADO') v.confidence = 'PARCIAL';
       return {
         id: t.id, env: t.env, region: t.region,
         value: v.value, confidence: v.confidence, ref: v.ref,
-        status: v.status, reason: v.reason,
+        status: v.status, reason: v.reason, train: v.train,
         command: v.ref ? reproCommand(input.org, repo, pr.mergeCommitSha, v.ref) : null,
       };
     });
@@ -235,5 +289,6 @@ if (typeof module !== 'undefined' && module.exports) {
                      searchQuery: searchQuery, resolvePRs: resolvePRs,
                      representativeByRepo: representativeByRepo,
                      targetVerdict: targetVerdict, prodCross: prodCross, reproCommand: reproCommand,
+                     trainDate: trainDate, prdVerdict: prdVerdict, CONTAINED: CONTAINED,
                      buildWhereReport: buildWhereReport };
 }
