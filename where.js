@@ -3,26 +3,44 @@
 
 var WHERE_UNKNOWN = 'DESCONOCIDO';
 
-// Medido el 2026-08-25 contra la API con un PAT `repo` sin admin.
-// 'react' = la rama de cada entorno vive en una variable de Actions.
-// 'tags'  = no hay ramas de entorno; el entorno esta en el nombre del tag.
+// Medido el 2026-08-25/26 contra la API con un PAT `repo` sin admin.
+// 'react'   = la rama de cada entorno vive en una variable de Actions.
+// 'fixed'   = tres ramas fijas conocidas, sin variables ni tags de por medio.
+// 'tags'    = no hay ramas de entorno; el entorno esta en el nombre del tag.
+// 'backend' = un workflow por entorno, forma propia (ver mas abajo).
 // `trunk` es la rama a la que se mergean los PRs que cuentan como origen del
 // cambio (resolvePRs la usa) — no siempre coincide con el ref `dev` que se
 // mide como destino de despliegue, aunque en la mayoria de estos repos son
 // la misma rama.
 // material-hu no tiene rama `develop` (verificado: `git/ref/heads/develop`
-// 404): su tronco y su entorno dev son los dos `main`.
+// 404): sus ramas son main/staging/prod, la misma forma que hu-translations
+// — no la familia 'react'. Si carga variables REACT_* (medido: las tiene),
+// pero no despliega desde ellas: no hay ningun run de CD con event=release,
+// asi que leerlas como si fueran las de humand-web solo produce un prd
+// DESCONOCIDO permanente por falta de esa fuente.
 var ENV_MODELS = {
   'humand-web':        { kind: 'react', dev: 'develop', trunk: 'develop' },
   'humand-backoffice': { kind: 'react', dev: 'develop', trunk: 'develop' },
-  'material-hu':       { kind: 'react', dev: 'main', trunk: 'main' },
+  'material-hu':       { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod', trunk: 'main' },
   'hu-translations':   { kind: 'fixed', dev: 'main', stg: 'staging', prd: 'prod', trunk: 'main' },
   // dev-eu no se genera: mobile no publico un tag dev-eu desde v4.2.7, fuera
   // de la ventana de 100 tags. stg y prd si tienen variante -eu.
   'humand-mobile':     { kind: 'tags', trunk: 'develop',
                          regions: { dev: [''], stg: ['', 'eu'], prd: ['', 'eu'] } },
-  'humand-main-api':   { kind: 'unknown', trunk: 'develop',
-                         reason: 'sin variables REACT_*; despliega por AWS (AWS_DEV_ACCOUNT/AWS_PFM_ACCOUNT)' },
+  // Un workflow por entorno (`.github/workflows/{dev,stg,prd}.yml`), forma
+  // propia de este repo — no copiar el modelo 'react':
+  //  · dev: `push` a develop, igual que el frontend.
+  //  · stg: SOLO `workflow_dispatch` — no hay rama de destino. El
+  //    `head_branch` del run dice desde donde se DISPARO (casi siempre
+  //    develop), no que ref tipeo la persona; ese ref sobrevive solo en el
+  //    `display_title` del run ("STG deploy - <ref>"), parseado por
+  //    parseStgRunName. Como stg es siempre un despliegue manual, PUEDE
+  //    MOVERSE PARA ATRAS: es una foto de lo ultimo que alguien tipeo, no un
+  //    estado monotono como dev o prd.
+  //  · prd: `release: [released]`. Aca si alcanza con `head_branch` del run
+  //    — a diferencia de stg, para un evento `release` GitHub lo resuelve al
+  //    tag mismo (medido: head_branch == "release-2026.08.20.01").
+  'humand-main-api':  { kind: 'backend', dev: 'develop', trunk: 'develop' },
 };
 
 var ENVS = ['dev', 'stg', 'prd'];
@@ -89,6 +107,20 @@ function latestTag(tags, env, region) {
     }
   });
   return best;
+}
+
+// El ref que alguien tipeo al disparar un stg de main-api solo sobrevive en
+// el nombre del run ("STG deploy - release-2026.08.24") — cual medicion es
+// la vigente es un juicio, no un fetch, por eso vive aca y no en github.js.
+// Runs viejos, de antes de que el workflow tuviera `run-name:`, leen
+// "Stg deployment" liso: sin ref que parsear, DESCONOCIDO y nunca una
+// adivinanza. Medido: un run real trae doble espacio entre el guion y el
+// ref ("STG deploy -  release-2026.08.20") — se tolera, nunca se descarta
+// por eso.
+var STG_RUN_NAME_RE = /^stg deploy -\s*(\S.*)$/i;
+function parseStgRunName(title) {
+  var m = STG_RUN_NAME_RE.exec(String(title || '').trim());
+  return m ? m[1].trim() : null;
 }
 
 function searchQuery(key, org) {
@@ -286,6 +318,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { WHERE_UNKNOWN: WHERE_UNKNOWN, ENV_MODELS: ENV_MODELS,
                      envModel: envModel, envTargets: envTargets,
                      tagMatcher: tagMatcher, latestTag: latestTag,
+                     parseStgRunName: parseStgRunName,
                      searchQuery: searchQuery, resolvePRs: resolvePRs,
                      representativeByRepo: representativeByRepo,
                      targetVerdict: targetVerdict, prodCross: prodCross, reproCommand: reproCommand,
