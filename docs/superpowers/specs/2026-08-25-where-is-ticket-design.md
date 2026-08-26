@@ -39,11 +39,19 @@ admin:
 
 | repo | dev | stg | prd |
 |---|---|---|---|
-| `humand-web`, `humand-backoffice` | `develop` | var `REACT_STAGING_BRANCH` | var `REACT_PRODUCTION_BRANCH` |
+| `humand-web`, `humand-backoffice` | `develop` | var `REACT_STAGING_BRANCH` | tag desplegado (`head_branch` del último run de CD `event=release` exitoso) |
 | `material-hu` | `main` | idem | idem |
 | `hu-translations` | `main` | `staging` | `prod` |
 | `humand-mobile` | último tag `v*-dev-*` | `v*-stg-*` | `v*-prod-*` |
 | `humand-main-api` | `DESCONOCIDO` | `DESCONOCIDO` | `DESCONOCIDO` |
+
+`REACT_PRODUCTION_BRANCH` no resuelve prd. Esa variable nombra la rama
+DESIGNADA prod el día que el tren la *corta* — días antes de que nada
+despliegue desde ahí — y usarla como destino del `compare` deja pasar un
+falso `prd ✓` para un commit que todavía no salió (medido 2026-08-25,
+SQSH-4325: `ahead` contra la rama recién cortada, `diverged` contra el tag
+realmente desplegado). Sigue siendo evidencia, pero secundaria: es el
+*estado del tren* — ver "El cruce de prd" más abajo.
 
 `material-hu` no tiene rama `develop` (`GET /git/ref/heads/develop` 404). Medido contra los
 últimos 30 PRs cerrados+mergeados: `main` 26 / `develop` 0. Su tronco y su ref `dev` son
@@ -81,15 +89,28 @@ conocidas.
 
 | Nivel | Condición | Qué se muestra |
 |---|---|---|
-| `PROBADO` | clave propia + PR mergeado al tronco del repo + `compare` `ahead`/`identical` | PR, sha, ref, fecha, comando |
-| `PARCIAL` | resuelto en unos repos y no en otros; repo sin modelo; las dos fuentes de prd discrepan; o algún PR no se pudo leer | además, qué quedó sin resolver y por qué, y cuántos PRs no se pudieron leer |
+| `PROBADO` | clave propia + PR mergeado al tronco del repo + `compare` `ahead`/`identical`; en prd, también `NO` cuando el tag no lo contiene y la rama designada sí (o cuando tampoco la contiene: ambos casos están tan medidos como el `SÍ`) | PR, sha, ref, fecha, comando; en prd `NO` con evidencia de tren, además la rama y la fecha estimada de despliegue |
+| `PARCIAL` | resuelto en unos repos y no en otros; repo sin modelo; algún PR no se pudo leer; algún `compare` falló (incluido, en prd, el compare contra la rama designada cuando el tag ya dijo `NO`) | además, qué quedó sin resolver y por qué, y cuántos PRs no se pudieron leer |
 | `NO_RESUELTO` | sin PRs "contributing" por clave propia, y ningún fetch de detalle de PR falló; solo candidatos del padre | los candidatos, marcados como "del padre, no prueba nada" |
-| `DESCONOCIDO` | el repo no tiene modelo de entorno conocido (`humand-main-api`) | la fila visible, sin veredicto, con el motivo |
+| `DESCONOCIDO` | el repo no tiene modelo de entorno conocido (`humand-main-api`); en prd, también sin run de CD `event=release` exitoso, o con la rama designada ilegible mientras el tag dice `NO` (sin ella no se puede saber si está en el tren) | la fila visible, sin veredicto, con el motivo |
 
-**El cruce de prd.** `REACT_PRODUCTION_BRANCH` dice qué rama está *designada* prod; el
-último run de CD con `event=release` + `conclusion=success` dice qué *desplegó*. El
-11/08/2026 discreparon: se publicó un tag sobre la rama recién cortada. Se leen las dos y,
-si no coinciden, el veredicto baja a `PARCIAL` y se muestran ambas. Nunca elegir una.
+**El cruce de prd.** prd se mide contra el *tag desplegado*: el `head_branch` del
+último run de CD con `event=release` + `conclusion=success`. Esa es la única fuente que
+contesta "¿está en producción?" — `REACT_PRODUCTION_BRANCH` no entra en esa cuenta, porque
+nombra la rama el día que se *corta*, no el día que despliega.
+
+Cuando el tag dice `NO`, la rama designada se chequea aparte, como una segunda medición:
+contenido ahí es "mergeado, esperando al tren" — un `NO` igual de `PROBADO`, con la rama y
+una fecha estimada (corte + 7 días, rotulada como estimado: el Release Manager decide el
+corte ese mismo día, esto es una predicción). No contenido tampoco: `NO` liso, sin nota,
+también `PROBADO` — nada quedó sin medir. Solo degrada si esa segunda lectura no se pudo
+hacer (variable ilegible o su `compare` falló) — nunca por lo que ya midió el tag.
+
+El 11/08/2026 el tag y la rama discreparon: se publicó un release sobre la rama recién
+cortada (`releases/tags/<tag>.target_commitish` ≠ valor de la variable). Con prd medido
+contra el tag directamente esto ya no cambia el veredicto — el tag manda, sea cual sea su
+origen — así que se reporta como nota apagada, nunca como warning, y nunca degrada la
+confianza.
 
 ```bash
 gh api repos/HumandDev/humand-web/actions/variables/REACT_PRODUCTION_BRANCH --jq .value
@@ -132,8 +153,9 @@ leer es `DESCONOCIDO`, nunca "no está".
 `node --test` desde la raíz, sin deps, como el resto (`tests/classify-*.test.js`).
 Fixtures con la forma cruda de la API — payload de `search/issues`, de `pulls/{n}`, de
 `compare` — y los casos que importan: hit del padre no promociona, PR no mergeado no
-cuenta, prd discrepante degrada a `PARCIAL`, repo sin modelo sale `DESCONOCIDO`, fallo de
-red no produce `NO`.
+cuenta, prd mide contra el tag y no contra la rama designada, "en la rama pero no en el
+tag" sale `NO` `PROBADO` con evidencia de tren (no `PARCIAL`), el mismatch tag/rama es nota
+sin degradar, repo sin modelo sale `DESCONOCIDO`, fallo de red no produce `NO`.
 
 ## Fuera de alcance
 
