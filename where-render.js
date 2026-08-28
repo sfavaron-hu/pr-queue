@@ -3,12 +3,31 @@
 
 var WHERE_ICON = { 'SÍ': '✓', 'NO': '✗', 'DESCONOCIDO': '?' };
 
+// La API de GitHub devuelve `identical`/`ahead`/`behind`/`diverged`. Los dos
+// ultimos significan lo mismo para quien lee la fila — el ref no contiene el
+// commit — y `diverged` es ademas el unico que aparece en la practica: un tag
+// de release nunca es descendiente lineal de un merge commit al tronco, asi
+// que siempre hay commits de cada lado. La palabra cruda solo repetia el ✗ en
+// jerga; se conserva en el title, que es donde alguien que quiere auditar la
+// fila la busca (junto al `gh api` que la reproduce).
+var WHERE_STATUS_LABEL = {
+  identical: 'incluido', ahead: 'incluido',
+  behind: 'no incluido', diverged: 'no incluido',
+};
+
+function whereStatusHTML(status) {
+  var label = WHERE_STATUS_LABEL[status];
+  return label
+    ? '<span title="status de GitHub: ' + esc(status) + '">' + label + '</span>'
+    : esc(status);
+}
+
 function whereRowHTML(row) {
   // Un ref resuelto no alcanza para callar la razon: si no hay status (el
   // compare fallo) el motivo tiene que verse igual que en cualquier otra fila
   // no-PROBADO, no quedar detras de un ref que ya no explica nada solo.
   var detail = row.ref
-    ? esc(row.ref) + (row.status ? ' · ' + esc(row.status)
+    ? esc(row.ref) + (row.status ? ' · ' + whereStatusHTML(row.status)
                        : row.reason ? ' · ' + esc(row.reason) : '')
     : esc(row.reason || 'sin ref');
   var cmd = row.command
@@ -70,6 +89,11 @@ function renderWhere(report) {
   var box = document.getElementById('where-result');
   var head = '<div class="where-head">' + esc(report.key)
            + ' · <span class="where-conf">' + esc(report.confidence) + '</span></div>';
+
+  // Arriba de todo y en las dos ramas: el que abre el panel tiene que leer el
+  // estado en una oracion, sin traducir ni un ✓ ni un ref. Lo que sigue es el
+  // detalle que la sostiene, no la respuesta.
+  head += '<div class="where-eli5">' + esc(whereSummary(report)) + '</div>';
 
   // repos vacio cubre dos causas distintas: sin ningun PR de clave propia
   // (NO_RESUELTO), o PRs de clave propia que existieron pero no se pudieron

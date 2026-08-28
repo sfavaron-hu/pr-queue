@@ -701,6 +701,16 @@ body.proc-panel-active #own-loading { display: none; }
 }
 .where-conf { font-family: var(--mono); color: var(--text); text-transform: none; letter-spacing: normal; }
 
+/* La respuesta en una oracion. Va con el color del texto (no el --muted del
+   resto del reporte) porque es lo unico que hay que leer si no se quiere
+   auditar nada: el detalle de abajo es lo secundario, no esto. */
+.where-eli5 {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+
 .where-repo {
   background: rgba(127,127,127,.06);
   border: 1px solid var(--border);

@@ -314,6 +314,117 @@ function buildWhereReport(input) {
   };
 }
 
+// ── Resumen ELI5 ──────────────────────────────────────────────────────────
+// Una linea en castellano llano arriba del reporte: alguien que no sabe que
+// es un tag ni que significa `diverged` tiene que poder leer el estado del
+// ticket sin bajar a las filas.
+//
+// No decide nada nuevo: resume las filas que ya dictamino buildWhereReport, y
+// por eso no puede afirmar mas que ellas. Dos reglas la mantienen honesta:
+//   · un entorno cuenta como alcanzado solo si TODOS sus destinos dicen SI —
+//     las dos regiones, en todos los repos. prd ✓ / prd-eu ✗ no es "esta en
+//     produccion", es "salio a medias".
+//   · un DESCONOCIDO nunca se cuenta como falta ni como llegada: se nombra
+//     aparte. "No lo pude medir" y "no esta" son la distincion que sostiene
+//     todo el reporte y colapsarlas aca la perderia igual.
+var LADDER = ['prd', 'stg', 'dev'];
+
+var REACHED = {
+  prd: 'Ya está en producción.',
+  stg: 'Está en staging, el entorno donde se prueba antes de salir.',
+  dev: 'Está en el entorno de desarrollo.',
+};
+var PARTIAL_MSG = {
+  prd: 'Ya salió a producción, pero no en todos lados.',
+  stg: 'Llegó a staging (el entorno de prueba), pero no en todos lados.',
+  dev: 'Llegó al entorno de desarrollo, pero no en todos lados.',
+};
+// Lo que todavia NO alcanzo. Se dice solo cuando esos entornos de arriba se
+// midieron: con uno ciego, "todavia no esta en produccion" seria un invento
+// del resumen, no una lectura de las filas.
+var NOT_YET = {
+  stg: ' Todavía no está en producción.',
+  dev: ' Todavía no pasó a staging ni a producción.',
+};
+
+// Con un solo repo el id del destino ya lo identifica ("prd-eu"); con varios
+// hay que decir de cual, o "falta prd" no dice de que repo falta.
+function whereTally(report) {
+  var by = { dev: [], stg: [], prd: [] }, unknownRepos = [], train = null;
+  var multi = report.repos.length > 1;
+  report.repos.forEach(function (r) {
+    if (r.model === 'unknown') { unknownRepos.push(r.repo); return; }
+    r.rows.forEach(function (row) {
+      if (!by[row.env]) return;
+      if (row.train && !train) train = row.train;
+      by[row.env].push({ value: row.value, label: (multi ? r.repo + ' ' : '') + row.id });
+    });
+  });
+  return { by: by, unknownRepos: unknownRepos, train: train };
+}
+
+function labels(rows) {
+  return rows.map(function (r) { return r.label; }).join(', ');
+}
+function isNo(r) { return r.value === 'NO'; }
+function isBlind(r) { return r.value === WHERE_UNKNOWN; }
+function blindNote(rows) {
+  return rows.length ? ' No se pudo medir ' + labels(rows) + '.' : '';
+}
+
+function whereSummary(report) {
+  if (report.repos.length === 0) {
+    return report.failedPulls
+      ? 'No se sabe dónde está: no se pudieron leer ' + report.failedPulls
+        + (report.failedPulls === 1 ? ' PR' : ' PRs') + ' de GitHub.'
+      : 'Todavía no hay ningún PR mergeado con esta clave, así que el ticket no está en ningún entorno.';
+  }
+
+  var t = whereTally(report);
+  var tail = t.unknownRepos.length
+    ? ' No se pudo medir ' + t.unknownRepos.join(', ') + '.' : '';
+
+  var all = t.by.dev.concat(t.by.stg, t.by.prd);
+  // Sin una sola medicion que haya salido, la unica frase honesta es esa: las
+  // ramas de abajo afirmarian donde no esta, y eso no se midio.
+  if (!all.length || all.every(isBlind)) {
+    return 'El PR está mergeado, pero no se pudo medir ningún entorno.' + tail;
+  }
+
+  // De arriba hacia abajo: gana el escalon mas alto que tenga al menos un SÍ.
+  // Los destinos ciegos de los escalones ya descartados se arrastran, porque
+  // son justamente los que impiden afirmar "todavia no llego mas arriba".
+  var blindAbove = [];
+  for (var i = 0; i < LADDER.length; i++) {
+    var env = LADDER[i], rows = t.by[env];
+    if (!rows.length) continue;
+    var missing = rows.filter(isNo), blind = rows.filter(isBlind);
+    if (missing.length + blind.length === rows.length) {   // ningun SÍ en este escalon
+      blindAbove = blindAbove.concat(blind);
+      continue;
+    }
+    var whole = !missing.length && !blind.length;
+    return (whole ? REACHED[env] : PARTIAL_MSG[env])
+         + (blindAbove.length ? '' : (NOT_YET[env] || ''))
+         + (missing.length ? ' Falta ' + labels(missing) + '.' : '')
+         + blindNote(blind.concat(blindAbove))
+         + tail;
+  }
+
+  // Mergeado y en ningun entorno. El tren es la unica prediccion que el
+  // reporte ya se permite (rotulada estimado por quien la muestra), asi que
+  // es lo unico que se puede agregar sin inventar cuando sale.
+  if (t.train) {
+    return 'El PR está mergeado y ya subió a ' + t.train.branch + ', la rama que sale a producción'
+         + (t.train.estimate ? ': se estima que despliega el ' + t.train.estimate : '') + '.'
+         + blindNote(blindAbove) + tail;
+  }
+  return (blindAbove.length
+    ? 'El PR está mergeado, pero no entró en ninguno de los entornos que se pudieron medir.'
+    : 'El PR está mergeado, pero todavía no entró en ningún build: no está en desarrollo, ni en staging, ni en producción.')
+    + blindNote(blindAbove) + tail;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { WHERE_UNKNOWN: WHERE_UNKNOWN, ENV_MODELS: ENV_MODELS,
                      envModel: envModel, envTargets: envTargets,
@@ -323,5 +434,5 @@ if (typeof module !== 'undefined' && module.exports) {
                      representativeByRepo: representativeByRepo,
                      targetVerdict: targetVerdict, prodCross: prodCross, reproCommand: reproCommand,
                      trainDate: trainDate, prdVerdict: prdVerdict, CONTAINED: CONTAINED,
-                     buildWhereReport: buildWhereReport };
+                     buildWhereReport: buildWhereReport, whereSummary: whereSummary };
 }
