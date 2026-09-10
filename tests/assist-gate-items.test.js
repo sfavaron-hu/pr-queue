@@ -22,7 +22,7 @@ test('a dirty worktree produces a renderable question, not an action', () => {
   const q = questionFor(proc({ worktrees: [wt({ dirty: 3 })], flags: flags({ dirty: true }) }), ledger([]));
   assert.equal(q.type, 'question');
   renderable(q);
-  assert.match(q.question, /sin commitear/);
+  assert.match(q.question, /uncommitted file/);
 });
 
 test('a cold process produces the worked-example question', () => {
@@ -31,14 +31,14 @@ test('a cold process produces the worked-example question', () => {
     worktrees: [wt({ branch: 'fix/no-ticket-tiptap-v3', unpushed: 9 })],
     flags: flags({ cold: true }) }), ledger([]));
   renderable(q);
-  assert.equal(q.header, 'Frío');
-  assert.match(q.options.map(o => o.label).join(','), /Retomar/);
-  assert.match(q.options.find(o => o.label === 'Retomar').description, /9 commits/);
+  assert.equal(q.header, 'Cold');
+  assert.match(q.options.map(o => o.label).join(','), /Resume/);
+  assert.match(q.options.find(o => o.label === 'Resume').description, /9 commits/);
 });
 
 test('dirty takes priority over cold', () => {
   const q = questionFor(proc({ worktrees: [wt({ dirty: 1 })], flags: flags({ dirty: true, cold: true }) }), ledger([]));
-  assert.match(q.question, /sin commitear/);
+  assert.match(q.question, /uncommitted file/);
 });
 
 test('a process needing no decision yields no question', () => {
@@ -91,28 +91,28 @@ test('notify items pass through untouched and unbudgeted', () => {
 const fs = require('node:fs');
 const path = require('node:path');
 
-// --- Huérfano: PR done but local-only work (two changes from real use) ---
+// --- Orphan: PR done but local-only work (two changes from real use) ---
 test('orphan question fires when a merged PR leaves unpushed local commits', () => {
   const q = questionFor(proc({
     worktrees: [wt({ unpushedLocal: 3, isPrimary: false })],
     prs: [{ number: 9577, merged: true, closed: false }], flags: flags() }), ledger([]));
   assert.equal(q.type, 'question');
-  assert.equal(q.header, 'Huérfano');
+  assert.equal(q.header, 'Orphan');
   assert.match(q.key, /^orphan:/);
   renderable(q);
-  assert.match(q.question, /sin pushear/);
+  assert.match(q.question, /unpushed work/);
   const labels = q.options.map(o => o.label);
-  assert.deepEqual(labels, ['Nuevo PR', 'Descartar', 'Dejar']);
-  const d = q.options.find(o => o.label === 'Descartar');
+  assert.deepEqual(labels, ['New PR', 'Discard', 'Leave it']);
+  const d = q.options.find(o => o.label === 'Discard');
   assert.match(d.description, /worktree remove --force/);
-  assert.match(d.description, /confirmo/i);   // destructive → must promise a confirmation
+  assert.match(d.description, /confirm/i);   // destructive → must promise a confirmation
 });
 
 test('orphan fires for a closed-unmerged PR whose worktree has uncommitted work', () => {
   const q = questionFor(proc({
     worktrees: [wt({ dirty: 2, unpushedLocal: 0, isPrimary: false })],
     prs: [{ number: 6, merged: false, closed: true }], flags: flags() }), ledger([]));
-  assert.equal(q.header, 'Huérfano');
+  assert.equal(q.header, 'Orphan');
 });
 
 test('orphan does NOT fire while any PR is still open', () => {
@@ -120,34 +120,34 @@ test('orphan does NOT fire while any PR is still open', () => {
     worktrees: [wt({ unpushedLocal: 3, isPrimary: false })],
     prs: [{ merged: true, closed: false }, { merged: false, closed: false }],
     flags: flags({ cold: true }) }), ledger([]));
-  assert.notEqual(q && q.header, 'Huérfano');
+  assert.notEqual(q && q.header, 'Orphan');
 });
 
 test('orphan does NOT fire on the primary checkout (parked on base, nothing lost)', () => {
   const q = questionFor(proc({
     worktrees: [wt({ unpushedLocal: 3, isPrimary: true })],
     prs: [{ merged: true, closed: false }], flags: flags({ cold: true }) }), ledger([]));
-  assert.notEqual(q && q.header, 'Huérfano');
+  assert.notEqual(q && q.header, 'Orphan');
 });
 
-test('cold offers Descartar (not Archivar) when the worktree holds only-local work', () => {
+test('cold offers Discard (not Archive) when the worktree holds only-local work', () => {
   const q = questionFor(proc({
     worktrees: [wt({ unpushed: 4, unpushedLocal: 4, isPrimary: false })],
     prs: [], flags: flags({ cold: true }) }), ledger([]));
-  assert.equal(q.header, 'Frío');
+  assert.equal(q.header, 'Cold');
   const labels = q.options.map(o => o.label);
-  assert.ok(labels.includes('Descartar'), 'has Descartar');
-  assert.ok(!labels.includes('Archivar'), 'no Archivar when there is local-only work to lose');
-  assert.match(q.options.find(o => o.label === 'Descartar').description, /worktree remove --force/);
+  assert.ok(labels.includes('Discard'), 'has Discard');
+  assert.ok(!labels.includes('Archive'), 'no Archive when there is local-only work to lose');
+  assert.match(q.options.find(o => o.label === 'Discard').description, /worktree remove --force/);
 });
 
-test('cold keeps plain Archivar when the worktree is clean and fully pushed', () => {
+test('cold keeps plain Archive when the worktree is clean and fully pushed', () => {
   const q = questionFor(proc({
     worktrees: [wt({ unpushed: 0, unpushedLocal: 0, isPrimary: false })],
     prs: [], flags: flags({ cold: true }) }), ledger([]));
   const labels = q.options.map(o => o.label);
-  assert.ok(labels.includes('Archivar'));
-  assert.ok(!labels.includes('Descartar'));
+  assert.ok(labels.includes('Archive'));
+  assert.ok(!labels.includes('Discard'));
 });
 
 test('cold question pluralizes commits correctly (1 commit, 2 commits)', () => {
@@ -176,7 +176,7 @@ test('the skill documents what went wrong on the first real run', () => {
   assert.match(md, /run\.js"? ask/);
   // A main working tree cannot be removed; 128 is the symptom to recognize.
   assert.match(md, /128/);
-  assert.match(md, /Ir a la base/);
+  assert.match(md, /Park on base/);
   // The drain isolates failures, so a success exit can still mean nothing worked.
   assert.match(md, /actions\.results/);
   // Every exit code the drain can return, not just the degraded one.
@@ -211,16 +211,16 @@ test('a cold question states the PR state, since that usually decides it', () =>
   const merged = questionFor(proc({
     worktrees: [wt({ unpushed: 6 })], prs: [{ number: 22, merged: true, closed: false }],
     flags: flags({ cold: true }) }), ledger([]));
-  assert.match(merged.options.find(o => o.label === 'Retomar').description, /#22 mergeado/);
+  assert.match(merged.options.find(o => o.label === 'Resume').description, /#22 merged/);
 
   const closed = questionFor(proc({
     worktrees: [wt({ unpushed: 1 })], prs: [{ number: 6, merged: false, closed: true }],
     flags: flags({ cold: true }) }), ledger([]));
-  assert.match(closed.options.find(o => o.label === 'Retomar').description, /#6 cerrado sin mergear/);
+  assert.match(closed.options.find(o => o.label === 'Resume').description, /#6 closed without merging/);
 
   const none = questionFor(proc({
     worktrees: [wt({ unpushed: 2 })], prs: [], flags: flags({ cold: true }) }), ledger([]));
-  assert.match(none.options.find(o => o.label === 'Retomar').description, /sin PR/);
+  assert.match(none.options.find(o => o.label === 'Resume').description, /no PR/);
 });
 
 test('a cold question reports how stale the branch actually is', () => {
@@ -229,12 +229,12 @@ test('a cold question reports how stale the branch actually is', () => {
     proc({ worktrees: [wt({ unpushed: 3, lastCommit: now - 21 * 86400000, lastCommitSubject: 'wire the resolver' })],
            flags: flags({ cold: true }) }),
     { processes: [], workspaceRoot: '/w', generatedAt: now });
-  const resume = q.options.find(o => o.label === 'Retomar').description;
-  assert.match(resume, /hace 21 día\(s\)/);
+  const resume = q.options.find(o => o.label === 'Resume').description;
+  assert.match(resume, /21 day\(s\) ago/);
   assert.match(resume, /wire the resolver/);
 });
 
-// Offering `Archivar` on a main working tree hands back an option that cannot
+// Offering `Archive` on a main working tree hands back an option that cannot
 // work: `git worktree remove` on it exits 128. The equivalent is parking it on base.
 test('a cold primary checkout is offered its base branch, never worktree remove', () => {
   const q = questionFor(proc({
@@ -242,19 +242,19 @@ test('a cold primary checkout is offered its base branch, never worktree remove'
     prs: [{ number: 2258, merged: true, closed: false }],
     flags: flags({ cold: true }) }), ledger([]));
   const labels = q.options.map(o => o.label);
-  assert.ok(!labels.includes('Archivar'), 'must not offer an impossible removal');
-  assert.ok(labels.includes('Ir a la base'));
-  const base = q.options.find(o => o.label === 'Ir a la base');
-  assert.match(base.description, /checkout principal/);
+  assert.ok(!labels.includes('Archive'), 'must not offer an impossible removal');
+  assert.ok(labels.includes('Park on base'));
+  const base = q.options.find(o => o.label === 'Park on base');
+  assert.match(base.description, /main working tree/);
   assert.match(base.description, /develop/);
   renderable(q);
 });
 
-test('a cold non-primary worktree still gets Archivar, with its path', () => {
+test('a cold non-primary worktree still gets Archive, with its path', () => {
   const q = questionFor(proc({
     worktrees: [wt({ path: '/w/r/.worktrees/feat-x', isPrimary: false, unpushed: 1 })],
     flags: flags({ cold: true }) }), ledger([]));
-  const archive = q.options.find(o => o.label === 'Archivar');
+  const archive = q.options.find(o => o.label === 'Archive');
   assert.match(archive.description, /\/w\/r\/\.worktrees\/feat-x/);
 });
 
@@ -280,6 +280,6 @@ test('a dirty question truncates a long file list but says how many are hidden',
 test('a dirty question with no file sample still reads correctly', () => {
   const q = questionFor(proc({
     worktrees: [wt({ dirty: 2, dirtyFiles: [] })], flags: flags({ dirty: true }) }), ledger([]));
-  assert.match(q.question, /2 archivo\(s\) sin commitear\. ¿Qué hago\?/);
+  assert.match(q.question, /2 uncommitted file\(s\)\. What do I do\?/);
   renderable(q);
 });

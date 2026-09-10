@@ -71,7 +71,7 @@ test('remove-merged-worktree fires when every PR is merged, the dir is present a
 
 test('remove-merged-worktree is suppressed when the worktree has unpushed local commits', () => {
   // Removing it would silently destroy commits that exist only locally. The
-  // owner gets a "Huérfano" question instead (see gate-items); no auto-remove.
+  // owner gets a "Orphan" question instead (see gate-items); no auto-remove.
   const acts = buildActions(ledger([proc({
     worktrees: [wt({ dirty: 0, unpushedLocal: 2 })], prs: [{ headRef: 'feat/SQSH-1', merged: true }] })]));
   assert.equal(acts.filter(a => a.kind === 'remove-merged-worktree').length, 0);

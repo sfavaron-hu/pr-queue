@@ -12,14 +12,14 @@ function memIo(nowMs) {
     mkdirp: ()=>{} };
 }
 const DAY = 86400000;
-const item = (key) => ({ type: 'question', processKey: key.split(':')[1], key, options: [{ label: 'Dejar' }] });
+const item = (key) => ({ type: 'question', processKey: key.split(':')[1], key, options: [{ label: 'Leave it' }] });
 
 test('markDone moves the item into done/ and clears items/ + answers/', () => {
   const io = memIo(1000); const paths = queuePaths('/s');
   const it = item('cold:a'); const id = itemId(it);
   syncItems(io, paths, [it]);
-  writeAnswer(io, paths, id, { value: 'Dejar' }, {});
-  markDone(io, paths, id, { item: it, answer: { value: 'Dejar' }, action: 'archived' });
+  writeAnswer(io, paths, id, { value: 'Leave it' }, {});
+  markDone(io, paths, id, { item: it, answer: { value: 'Leave it' }, action: 'archived' });
   assert.equal(io.exists(`${paths.items}/${id}.json`), false);
   assert.equal(io.exists(`${paths.answers}/${id}.json`), false);
   const rec = JSON.parse(io.read(`${paths.done}/${id}.json`));
@@ -31,11 +31,11 @@ test('listOpenItems pairs each open item with its answer (or null)', () => {
   const io = memIo(1); const paths = queuePaths('/s');
   const a = item('cold:a'), b = item('dirty:b');
   syncItems(io, paths, [a, b]);
-  writeAnswer(io, paths, itemId(a), { value: 'Dejar' }, {});
+  writeAnswer(io, paths, itemId(a), { value: 'Leave it' }, {});
   const open = listOpenItems(io, paths).sort((x, y) => x.item.key.localeCompare(y.item.key));
   assert.equal(open.length, 2);
   const byKey = Object.fromEntries(open.map(o => [o.item.key, o]));
-  assert.deepEqual(byKey['cold:a'].answer, { value: 'Dejar' });
+  assert.deepEqual(byKey['cold:a'].answer, { value: 'Leave it' });
   assert.equal(byKey['dirty:b'].answer, null);
 });
 

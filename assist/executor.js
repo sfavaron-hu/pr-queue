@@ -36,7 +36,7 @@ function drainActions(exec, actions) {
 // The value the gate uses for "leave it" in every question it emits
 // (assist/gate.js questionFor). The only answer the executor resolves without a
 // model — a declined item must stop being re-asked, and that is pure bookkeeping.
-const DECLINE_LABEL = 'Dejar';
+const DECLINE_LABEL = 'Leave it';
 const DECLINE_TTL_DAYS = 30;
 
 // The exact batch to put in front of the owner: the gate's budgeted slice
@@ -49,7 +49,7 @@ const DECLINE_TTL_DAYS = 30;
 //
 // Declined items are filtered HERE, not only in the drain. The gate rebuilds
 // its questions from the live situation every pass, so a declined question
-// comes back the moment the situation persists — and "Dejar" is usually chosen
+// comes back the moment the situation persists — and "Leave it" is usually chosen
 // precisely because the situation is going to persist. The two halves then
 // disagree: `ask` serves questions declined until September and `writeAnswer`
 // refuses all of them with `already-done`, because the drain moved them to
@@ -63,7 +63,7 @@ function askBatch(io, paths, gate) {
 }
 
 // Resolve one open queue entry (the shape listOpenItems returns). Returns the
-// disposition; only "Dejar" is acted on here (decline + markDone). Everything
+// disposition; only "Leave it" is acted on here (decline + markDone). Everything
 // else — a value that needs judgment or a worktree mutation, or free text —
 // is reported needs-model and left in the queue for the on-demand skill.
 function applyAnswer(io, paths, entry) {

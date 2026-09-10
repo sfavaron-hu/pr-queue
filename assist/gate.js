@@ -93,7 +93,7 @@ function buildActions(ledger) {
       // Only auto-remove when the worktree holds NOTHING that would be lost:
       // clean (no uncommitted) AND no commits that exist only locally. If there
       // is unpushed local work, removal would silently destroy it — so we skip
-      // the action and let questionFor surface it as a "Huérfano" question with
+      // the action and let questionFor surface it as an "Orphan" question with
       // its content, where the owner can keep it (new PR) or discard it.
       const noLocalOnlyWork = (w.unpushedLocal || 0) === 0;
       if (consumedWork && clean && noLocalOnlyWork && w.isPrimary !== true) {
@@ -155,7 +155,7 @@ const QUESTION_BUDGET = 4;
 // question below carries the evidence needed to decide without going to look.
 function repoAndPath(w) {
   if (!w) return '';
-  return w.isPrimary === true ? `${w.repo} (checkout principal)` : `${w.repo}`;
+  return w.isPrimary === true ? `${w.repo} (main working tree)` : `${w.repo}`;
 }
 
 // Days since the branch's own last commit. `lastCommit` is ms (parseLastCommitLog
@@ -170,9 +170,9 @@ function daysSince(ts, now) {
 // "nothing to resume" — which is invisible from the branch name alone.
 function prSummary(prs) {
   const list = prs || [];
-  if (list.length === 0) return 'sin PR';
+  if (list.length === 0) return 'no PR';
   return list.map(p => {
-    const state = p.merged === true ? 'mergeado' : p.closed === true ? 'cerrado sin mergear' : 'abierto';
+    const state = p.merged === true ? 'merged' : p.closed === true ? 'closed without merging' : 'open';
     return `#${p.number} ${state}`;
   }).join(', ');
 }
@@ -215,18 +215,18 @@ function questionFor(proc, ledger) {
     const w = orphanWt;
     const commits = w.unpushedLocal || 0;
     const bits = [];
-    if (commits > 0) bits.push(`${commits} commit${commits === 1 ? '' : 's'} sólo local`);
-    if ((w.dirty || 0) > 0) bits.push(`${w.dirty} archivo(s) sin commitear`);
+    if (commits > 0) bits.push(`${commits} local-only commit${commits === 1 ? '' : 's'}`);
+    if ((w.dirty || 0) > 0) bits.push(`${w.dirty} uncommitted file(s)`);
     return {
       type: 'question', key: `orphan:${proc.key}`, processKey: proc.key,
-      question: `${w.repo}/${w.branch}: el PR quedó ${prSummary(oprs)} pero hay trabajo sin pushear (${bits.join(', ')}). ¿Qué hago?`,
-      header: 'Huérfano',
+      question: `${w.repo}/${w.branch}: the PR ended up ${prSummary(oprs)} but there is unpushed work (${bits.join(', ')}). What do I do?`,
+      header: 'Orphan',
       options: [
-        { label: 'Nuevo PR',
-          description: 'Abro un PR nuevo con ese trabajo. Te muestro los commits (git log) y qué archivos toca (diff --stat) antes de abrirlo.' },
-        { label: 'Descartar',
-          description: `Abandono el trabajo local: git worktree remove --force ${w.path} y borro la rama. Te muestro exactamente qué se pierde y confirmo antes de borrar nada.` },
-        { label: 'Dejar', description: `Lo dejo como está en ${w.path}; no vuelvo a preguntar por 30 días.` },
+        { label: 'New PR',
+          description: 'I open a new PR with that work. You see the commits (git log) and the files they touch (diff --stat) before anything is opened.' },
+        { label: 'Discard',
+          description: `I abandon the local work: git worktree remove --force ${w.path} and delete the branch. You see exactly what is lost and confirm before anything is deleted.` },
+        { label: 'Leave it', description: `I leave it as it is in ${w.path}; no question about it for 30 days.` },
       ],
     };
   }
@@ -236,12 +236,12 @@ function questionFor(proc, ledger) {
     const what = dirtySummary(w);
     return {
       type: 'question', key: `dirty:${proc.key}`, processKey: proc.key,
-      question: `${w.repo}/${w.branch} tiene ${w.dirty} archivo(s) sin commitear${what ? `: ${what}` : ''}. ¿Qué hago?`,
-      header: 'Sin commit',
+      question: `${w.repo}/${w.branch} has ${w.dirty} uncommitted file(s)${what ? `: ${what}` : ''}. What do I do?`,
+      header: 'Uncommitted',
       options: [
-        { label: 'Commitear',
-          description: `Genero un commit en ${repoAndPath(w)} con esos cambios y sigo. Estado del PR: ${prSummary(proc.prs)}.` },
-        { label: 'Dejar', description: `Lo dejo como está en ${w.path}; no vuelvo a preguntar por 30 días.` },
+        { label: 'Commit',
+          description: `I write a commit in ${repoAndPath(w)} with those changes and move on. PR state: ${prSummary(proc.prs)}.` },
+        { label: 'Leave it', description: `I leave it as it is in ${w.path}; no question about it for 30 days.` },
       ],
     };
   }
@@ -252,37 +252,37 @@ function questionFor(proc, ledger) {
     const onOrigin = w ? w.onOrigin !== false : false;
     const days = (ledger && ledger._coldDays) || 14;
     const stale = w ? daysSince(w.lastCommit, now) : null;
-    const subject = (w && w.lastCommitSubject) ? ` Último commit propio: "${w.lastCommitSubject}".` : '';
-    const age = stale === null ? '' : ` Último commit hace ${stale} día(s).`;
+    const subject = (w && w.lastCommitSubject) ? ` Its own last commit: "${w.lastCommitSubject}".` : '';
+    const age = stale === null ? '' : ` Last commit ${stale} day(s) ago.`;
 
-    // `Archivar` means `git worktree remove`, which the main working tree refuses
+    // `Archive` means `git worktree remove`, which the main working tree refuses
     // with exit 128 — offering it there would hand back an option that cannot
     // work. The equivalent for a primary checkout is to park it on its base.
     // A non-primary worktree that still holds only-local work needs `--force` +
     // a branch delete to truly abandon it (a plain `worktree remove` leaves the
-    // commits on the branch ref) → that's Descartar. A clean, fully-pushed one
-    // just needs a plain remove → Archivar. A primary checkout can't be removed
+    // commits on the branch ref) → that's Discard. A clean, fully-pushed one
+    // just needs a plain remove → Archive. A primary checkout can't be removed
     // at all (exit 128) → park it on base.
     const hasLocalOnly = w && ((w.unpushedLocal || 0) > 0 || (w.dirty || 0) > 0);
     const archive = !w
-      ? { label: 'Archivar', description: 'Archivo el proceso.' }
+      ? { label: 'Archive', description: 'I archive the process.' }
       : w.isPrimary === true
-        ? { label: 'Ir a la base',
-            description: `Es el checkout principal de ${w.repo}: no hay worktree que remover (git worktree remove da exit 128). Lo paso a ${w.baseBranch || 'su base'}; el branch queda en origin.` }
+        ? { label: 'Park on base',
+            description: `This is ${w.repo}'s main working tree: there is no worktree to remove (git worktree remove exits 128). I switch it to ${w.baseBranch || 'its base'}; the branch stays on origin.` }
         : hasLocalOnly
-          ? { label: 'Descartar',
-              description: `Abandono el trabajo local: git worktree remove --force ${w.path} y borro la rama. Te muestro qué se pierde y confirmo antes.` }
-          : { label: 'Archivar',
-              description: `git worktree remove ${w.path} — el branch queda en origin.` };
+          ? { label: 'Discard',
+              description: `I abandon the local work: git worktree remove --force ${w.path} and delete the branch. You see what is lost and confirm first.` }
+          : { label: 'Archive',
+              description: `git worktree remove ${w.path} — the branch stays on origin.` };
 
     return {
       type: 'question', key: `cold:${proc.key}`, processKey: proc.key,
-      question: `${w ? `${w.repo}/${w.branch}` : proc.key} no se toca hace más de ${days} días. ¿Qué hago?`,
-      header: 'Frío',
+      question: `${w ? `${w.repo}/${w.branch}` : proc.key} has not been touched in more than ${days} days. What do I do?`,
+      header: 'Cold',
       options: [
-        { label: 'Retomar',
-          description: `${commits} commit${commits === 1 ? '' : 's'} sobre ${w && w.baseBranch ? w.baseBranch : 'base'}${onOrigin ? ', rama en origin' : ', rama sólo local'}. PR: ${prSummary(proc.prs)}.${age}${subject}` },
-        { label: 'Dejar', description: 'Lo dejo dormido; no vuelvo a preguntar por 30 días.' },
+        { label: 'Resume',
+          description: `${commits} commit${commits === 1 ? '' : 's'} over ${w && w.baseBranch ? w.baseBranch : 'base'}${onOrigin ? ', branch on origin' : ', branch local only'}. PR: ${prSummary(proc.prs)}.${age}${subject}` },
+        { label: 'Leave it', description: 'I leave it asleep; no question about it for 30 days.' },
         archive,
       ],
     };

@@ -189,7 +189,7 @@ async function collectRepo(repo, repoPath, run, warn) {
     // that genuinely only exists locally. Distinct from `unpushed` (vs base,
     // which still counts commits whose content landed via a squash-merge). This
     // is the signal that a `git worktree remove` would actually LOSE something,
-    // so it both blocks the autonomous remove and drives the "Huérfano" question.
+    // so it both blocks the autonomous remove and drives the "Orphan" question.
     try {
       const raw = await run('git', ['rev-list', '--count', 'HEAD', '--not', '--remotes'], wt.path);
       row.unpushedLocal = parseInt(String(raw).trim(), 10) || 0;

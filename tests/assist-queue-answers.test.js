@@ -14,14 +14,14 @@ function memIo(nowMs) {
 }
 
 const item = { type: 'question', processKey: 'a', key: 'cold:a', question: '¿Qué hago?',
-  options: [{ label: 'Retomar' }, { label: 'Dejar' }, { label: 'Archivar' }] };
+  options: [{ label: 'Resume' }, { label: 'Leave it' }, { label: 'Archive' }] };
 
 function seed() { const io = memIo(1); const paths = queuePaths('/s'); syncItems(io, paths, [item]); return { io, paths, id: itemId(item) }; }
 
 test('a value matching a declared option is accepted and stored', () => {
   const { io, paths, id } = seed();
-  assert.deepEqual(writeAnswer(io, paths, id, { value: 'Dejar' }, {}), { ok: true });
-  assert.deepEqual(readAnswer(io, paths, id), { value: 'Dejar' });
+  assert.deepEqual(writeAnswer(io, paths, id, { value: 'Leave it' }, {}), { ok: true });
+  assert.deepEqual(readAnswer(io, paths, id), { value: 'Leave it' });
 });
 
 test('a value NOT among the options is rejected', () => {
@@ -62,7 +62,7 @@ test('readAnswer returns null when none exists', () => {
 // The three causes need different handling, so they get different reasons.
 test('writeAnswer reports never-existed as no-item', () => {
   const io = memIo(1); const paths = queuePaths('/s');
-  assert.deepEqual(writeAnswer(io, paths, itemId(item), { value: 'Dejar' }, {}),
+  assert.deepEqual(writeAnswer(io, paths, itemId(item), { value: 'Leave it' }, {}),
     { ok: false, reason: 'no-item' });
 });
 
@@ -70,13 +70,13 @@ test('writeAnswer reports a suppressed item as declined, not missing', () => {
   const { io, paths, id } = seed();
   decline(io, paths, id, 30);
   io.remove(`${paths.items}/${id}.json`);
-  assert.deepEqual(writeAnswer(io, paths, id, { value: 'Dejar' }, {}),
+  assert.deepEqual(writeAnswer(io, paths, id, { value: 'Leave it' }, {}),
     { ok: false, reason: 'declined' });
 });
 
 test('writeAnswer reports an answer that arrived after the fact as already-done', () => {
   const { io, paths, id } = seed();
   markDone(io, paths, id, { resolution: 'done' });
-  assert.deepEqual(writeAnswer(io, paths, id, { value: 'Dejar' }, {}),
+  assert.deepEqual(writeAnswer(io, paths, id, { value: 'Leave it' }, {}),
     { ok: false, reason: 'already-done' });
 });

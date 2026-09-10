@@ -17,8 +17,8 @@ Read that entire file first (page with offset until you have covered all {{BYTES
 Example:
 
 > 🗂️ El work-assistant tiene 2 decisiones esperando:
-> • *Frío* — SQSH-4084 no se toca hace más de 14 días. ¿Qué hago?
-> • *Sin commit* — feat/x tiene 3 archivo(s) sin commitear. ¿Qué hago?
+> • *Cold* — SQSH-4084 has not been touched in more than 14 days. What do I do?
+> • *Uncommitted* — feat/x has 3 uncommitted file(s). What do I do?
 > Abrí una sesión y corré /work-assistant.
 
 **If status is 4 — gh was degraded.** Do NOT run the drain yourself and do NOT push or open PRs — the PR half is unknown, so a draft could be opened for a branch that already has a PR. Send ONE Slack DM to `U07GJ2PRSLS` noting the pass was incomplete (gh failed) and the next healthy tick or an on-demand `/work-assistant` will finish it. Do not list questions — the queue is not trustworthy this pass.

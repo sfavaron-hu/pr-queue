@@ -26,8 +26,8 @@ const draftAction = { id: 'open-draft-pr:p2:r2:b2', kind: 'open-draft-pr', proce
   cmd: 'gh pr create --draft --fill -R Org/r2 --head b2 --base develop',
   argv: ['gh', 'pr', 'create', '--draft', '--fill', '-R', 'Org/r2', '--head', 'b2', '--base', 'develop'] };
 const coldItem = { type: 'question', key: 'cold:p1', processKey: 'p1',
-  question: 'p1 no se toca hace más de 14 días. ¿Qué hago?', header: 'Frío',
-  options: [{ label: 'Retomar', description: '…' }, { label: 'Dejar', description: '…' }] };
+  question: 'p1 no se toca hace más de 14 días. ¿Qué hago?', header: 'Cold',
+  options: [{ label: 'Resume', description: '…' }, { label: 'Leave it', description: '…' }] };
 const gate = (over) => Object.assign({ version: 1, generatedAt: 0, actions: [pushAction], questions: [coldItem], notify: [] }, over);
 const deps = (io, exec, over) => Object.assign({
   io, exec, paths: queuePaths('/s'), now: () => 1000,
@@ -114,10 +114,10 @@ test('drain with no open questions does not notify (exit 0)', async () => {
   assert.equal(res.output.questions.open, 0);
 });
 
-test('drain applies a "Dejar" answer already sitting in the queue', async () => {
+test('drain applies a "Leave it" answer already sitting in the queue', async () => {
   const io = memIo(1000); const paths = queuePaths('/s');
   syncItems(io, paths, [coldItem]);
-  io.write(`${paths.answers}/${itemId(coldItem)}.json`, JSON.stringify({ value: 'Dejar' }));
+  io.write(`${paths.answers}/${itemId(coldItem)}.json`, JSON.stringify({ value: 'Leave it' }));
   const res = await runCli([], deps(io, fakeExec()));
   assert.equal(io.exists(`${paths.done}/${itemId(coldItem)}.json`), true);   // resolved
   assert.equal(res.output.questions.declined, 1);
@@ -150,9 +150,9 @@ test('action <unknown-id> executes nothing and exits non-zero', async () => {
 test('answer <id> --value writes a valid answer and rejects a bad one', async () => {
   const io = memIo(1000); const paths = queuePaths('/s');
   syncItems(io, paths, [coldItem]);
-  const ok = await runCli(['answer', itemId(coldItem), '--value', 'Dejar'], deps(io, fakeExec()));
+  const ok = await runCli(['answer', itemId(coldItem), '--value', 'Leave it'], deps(io, fakeExec()));
   assert.equal(ok.output.ok, true);
-  assert.deepEqual(readAnswer(io, paths, itemId(coldItem)), { value: 'Dejar' });
+  assert.deepEqual(readAnswer(io, paths, itemId(coldItem)), { value: 'Leave it' });
   const bad = await runCli(['answer', itemId(coldItem), '--value', 'Nope'], deps(io, fakeExec()));
   assert.equal(bad.output.ok, false);
   assert.equal(bad.output.reason, 'bad-value');
@@ -224,8 +224,8 @@ test('--dry-run carries the same batch `ask` would serve, from one gate', async 
 // slice, already paired with the queue id each answer is written against.
 
 const q = (k) => ({ type: 'question', key: `cold:${k}`, processKey: k,
-  question: `${k} no se toca hace más de 14 días. ¿Qué hago?`, header: 'Frío',
-  options: [{ label: 'Retomar', description: '…' }, { label: 'Dejar', description: '…' }] });
+  question: `${k} no se toca hace más de 14 días. ¿Qué hago?`, header: 'Cold',
+  options: [{ label: 'Resume', description: '…' }, { label: 'Leave it', description: '…' }] });
 
 test('ask returns the budgeted slice with queue ids, in the gate order', async () => {
   const io = memIo(1000); const exec = fakeExec();
@@ -244,7 +244,7 @@ test('ask drops a question the owner already answered', async () => {
   const all = ['a', 'b'].map(q);
   const paths = queuePaths('/s');
   syncItems(io, paths, all);
-  io.write(`${paths.answers}/${itemId(all[0])}.json`, JSON.stringify({ value: 'Dejar' }));
+  io.write(`${paths.answers}/${itemId(all[0])}.json`, JSON.stringify({ value: 'Leave it' }));
   const res = await runCli(['ask'], deps(io, exec, {
     loadGate: async () => ({ gate: gate({ questions: all, ask: all }), warnings: [] }),
   }));
@@ -252,7 +252,7 @@ test('ask drops a question the owner already answered', async () => {
 });
 
 // The gate rebuilds its questions from the live situation on every pass, so a
-// declined question returns the moment the situation persists — and "Dejar" is
+// declined question returns the moment the situation persists — and "Leave it" is
 // usually chosen *because* it is going to persist. Found in the wild: three
 // questions declined until September were served again, and writeAnswer then
 // refused all three with `already-done` (the drain had moved them to done/).
@@ -269,7 +269,7 @@ test('ask drops a question the owner declined, even when the gate re-emits it', 
 });
 
 // The decline is a 30-day silence, not a permanent one: once it lapses the
-// question has to come back, or "Dejar" quietly becomes "never ask me again".
+// question has to come back, or "Leave it" quietly becomes "never ask me again".
 test('ask asks a declined question again once the decline has expired', async () => {
   const io = memIo(1000); const exec = fakeExec();
   const all = ['a'].map(q);

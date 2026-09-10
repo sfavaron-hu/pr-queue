@@ -4,7 +4,7 @@ const { stitchMission } = require('../mission.js');
 
 const row = (key, worktrees) => ({ proc: { key: key, worktrees: worktrees || [] } });
 const ask = (id, processKey) => ({ id: id, source: 'work', priority: 20,
-  item: { type: 'question', key: 'dirty:' + processKey, processKey: processKey, question: '¿Qué hago?', header: 'Sin commit', options: [] } });
+  item: { type: 'question', key: 'dirty:' + processKey, processKey: processKey, question: '¿Qué hago?', header: 'Uncommitted', options: [] } });
 
 test('una pregunta se cose al proceso cuyo key matchea', () => {
   const out = stitchMission({ ask: [ask('a1', 'SQSH-4167')], leases: { active: [] } }, [row('SQSH-4167')]);

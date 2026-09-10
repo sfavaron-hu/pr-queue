@@ -80,7 +80,7 @@ test('syncItems does NOT remove a stale item that has a pending answer', () => {
   const io = memIo(1000); const paths = queuePaths('/s');
   const item = q('cold:b');
   syncItems(io, paths, [item]);
-  io.write(`${paths.answers}/${itemId(item)}.json`, JSON.stringify({ value: 'Dejar' }));
+  io.write(`${paths.answers}/${itemId(item)}.json`, JSON.stringify({ value: 'Leave it' }));
   const res = syncItems(io, paths, []);              // gate no longer emits it
   assert.equal(res.removed.includes(itemId(item)), false);
   assert.equal(io.exists(`${paths.items}/${itemId(item)}.json`), true);
@@ -104,7 +104,7 @@ test('a declined item already in items/ is swept out and reported in skipped', (
 test('an item not in the asked slice survives as long as the gate still emits it', () => {
   const io = memIo(1); const paths = queuePaths('/s');
   const q = (k) => ({ type: 'question', processKey: k, key: `dirty:${k}`,
-    question: '¿Qué hago?', header: 'H', options: [{ label: 'Dejar', description: 'd' }] });
+    question: '¿Qué hago?', header: 'H', options: [{ label: 'Leave it', description: 'd' }] });
   const all = ['a', 'b', 'c', 'd', 'e', 'f'].map(q);
 
   syncItems(io, paths, all);
@@ -120,10 +120,10 @@ test('an item not in the asked slice survives as long as the gate still emits it
 test('an item the gate stopped emitting is removed, but not one with a pending answer', () => {
   const io = memIo(1); const paths = queuePaths('/s');
   const q = (k) => ({ type: 'question', processKey: k, key: `dirty:${k}`,
-    question: '¿Qué hago?', header: 'H', options: [{ label: 'Dejar', description: 'd' }] });
+    question: '¿Qué hago?', header: 'H', options: [{ label: 'Leave it', description: 'd' }] });
   const [gone, answered] = [q('gone'), q('answered')];
   syncItems(io, paths, [gone, answered]);
-  writeAnswer(io, paths, itemId(answered), { value: 'Dejar' }, {});
+  writeAnswer(io, paths, itemId(answered), { value: 'Leave it' }, {});
 
   const res = syncItems(io, paths, []);
   assert.deepEqual(res.removed, [itemId(gone)]);

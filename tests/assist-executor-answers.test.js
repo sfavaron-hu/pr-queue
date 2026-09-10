@@ -18,8 +18,8 @@ function memIo(nowMs) {
 // A cold question, shaped exactly like the gate emits it.
 const coldItem = (over) => Object.assign({
   type: 'question', key: 'cold:p1', processKey: 'p1',
-  question: 'p1 no se toca hace más de 14 días. ¿Qué hago?', header: 'Frío',
-  options: [{ label: 'Retomar', description: '…' }, { label: 'Dejar', description: '…' }, { label: 'Archivar', description: '…' }],
+  question: 'p1 no se toca hace más de 14 días. ¿Qué hago?', header: 'Cold',
+  options: [{ label: 'Resume', description: '…' }, { label: 'Leave it', description: '…' }, { label: 'Archive', description: '…' }],
 }, over);
 
 function seed(io, item, answerValue) {
@@ -38,9 +38,9 @@ test('applyAnswer: an unanswered item is left alone', () => {
   assert.equal(io.exists(`${paths.items}/${id}.json`), true);   // still open
 });
 
-test('applyAnswer: "Dejar" declines for 30 days and marks the item done', () => {
-  const io = memIo(1000); const { paths, id } = seed(io, coldItem(), 'Dejar');
-  const r = applyAnswer(io, paths, { id, item: coldItem(), answer: { value: 'Dejar' } });
+test('applyAnswer: "Leave it" declines for 30 days and marks the item done', () => {
+  const io = memIo(1000); const { paths, id } = seed(io, coldItem(), 'Leave it');
+  const r = applyAnswer(io, paths, { id, item: coldItem(), answer: { value: 'Leave it' } });
   assert.equal(r.status, 'declined');
   assert.equal(r.done, true);
   assert.equal(io.exists(`${paths.declined}/${id}.json`), true);      // decline recorded
@@ -51,15 +51,15 @@ test('applyAnswer: "Dejar" declines for 30 days and marks the item done', () => 
 });
 
 test('applyAnswer: a declined item stays suppressed on the next syncItems', () => {
-  const io = memIo(1000); const { paths, id } = seed(io, coldItem(), 'Dejar');
-  applyAnswer(io, paths, { id, item: coldItem(), answer: { value: 'Dejar' } });
+  const io = memIo(1000); const { paths, id } = seed(io, coldItem(), 'Leave it');
+  applyAnswer(io, paths, { id, item: coldItem(), answer: { value: 'Leave it' } });
   const res = syncItems(io, paths, [coldItem()]);   // gate still emits it next pass
   assert.deepEqual(res.skipped, [id]);              // suppressed by the decline
   assert.equal(io.exists(`${paths.items}/${id}.json`), false);
 });
 
-test('applyAnswer: non-Dejar values are left for the model, not resolved', () => {
-  for (const value of ['Retomar', 'Archivar', 'Commitear']) {
+test('applyAnswer: non-decline values are left for the model, not resolved', () => {
+  for (const value of ['Resume', 'Archive', 'Commit']) {
     const io = memIo(1000); const { paths, id } = seed(io, coldItem(), value);
     const r = applyAnswer(io, paths, { id, item: coldItem(), answer: { value } });
     assert.equal(r.status, 'needs-model', value);
@@ -78,7 +78,7 @@ test('applyAnswer: an { other } free-text answer is needs-model', () => {
 
 // Ties the executor's DECLINE_LABEL to the gate's actual emitted label — if
 // either side is renamed without the other, this breaks instead of the two
-// hardcoded 'Dejar' literals silently drifting apart.
+// hardcoded 'Leave it' literals silently drifting apart.
 test('DECLINE_LABEL matches the label the gate emits for a cold question', () => {
   const coldProc = { key: 'p1', flags: { cold: true },
     worktrees: [{ repo: 'r', branch: 'b', unpushed: 9, onOrigin: true }], prs: [] };
