@@ -139,6 +139,13 @@ required to use the panel.
   session only when the pass came back degraded (gh unavailable mid-run). `Uninstall:
   rm -rf` the printed check directory.
 
+A caller that dispatches work to agents passes the branches they hold as repeated
+`--skip-branch <name>` flags, and no action is derived for those branches — not a
+push, not a worktree removal, not a draft PR. The skipped ones are counted and named
+in `actions.leasedSkipped`, so a pass that ran nothing because everything was in
+flight does not read as a pass with nothing to do. The queue never reads the caller's
+lease store; the branch names arrive on the command line.
+
 ## Tests
 
 ```bash

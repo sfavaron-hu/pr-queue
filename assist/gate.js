@@ -16,6 +16,11 @@ function actionId(kind, processKey, repo, branch) {
   return `${kind}:${processKey}:${repo}:${branch || ''}`;
 }
 
+// Every action names the `branch` it acts on. A worktree's branch is not always
+// its process key — the key names the process, and one process can span repos —
+// so a caller that holds leases and wants to keep the drain off live work needs
+// the branch stated on the action itself, not inferred from the id string.
+//
 // One action per worktree, at most. Order of checks is the priority order:
 // a gone directory prunes; a not-on-origin unconsumed branch pushes; an
 // all-merged clean worktree gets removed; an on-origin branch with commits and
@@ -35,7 +40,7 @@ function buildActions(ledger) {
       if (w.prunable) {
         actions.push({
           id: actionId('prune-worktree', p.key, w.repo, w.branch),
-          kind: 'prune-worktree', processKey: p.key, repo: w.repo,
+          kind: 'prune-worktree', processKey: p.key, repo: w.repo, branch: w.branch || null,
           cmd: `git -C ${repoPath(root, w.repo)} worktree prune`,
           argv: ['git', '-C', repoPath(root, w.repo), 'worktree', 'prune'],
           reversibility: 'reversible-metadata',
@@ -49,7 +54,7 @@ function buildActions(ledger) {
       if (w.onOrigin === false && !consumed(w.branch)) {
         actions.push({
           id: actionId('push', p.key, w.repo, w.branch),
-          kind: 'push', processKey: p.key, repo: w.repo,
+          kind: 'push', processKey: p.key, repo: w.repo, branch: w.branch,
           cmd: `git -C ${w.path} push -u origin ${w.branch}`,
           argv: ['git', '-C', w.path, 'push', '-u', 'origin', w.branch],
           reversibility: 'reversible-unconsumed',
@@ -75,7 +80,7 @@ function buildActions(ledger) {
         // still on origin and deleting it is not this action's business.
         actions.push({
           id: actionId('switch-primary-to-base', p.key, w.repo, w.branch),
-          kind: 'switch-primary-to-base', processKey: p.key, repo: w.repo,
+          kind: 'switch-primary-to-base', processKey: p.key, repo: w.repo, branch: w.branch,
           cmd: `git -C ${w.path} switch ${w.baseBranch}`,
           argv: ['git', '-C', w.path, 'switch', w.baseBranch],
           reversibility: 'reversible-local',
@@ -94,7 +99,7 @@ function buildActions(ledger) {
       if (consumedWork && clean && noLocalOnlyWork && w.isPrimary !== true) {
         actions.push({
           id: actionId('remove-merged-worktree', p.key, w.repo, w.branch),
-          kind: 'remove-merged-worktree', processKey: p.key, repo: w.repo,
+          kind: 'remove-merged-worktree', processKey: p.key, repo: w.repo, branch: w.branch,
           cmd: `git -C ${repoPath(root, w.repo)} worktree remove ${w.path}`,
           argv: ['git', '-C', repoPath(root, w.repo), 'worktree', 'remove', w.path],
           reversibility: 'reversible-local',
@@ -111,7 +116,7 @@ function buildActions(ledger) {
           clean && w.baseBranch && w.githubRepo) {
         actions.push({
           id: actionId('open-draft-pr', p.key, w.repo, w.branch),
-          kind: 'open-draft-pr', processKey: p.key, repo: w.repo,
+          kind: 'open-draft-pr', processKey: p.key, repo: w.repo, branch: w.branch,
           // Semantic fields so a consumer can open a well-formatted PR without
           // re-parsing argv. The --fill argv stays as a mechanical fallback, but
           // the drain no longer runs this kind — a model writes the body in

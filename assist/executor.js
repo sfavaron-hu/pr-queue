@@ -79,6 +79,38 @@ function applyAnswer(io, paths, entry) {
   return { id: entry.id, done: false, status: 'needs-model' };
 }
 
+// The branches an agent is working in right now, passed down by whoever holds
+// the leases (`mc drain`, the heartbeat's `work` gate). The queue never reads
+// mission-control's lease store: a live lease is that tool's state, and reaching
+// into its on-disk layout from here would make two repos share one file format.
+//
+// It filters ACTIONS, which is the half that mutates. A push rewrites the ref an
+// agent is committing onto, and `worktree remove` deletes the tree it is
+// editing; both look reversible from here and are not, because the work being
+// destroyed was never on origin. The questions are filtered by the caller, which
+// can show a leased one as "in progress" instead of dropping it.
+//
+// Matched on the branch AND on the process key: the key names the process and a
+// worktree's branch is its own, so a lease that names either one covers the
+// action.
+function skipLeased(actions, skipBranch) {
+  const leased = new Set(skipBranch || []);
+  if (!leased.size) return { run: actions || [], skipped: [] };
+  const run = [], skipped = [];
+  for (const a of (actions || [])) {
+    (leased.has(a.branch) || leased.has(a.processKey) ? skipped : run).push(a);
+  }
+  return { run, skipped };
+}
+
+// What a skipped action has to say for itself. A count alone turns "everything
+// was leased" into "nothing to do", which is the reading this guard exists to
+// prevent: the drain reports zero actions on a pass where every one of them was
+// held by a live agent.
+function skipReport(skipped) {
+  return { count: skipped.length, branches: [...new Set(skipped.map(a => a.branch || a.processKey))] };
+}
+
 // True when the ledger's PR half is untrustworthy — a gh step failed, so any
 // action that keys off "has no PR" (open-draft-pr) could fire against a branch
 // that actually has one. On a degraded pass the drain touches no worktree.
@@ -87,12 +119,15 @@ function isDegraded(warnings) {
 }
 
 // Parse the tiny flag set the CLI needs. --value/--other/--resolution take a
-// value; --dry-run is boolean. Positionals are the subcommand and its id.
+// value; --dry-run is boolean; --skip-branch takes a value and repeats, one
+// flag per branch, because a branch name can contain anything a shell would
+// split on and a comma-separated list would have to invent an escape.
 function parseArgs(argv) {
-  const out = { _: [], dryRun: false };
+  const out = { _: [], dryRun: false, skipBranch: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') out.dryRun = true;
+    else if (a === '--skip-branch') { const v = argv[++i]; if (v) out.skipBranch.push(v); }
     else if (a === '--value' || a === '--other' || a === '--resolution') out[a.slice(2)] = argv[++i];
     else out._.push(a);
   }
@@ -141,6 +176,9 @@ async function runCli(argv, deps) {
 
   // The remaining commands need a fresh gate.
   const { gate, warnings } = await loadGate();
+  const leased = skipLeased(gate.actions, args.skipBranch);
+  const actions = leased.run;
+  const leasedSkipped = skipReport(leased.skipped);
 
   // A draft PR is NOT a mechanical drain action: --fill would use commit messages
   // as the body. The drain pushes the branch (so it is ready) but leaves draft
@@ -150,7 +188,12 @@ async function runCli(argv, deps) {
   const draftPending = (a) => ({ id: a.id, githubRepo: a.githubRepo, head: a.head, base: a.base, repo: a.repo, why: a.why, evidence: a.evidence });
 
   if (cmd === 'action') {
-    const action = (gate.actions || []).find(a => a.id === id);
+    // A leased action reports WHY it is not being run. Folding it into
+    // `no-such-action` would send the caller looking for a stale id.
+    if (leased.skipped.some(a => a.id === id)) {
+      return { exit: 3, output: { ok: false, reason: 'leased', id, branches: leasedSkipped.branches } };
+    }
+    const action = actions.find(a => a.id === id);
     if (!action) return { exit: 3, output: { ok: false, reason: 'no-such-action', id } };
     const r = runAction(exec, action);
     return { exit: r.ok ? 0 : 1, output: r };
@@ -163,13 +206,13 @@ async function runCli(argv, deps) {
   if (cmd === 'drafts') {
     // The branches the drain deliberately did NOT open a PR for — /work-assistant
     // opens each with a model-authored body.
-    const drafts = (gate.actions || []).filter(isDraft).map(draftPending);
+    const drafts = actions.filter(isDraft).map(draftPending);
     return { exit: 0, output: drafts };
   }
 
   // Default: DRAIN (unattended).
-  const mechanical = (gate.actions || []).filter(a => !isDraft(a));
-  const draftsPending = (gate.actions || []).filter(isDraft).map(draftPending);
+  const mechanical = actions.filter(a => !isDraft(a));
+  const draftsPending = actions.filter(isDraft).map(draftPending);
   const degraded = isDegraded(warnings);
   // The dry run carries the questions too. A caller that wants the whole
   // picture — mission-control does — otherwise runs `ask` and `--dry-run` back
@@ -177,12 +220,12 @@ async function runCli(argv, deps) {
   // for the same minute of state. `ask` stays, because answering does not need
   // the action list.
   if (args.dryRun) {
-    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), draftsPending, degraded } };
+    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), leasedSkipped, draftsPending, degraded } };
   }
   if (degraded) {
     const declinedPruned = pruneDeclined(io, paths);
     const donePruned = pruneDone(io, paths, 30);
-    return { exit: 4, output: { degraded: true, actions: { ran: 0 }, questions: { synced: 0 }, prune: { declinedPruned, donePruned } } };
+    return { exit: 4, output: { degraded: true, actions: { ran: 0, leasedSkipped }, questions: { synced: 0 }, prune: { declinedPruned, donePruned } } };
   }
 
   const drained = drainActions(exec, mechanical);
@@ -228,7 +271,7 @@ async function runCli(argv, deps) {
       // those need opposite handling. Carry stderr on failures so the reader does
       // not have to re-run the command by hand to find out which one it was.
       actions: {
-        ran: drained.ran, failed: drained.failed,
+        ran: drained.ran, failed: drained.failed, leasedSkipped,
         results: drained.results.map(r => ({
           id: r.id, kind: r.kind, ok: r.ok, code: r.code,
           ...(r.ok ? {} : { stderr: String(r.stderr || '').trim().slice(0, 500) }),
@@ -252,4 +295,4 @@ async function runCli(argv, deps) {
   };
 }
 
-module.exports = { runAction, drainActions, applyAnswer, runCli, DECLINE_LABEL };
+module.exports = { runAction, drainActions, applyAnswer, skipLeased, runCli, DECLINE_LABEL };
