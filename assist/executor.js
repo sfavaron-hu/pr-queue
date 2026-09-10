@@ -39,6 +39,29 @@ function drainActions(exec, actions) {
 const DECLINE_LABEL = 'Dejar';
 const DECLINE_TTL_DAYS = 30;
 
+// The exact batch to put in front of the owner: the gate's budgeted slice
+// (`gate.ask`), already ordered most-unblocking first, paired with the queue id
+// each answer must be written against, and with anything already answered
+// dropped. The caller must NOT re-derive this — it used to cap `list` itself,
+// but `list` is a directory read with no order, so "the top 4" was arbitrary.
+// Keeping the budget in one place is also what stops it drifting from
+// QUESTION_BUDGET, which is the whole defence against approval fatigue.
+//
+// Declined items are filtered HERE, not only in the drain. The gate rebuilds
+// its questions from the live situation every pass, so a declined question
+// comes back the moment the situation persists — and "Dejar" is usually chosen
+// precisely because the situation is going to persist. The two halves then
+// disagree: `ask` serves questions declined until September and `writeAnswer`
+// refuses all of them with `already-done`, because the drain moved them to
+// `done/`. Asked forever, answerable never — which spends the question budget
+// that exists to prevent fatigue.
+function askBatch(io, paths, gate) {
+  return (gate.ask || [])
+    .map(q => ({ id: itemId(q), item: q }))
+    .filter(e => readAnswer(io, paths, e.id) === null)
+    .filter(e => !isDeclined(io, paths, e.id));
+}
+
 // Resolve one open queue entry (the shape listOpenItems returns). Returns the
 // disposition; only "Dejar" is acted on here (decline + markDone). Everything
 // else — a value that needs judgment or a worktree mutation, or free text —
@@ -134,28 +157,7 @@ async function runCli(argv, deps) {
   }
 
   if (cmd === 'ask') {
-    // The exact batch to put in front of the owner: the gate's budgeted slice
-    // (`gate.ask`), already ordered most-unblocking first, paired with the queue id
-    // each answer must be written against, and with anything already answered
-    // dropped. The skill must NOT re-derive this — it used to cap `list` itself,
-    // but `list` is a directory read with no order, so "the top 4" was arbitrary.
-    // Keeping the budget in one place is also what stops it drifting from
-    // QUESTION_BUDGET, which is the whole defence against approval fatigue.
-    //
-    // Declined items have to be filtered HERE, not only in the drain. The gate
-    // rebuilds its questions from the live situation every pass, so a declined
-    // question comes back the moment the situation persists — and "Dejar" is
-    // usually chosen precisely because the situation is going to persist. The
-    // two halves then disagreed: `ask` served three questions declined until
-    // September, and `writeAnswer` refused all three with `already-done`,
-    // because the drain had moved them to `done/`. Asked forever, answerable
-    // never. A decline that does not silence anything is worse than no decline
-    // at all: it spends the question budget that exists to prevent fatigue.
-    const batch = (gate.ask || [])
-      .map(q => ({ id: itemId(q), item: q }))
-      .filter(e => readAnswer(io, paths, e.id) === null)
-      .filter(e => !isDeclined(io, paths, e.id));
-    return { exit: 0, output: batch };
+    return { exit: 0, output: askBatch(io, paths, gate) };
   }
 
   if (cmd === 'drafts') {
@@ -169,8 +171,13 @@ async function runCli(argv, deps) {
   const mechanical = (gate.actions || []).filter(a => !isDraft(a));
   const draftsPending = (gate.actions || []).filter(isDraft).map(draftPending);
   const degraded = isDegraded(warnings);
+  // The dry run carries the questions too. A caller that wants the whole
+  // picture — mission-control does — otherwise runs `ask` and `--dry-run` back
+  // to back, and each one builds its own gate and pays its own `gh` round trip
+  // for the same minute of state. `ask` stays, because answering does not need
+  // the action list.
   if (args.dryRun) {
-    return { exit: 0, output: { dryRun: true, wouldRun: mechanical.map(a => a.argv), draftsPending, degraded } };
+    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), draftsPending, degraded } };
   }
   if (degraded) {
     const declinedPruned = pruneDeclined(io, paths);

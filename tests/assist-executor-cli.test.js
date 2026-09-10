@@ -203,6 +203,21 @@ test('--dry-run never calls exec even in drain', async () => {
   assert.equal(res.output.dryRun, true);
 });
 
+// mission-control needs the questions AND the pending actions for the same
+// minute of state. Two commands mean two gates and two `gh` round trips, and
+// the work source is the slowest thing in its pass.
+test('--dry-run carries the same batch `ask` would serve, from one gate', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  let gates = 0;
+  const over = { loadGate: async () => { gates++; return { gate: gate({ ask: [coldItem] }), warnings: [] }; } };
+  const dry = await runCli(['--dry-run'], deps(io, exec, over));
+  const ask = await runCli(['ask'], deps(io, exec, over));
+  assert.deepEqual(dry.output.questions, ask.output);
+  assert.equal(dry.output.questions[0].id, itemId(coldItem));
+  assert.deepEqual(dry.output.wouldRun, [pushAction.argv]);
+  assert.equal(gates, 2, 'one gate per invocation — the saving is one invocation, not one gate');
+});
+
 // --- `ask` is the one place the budget lives ---------------------------------
 // The skill used to cap `list` itself, but `list` is a directory read with no
 // order, so "the top 4" was arbitrary. `ask` hands back the gate's own ordered
