@@ -64,8 +64,49 @@ cat > "$PLIST" <<PLIST_EOF
 PLIST_EOF
 
 launchctl unload "$PLIST" 2>/dev/null || true
+
+# `unload` returns before the process dies. The old serve.js survives it as an
+# orphan still holding the port, launchd's new job exits 1 on "Port already in
+# use" and respawns forever, and `curl localhost:$PORT` answers 200 the whole
+# time — from the orphan. The obvious check is the one that goes green.
+# `set -o pipefail` is on and lsof exits 1 when nothing listens, so without the
+# `|| true` the plain assignment `stale="$(port_pid)"` aborts the installer on
+# the happy path — the one where the port is already free.
+port_pid() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true; }
+
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if [ -z "$(port_pid)" ]; then break; fi
+  sleep 0.5
+done
+stale="$(port_pid)"
+if [ -n "$stale" ]; then
+  echo "port $PORT still held by pid $stale after unload — killing it"
+  kill "$stale" 2>/dev/null || true
+  sleep 1
+  if [ -n "$(port_pid)" ]; then kill -9 "$(port_pid)" 2>/dev/null || true; fi
+  sleep 1
+fi
+
 launchctl load "$PLIST"
 
-echo "Installed $LABEL → http://localhost:$PORT"
+# A loaded job is not a running one. `launchctl list` prints "-" for the PID of
+# a job in a respawn loop, so the PID has to be a number AND it has to be the
+# process actually holding the port.
+job_pid=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  job_pid="$(launchctl list | awk -v l="$LABEL" '$3 == l { print $1 }')"
+  case "$job_pid" in ''|-|*[!0-9]*) job_pid=""; sleep 0.5; continue ;; esac
+  if [ "$job_pid" = "$(port_pid)" ]; then break; fi
+  job_pid=""
+  sleep 0.5
+done
+
+if [ -z "$job_pid" ]; then
+  echo "$LABEL did not come up on port $PORT. Last lines of the log:" >&2
+  tail -20 "$HOME/Library/Logs/prqueue-local.log" >&2 2>/dev/null || true
+  exit 1
+fi
+
+echo "Installed $LABEL → http://localhost:$PORT (pid $job_pid)"
 echo "Logs:      $HOME/Library/Logs/prqueue-local.log"
 echo "Uninstall: launchctl unload $PLIST && rm $PLIST"
