@@ -27,27 +27,19 @@ function ciBadge(ci) {
   return `<span class="badge ${cls}">${lbl}</span>`;
 }
 
+// Both halves of the diff, never the net: +4 −400 and +204 −200 are the same
+// net change and nothing like the same review. `n` (the churn total) only
+// drives the weight and the ✦ quick-win marker, the same thresholds the
+// quick-wins section splits on in renderList().
 function lineCountHTML(n, additions, deletions) {
   if (n == null || n === 0) return '';
   let weight, extra = '';
   if      (n <= 10)  { weight = 700; extra = ' ✦'; }
   else if (n <= 20)  { weight = 600; }
   else               { weight = 400; }
-  const diff = (additions || 0) - (deletions || 0);
-  const color = diff > 0 ? '#3fb950' : diff < 0 ? '#f85149' : '#6e7681';
-  const sign = diff > 0 ? '+' : '';
-  return `<span class="badge" style="color:${color};font-weight:${weight};background:transparent;padding:2px 4px;">${sign}${diff}${extra}</span>`;
-}
-
-function sizeBadgeHTML(n) {
-  if (n == null || n === 0) return '';
-  let label, bg, clr;
-  if      (n <= 20)  { label = 'XS'; bg = 'rgba(251,191,36,0.14)';  clr = '#FBBF24'; }
-  else if (n <= 80)  { label = 'S';  bg = 'rgba(52,211,153,0.12)';  clr = '#34D399'; }
-  else if (n <= 250) { label = 'M';  bg = 'rgba(96,165,250,0.12)';  clr = '#60A5FA'; }
-  else if (n <= 500) { label = 'L';  bg = 'rgba(167,139,250,0.12)'; clr = '#A78BFA'; }
-  else               { label = 'XL'; bg = 'rgba(79,96,112,0.18)';   clr = '#6e7681'; }
-  return `<span class="badge" style="background:${bg};color:${clr};font-weight:600;">${label}</span>`;
+  return `<span class="badge" style="font-weight:${weight};background:transparent;padding:2px 4px;font-variant-numeric:tabular-nums;">`
+       + `<span style="color:#3fb950;">+${additions || 0}</span> `
+       + `<span style="color:#f85149;">−${deletions || 0}</span>${extra}</span>`;
 }
 
 // ── Render ───────────────────────────────────────────────────
@@ -55,16 +47,16 @@ function sizeBadgeHTML(n) {
 function renderCard(pr, isNew = false, delay = 0) {
   const ignored = state.ignored.has(pr.id);
   const activityBadge = pr.humanActivity > 0
-    ? `<span class="badge badge-blue" data-tip="${pr.humanActivity} comentario${pr.humanActivity > 1 ? 's' : ''} de ${pr.activityBy.join(', ')}">👁 ${pr.humanActivity}</span>`
+    ? `<span class="badge badge-blue" data-tip="${pr.humanActivity} comment${pr.humanActivity > 1 ? 's' : ''} from ${pr.activityBy.join(', ')}">👁 ${pr.humanActivity}</span>`
     : '';
-  const approvalBadge = pr.changesReq ? `<span class="badge badge-red" data-tip="Alguien pidió cambios">✗ Cambios</span>`
-    : pr.approved ? `<span class="badge badge-green" data-tip="Tiene al menos un approve">✓ Aprobado</span>` : '';
-  const draftBadge     = pr.draft      ? `<span class="badge badge-amber" data-tip="PR en borrador, no listo para review">Draft</span>` : '';
+  const approvalBadge = pr.changesReq ? `<span class="badge badge-red" data-tip="Someone requested changes">✗ Changes</span>`
+    : pr.approved ? `<span class="badge badge-green" data-tip="Has at least one approval">✓ Approved</span>` : '';
+  const draftBadge     = pr.draft      ? `<span class="badge badge-amber" data-tip="Draft PR, not ready for review">Draft</span>` : '';
   const conflictBadge  = pr.conflicts  ? `<span class="badge badge-red">⚡ Conflicts</span>` : '';
   const dontMergeBadge = pr.dontMerge  ? `<span class="badge badge-amber">🚧 Don't merge</span>` : '';
 
   const newReviewDot = (pr.newApprovals > 0 || pr.newChanges > 0)
-    ? `<span class="new-review-dot" data-tip="Review nuevo sin ver"></span>` : '';
+    ? `<span class="new-review-dot" data-tip="Unseen review"></span>` : '';
 
   const newCls   = isNew ? ' is-new' : '';
   const newStyle = isNew && delay ? ` style="animation-delay:${delay}ms"` : '';
@@ -94,7 +86,7 @@ function renderCard(pr, isNew = false, delay = 0) {
           <a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.title)}</a>
         </div>
         <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
-          ${sizeBadgeHTML(pr.lines)}${lineCountHTML(pr.lines, pr.additions, pr.deletions)}
+          ${lineCountHTML(pr.lines, pr.additions, pr.deletions)}
         </div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
@@ -166,8 +158,8 @@ function renderList() {
   html += regularReady.length > 0
     ? regularReady.map(rc).join('')
     : quickWins.length > 0
-      ? `<div style="padding:16px 0;text-align:center;font-size:12px;color:var(--muted);">No hay más PRs listos para review.</div>`
-      : `<div style="padding:20px 0;text-align:center;font-size:12px;color:var(--muted);">Ningún PR listo para review 🎉</div>`;
+      ? `<div style="padding:16px 0;text-align:center;font-size:12px;color:var(--muted);">No more PRs ready to review.</div>`
+      : `<div style="padding:20px 0;text-align:center;font-size:12px;color:var(--muted);">No PRs ready to review 🎉</div>`;
   if (!state.readyOnly && others.length > 0) {
     html += `<div class="section-label">Has activity <span class="count-badge">${others.length}</span></div>`;
     html += others.map(rc).join('');
@@ -230,7 +222,7 @@ function renderOwnPRs() {
   })).join('');
 
   if (state.mergedPRs.length > 0) {
-    html += `<div class="section-label" style="margin-top:16px;font-size:10px;">Mergeados <span class="count-badge" style="font-size:10px">${state.mergedPRs.length}</span></div>`;
+    html += `<div class="section-label" style="margin-top:16px;font-size:10px;">Merged <span class="count-badge" style="font-size:10px">${state.mergedPRs.length}</span></div>`;
     html += state.mergedPRs.map(pr => renderCard({
       ...pr,
       merged: true,
@@ -262,7 +254,7 @@ async function loadOwnPRs() {
   if (state.ownPRs.length === 0) el.ownLoading.classList.remove('hidden');
 
   try {
-    // Unlike loadPRs (the tribe's review queue), this column is "Mis PRs" —
+    // Unlike loadPRs (the tribe's review queue), this column is "My PRs" —
     // all of the owner's own work org-wide, not just the tribe's slice of
     // it — so no label: qualifier belongs here at all. Qualifiers are still
     // built as an array and joined rather than concatenated, so an absent

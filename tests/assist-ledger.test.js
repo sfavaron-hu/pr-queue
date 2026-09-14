@@ -22,15 +22,15 @@ test('buildLedger joins a PR onto its process and classifies it', () => {
   const doc = buildLedger(localPayload(), [openPR], 2000);
   const p = doc.processes.find(x => x.key === 'SQSH-1');
   assert.equal(p.prs.length, 1);
-  // pending CI + no human review yet → esperando
-  assert.equal(p.state, 'esperando');
+  // pending CI + no human review yet → the nearest gate is CI
+  assert.equal(p.state, 'ci');
 });
 
 test('buildLedger leaves a PR-less local process with no prs and a local state', () => {
   const doc = buildLedger(localPayload(), [openPR], 2000);
   const p = doc.processes.find(x => x.key === 'chore/local-only');
   assert.equal(p.prs.length, 0);
-  assert.ok(['pausa', 'frio', 'turno'].includes(p.state));
+  assert.ok(['paused', 'cold', 'active'].includes(p.state));
 });
 
 test('buildLedger synthesizes a process for a PR with no local worktree', () => {
@@ -115,7 +115,7 @@ test('ledger backfills a branch the broad search missed', async () => {
   const p = doc.processes[0];
   assert.equal(p.prs.length, 1);
   assert.equal(p.prs[0].merged, true);
-  assert.equal(p.state, 'mergeado');
+  assert.equal(p.state, 'merged');
 });
 
 test('ledger does not call the targeted lookup when the broad search settled everything', async () => {

@@ -273,7 +273,7 @@ test('a dirty question truncates a long file list but says how many are hidden',
   const files = Array.from({ length: 5 }, (_, i) => ({ code: 'M', path: `f${i}.ts` }));
   const q = questionFor(proc({
     worktrees: [wt({ dirty: 9, dirtyFiles: files })], flags: flags({ dirty: true }) }), ledger([]));
-  assert.match(q.question, /\+4 más/);
+  assert.match(q.question, /\+4 more/);
   renderable(q);
 });
 

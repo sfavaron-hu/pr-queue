@@ -17,11 +17,11 @@ test('off no pinta ninguna card, ni la de mission', () => {
   assert.deepEqual(missionCards(base({ status: 'off' })), []);
 });
 
-test('todo ok pinta sólo la card mission con la edad y el conteo', () => {
+test('all ok paints only the mission card, with the age and the count', () => {
   const cards = missionCards(base({ sources: [src('work', 'ok'), src('prs', 'ok')] }));
   assert.deepEqual(kinds(cards), ['mission']);
   assert.equal(cards[0].tone, 'plain');
-  assert.match(cards[0].lines.join(' '), /2\/2 fuentes/);
+  assert.match(cards[0].lines.join(' '), /2\/2 sources/);
   assert.match(cards[0].badge, /3m/);
 });
 
@@ -65,30 +65,30 @@ test('mission roja cuando el read entero está broken, con el error', () => {
   assert.match(cards[0].lines.join(' '), /boom/);
 });
 
-test('mission ámbar cuando el read entero está degraded, sin asegurar ceguera', () => {
+test('mission is amber when the whole read is degraded, without claiming blindness', () => {
   const cards = missionCards(base({ status: 'degraded', error: null }));
   assert.deepEqual(kinds(cards), ['mission']);
   assert.equal(cards[0].tone, 'amber');
-  assert.match(cards[0].lines.join(' '), /mc miró/);
-  assert.doesNotMatch(cards[0].lines.join(' '), /no pude leer mc/);
+  assert.match(cards[0].lines.join(' '), /mc looked/);
+  assert.doesNotMatch(cards[0].lines.join(' '), /couldn't read mc/);
 });
 
-test('degraded también dice cuántas fuentes miraron, no sólo que vino corta', () => {
+test('degraded also says how many sources looked, not only that the pass came up short', () => {
   const cards = missionCards(base({ status: 'degraded', error: null,
     sources: [src('work', 'ok'), src('prs', 'broken')] }));
-  assert.match(cards[0].lines.join(' '), /1\/2 fuentes/);
+  assert.match(cards[0].lines.join(' '), /1\/2 sources/);
 });
 
-test('broken también dice cuántas fuentes miraron (0\\/0 si no hay snapshot que contar)', () => {
+test('broken also says how many sources looked (0\\/0 with no snapshot to count)', () => {
   const cards = missionCards(base({ status: 'broken', error: { code: 1, stderr: 'boom', timedOut: false } }));
-  assert.match(cards[0].lines.join(' '), /0\/0 fuentes/);
+  assert.match(cards[0].lines.join(' '), /0\/0 sources/);
 });
 
-test('deferred > 0 se dice en la card mission; deferred 0 no agrega nada', () => {
+test('deferred > 0 is said on the mission card; deferred 0 adds nothing', () => {
   const withDeferred = missionCards(base({ deferred: 3 }));
-  assert.match(withDeferred[0].lines.join(' '), /3 esperan al próximo pase/);
+  assert.match(withDeferred[0].lines.join(' '), /3 wait for the next pass/);
   const withoutDeferred = missionCards(base({ deferred: 0 }));
-  assert.doesNotMatch(withoutDeferred[0].lines.join(' '), /esperan al próximo pase/);
+  assert.doesNotMatch(withoutDeferred[0].lines.join(' '), /wait for the next pass/);
 });
 
 test('matchedAskIds filtra preguntas ya stitched en process cards', () => {
@@ -100,9 +100,9 @@ test('matchedAskIds filtra preguntas ya stitched en process cards', () => {
   assert.equal(questions[0].id, 'q:prs:unmatched');
 });
 
-test('refrescando se dice en la card, no se esconde', () => {
+test('refreshing is said on the card, not hidden', () => {
   const cards = missionCards(base({ refreshing: true, ageMs: 900000 }));
-  assert.match(cards[0].lines.join(' '), /refrescando/);
+  assert.match(cards[0].lines.join(' '), /refreshing/);
 });
 
 test('leases ilegibles ponen la card mission en ámbar y lo nombran', () => {
@@ -123,7 +123,7 @@ test('58 tickets producen una card por cola, no 58', () => {
   assert.equal(cards[0].slot, 'bottom');
 });
 
-test('un ticket cuya cola no está en la config no se pierde: cae en "otras colas"', () => {
+test('a ticket whose queue is not configured is not lost: it falls into "other queues"', () => {
   const rows = [
     { key: 'SQSH-1', summary: 's1', status: 'To Do', url: 'https://x/SQSH-1', queue: 'shark-frontend' },
     { key: 'SQSH-2', summary: 's2', status: 'To Do', url: 'https://x/SQSH-2', queue: 'cola-no-configurada' },
@@ -132,7 +132,7 @@ test('un ticket cuya cola no está en la config no se pierde: cae en "otras cola
     queues: [{ name: 'shark-frontend', label: 'Shark frontend sin dueño' }], rows: rows })] })), 'ticket');
   assert.equal(cards.length, 2);
   const configured = cards.find(c => c.title === 'Shark frontend sin dueño');
-  const leftover = cards.find(c => c.title === 'otras colas');
+  const leftover = cards.find(c => c.title === 'other queues');
   assert.equal(configured.badge, '1');
   assert.ok(leftover, 'ningún card para la cola no configurada');
   assert.equal(leftover.badge, '1');
@@ -156,7 +156,7 @@ test('fricción abierta produce una card con las observaciones', () => {
   assert.match(cards[0].lines.join(' | '), /10k errores fantasma/);
 });
 
-test('tickets tomados produce una card "take" con el estado y el vencimiento', () => {
+test('taken tickets produce a "take" card with the state and the expiry', () => {
   const cards = byKind(missionCards(base({ take: { rows: [
     { key: 'SQSH-100', state: 'in-progress', until: '2026-08-13T00:00:00.000Z' },
     { key: 'SQSH-101', state: 'snoozed' },
@@ -164,7 +164,7 @@ test('tickets tomados produce una card "take" con el estado y el vencimiento', (
   assert.equal(cards.length, 1);
   assert.equal(cards[0].badge, '2');
   assert.equal(cards[0].slot, 'bottom');
-  assert.match(cards[0].lines.join(' | '), /SQSH-100 · in-progress hasta 2026-08-13/);
+  assert.match(cards[0].lines.join(' | '), /SQSH-100 · in-progress until 2026-08-13/);
   assert.match(cards[0].lines.join(' | '), /SQSH-101 · snoozed/);
 });
 

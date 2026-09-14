@@ -23,7 +23,7 @@ function classifyMissionRead(read) {
     // Not configured and not there = a pr-queue user who never installed
     // mission-control. Explicitly configured and not there = a broken setup.
     return { status: r.configured ? 'broken' : 'off', snapshot: null,
-             error: r.configured ? { code: null, stderr: 'no existe el binario de mc', timedOut: false } : null };
+             error: r.configured ? { code: null, stderr: 'the mc binary does not exist', timedOut: false } : null };
   }
   var snapshot = null;
   try { snapshot = JSON.parse(r.stdout || ''); } catch (e) { snapshot = null; }
@@ -36,9 +36,9 @@ function classifyMissionRead(read) {
 }
 
 function ageLabel(ms) {
-  if (typeof ms !== 'number' || !isFinite(ms) || ms < 0) return 'edad desconocida';
+  if (typeof ms !== 'number' || !isFinite(ms) || ms < 0) return 'age unknown';
   var m = Math.round(ms / 60000);
-  return m < 1 ? 'hace <1m' : (m < 90 ? 'hace ' + m + 'm' : 'hace ' + Math.round(m / 60) + 'h');
+  return m < 1 ? '<1m ago' : (m < 90 ? m + 'm ago' : Math.round(m / 60) + 'h ago');
 }
 
 var SOURCE_TONE = { absent: 'gray', broken: 'red', degraded: 'amber' };
@@ -50,37 +50,37 @@ function missionCard(payload, sources) {
   if (payload.status === 'broken') {
     tone = 'red';
     var e = payload.error || {};
-    lines.push(e.timedOut ? 'mc no respondió en el tiempo del panel'
-                          : ('no pude leer mc' + (e.stderr ? ': ' + e.stderr : '')));
-    lines.push('lo que ves abajo es de la última lectura buena, si hubo alguna');
-    lines.push(looked.length + '/' + sources.length + ' fuentes miraron');
+    lines.push(e.timedOut ? "mc didn't answer within the panel's timeout"
+                          : ("couldn't read mc" + (e.stderr ? ': ' + e.stderr : '')));
+    lines.push('what you see below is from the last good read, if there was one');
+    lines.push(looked.length + '/' + sources.length + ' sources looked');
   } else if (payload.status === 'degraded') {
     // mc exited 4: it DID look, and the snapshot parsed fine — the pass just
-    // came up short. Claiming "no pude leer mc" here asserts blindness about
+    // came up short. Claiming "couldn't read mc" here asserts blindness about
     // a fresh, valid read, which is the same collapse the four states exist
     // to prevent, only inverted.
     tone = 'amber';
-    lines.push('mc miró, pero la pasada vino corta');
-    lines.push('los conteos están incompletos; el snapshot es de recién, no viejo');
-    lines.push(looked.length + '/' + sources.length + ' fuentes miraron');
+    lines.push('mc looked, but the pass came up short');
+    lines.push('the counts are incomplete; the snapshot is fresh, not old');
+    lines.push(looked.length + '/' + sources.length + ' sources looked');
   } else {
-    lines.push(looked.length + '/' + sources.length + ' fuentes miraron');
+    lines.push(looked.length + '/' + sources.length + ' sources looked');
   }
   // mc's own budget caps ask[] at 4 total / 3 per source (mission-control/
   // src/budget.js) and comes back next pass in the same order — never
   // dropped. `deferred` was computed and never read anywhere in the UI;
   // the panel's whole point is not hiding what mc saw, so a nonzero count
   // gets a line, in the same words mc's own brief uses for it.
-  if (payload.deferred > 0) lines.push(payload.deferred + ' esperan al próximo pase');
+  if (payload.deferred > 0) lines.push(payload.deferred + ' wait for the next pass');
   // A lease that cannot be read is the exact condition under which the drain
   // walks over a working agent, so it can never be a silent omission.
   if (payload.leases && payload.leases.error) {
     if (tone === 'plain') tone = 'amber';
-    lines.push('no pude leer los leases (' + payload.leases.error + '): una card puede ofrecer algo que un agente está usando');
+    lines.push("couldn't read the leases (" + payload.leases.error + '): a card may offer something an agent is using');
   }
   // Stale-while-revalidate serves what mc already had rather than blocking on
   // a 133s cold pass — honest only as long as the card says so out loud.
-  if (payload.refreshing) lines.push('refrescando en segundo plano; la próxima pasada trae lo nuevo');
+  if (payload.refreshing) lines.push("refreshing in the background; the next pass brings what's new");
   return { kind: 'mission', id: 'mission', tone: tone, title: 'mission-control',
            badge: ageLabel(payload.ageMs), lines: lines, links: [], slot: 'top' };
 }
@@ -88,10 +88,10 @@ function missionCard(payload, sources) {
 function questionCard(entry) {
   var q = entry.item || {};
   return { kind: 'question', id: 'q:' + entry.id, tone: 'amber',
-           title: q.header || 'Pregunta', badge: entry.source || null,
+           title: q.header || 'Question', badge: entry.source || null,
            lines: [q.question || ''].concat((q.options || []).map(function (o) {
              return '· ' + o.label + ' — ' + (o.description || '');
-           })).concat(['contestar: /mission-control']),
+           })).concat(['answer: /mission-control']),
            links: [], slot: 'bottom' };
 }
 
@@ -105,9 +105,9 @@ function missionCards(payload) {
     if (st === 'ok') return;
     var lines = [s.headline || ''].concat((s.detail || []).slice(0, 3));
     if (s.install) {
-      lines.push('qué es: ' + s.install.what);
-      if (s.install.where) lines.push('dónde: ' + s.install.where);
-      lines.push('cómo: ' + s.install.how);
+      lines.push('what it is: ' + s.install.what);
+      if (s.install.where) lines.push('where: ' + s.install.where);
+      lines.push('how: ' + s.install.how);
     }
     cards.push({ kind: 'source', id: 'source:' + s.name, tone: SOURCE_TONE[st] || 'red',
                  title: s.name, badge: st, lines: lines, links: [], slot: 'top' });
@@ -142,7 +142,7 @@ function missionCards(payload) {
       if (hasQueues) {
         var leftover = s.rows.filter(function (r) { return !queues.some(function (q) { return r.queue === q.name; }); });
         if (leftover.length) {
-          cards.push({ kind: 'ticket', id: 'tickets:otras', tone: 'plain', title: 'otras colas',
+          cards.push({ kind: 'ticket', id: 'tickets:other', tone: 'plain', title: 'other queues',
                        badge: String(leftover.length), slot: 'bottom',
                        lines: leftover.map(function (r) { return r.key + ' · ' + (r.status || '') + ' · ' + (r.summary || ''); }),
                        links: leftover.filter(function (r) { return r.url; }).map(function (r) { return { label: r.key, url: r.url }; }) });
@@ -153,15 +153,15 @@ function missionCards(payload) {
       var notes = (s.inbox || []).concat(s.attention || []);
       if (notes.length) {
         var per = {};
-        notes.forEach(function (n) { var k = n.source || n.check || 'otros'; per[k] = (per[k] || 0) + 1; });
+        notes.forEach(function (n) { var k = n.source || n.check || 'other'; per[k] = (per[k] || 0) + 1; });
         cards.push({ kind: 'inbox', id: 'inbox', tone: 'plain', title: 'inbox', badge: String(notes.length),
                      lines: Object.keys(per).map(function (k) { return k + ' ×' + per[k]; })
-                              .concat(['leer y marcar: mc inbox / mc ack']),
+                              .concat(['read and mark: mc inbox / mc ack']),
                      links: [], slot: 'bottom' });
       }
     }
     if (s.name === 'friction' && (s.open || []).length) {
-      cards.push({ kind: 'friction', id: 'friction', tone: 'plain', title: 'fricción abierta',
+      cards.push({ kind: 'friction', id: 'friction', tone: 'plain', title: 'open friction',
                    badge: String(s.open.length), slot: 'bottom', links: [],
                    lines: s.open.map(function (o) { return (o.note || o.evidence || '').slice(0, 140); }) });
     }
@@ -170,9 +170,9 @@ function missionCards(payload) {
   var take = payload.take || {};
   var taken = (take.rows || take.taken || []);
   if (taken.length) {
-    cards.push({ kind: 'take', id: 'take', tone: 'plain', title: 'tickets tomados',
+    cards.push({ kind: 'take', id: 'take', tone: 'plain', title: 'tickets taken',
                  badge: String(taken.length), slot: 'bottom', links: [],
-                 lines: taken.map(function (t) { return (t.key || '?') + ' · ' + (t.state || '') + (t.until ? ' hasta ' + t.until : ''); }) });
+                 lines: taken.map(function (t) { return (t.key || '?') + ' · ' + (t.state || '') + (t.until ? ' until ' + t.until : ''); }) });
   }
   return cards;
 }

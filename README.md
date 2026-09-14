@@ -1,7 +1,7 @@
 # pr-queue
 
 Dashboard for the PR review queue (other people's PRs worth reviewing) next to a
-**Trabajo activo** panel for your own work: PRs grouped by ticket-or-branch, each
+**Active work** panel for your own work: PRs grouped by ticket-or-branch, each
 card classified by whose turn it is. With a local sidecar running, the same cards
 also carry your worktrees and Claude Code sessions.
 
@@ -10,15 +10,15 @@ also carry your worktrees and Claude Code sessions.
 Static site, no build step. Open the deployed page, paste a GitHub PAT with `repo`
 scope, pick your tribe label. Everything is stored in your browser's localStorage.
 
-## The Trabajo activo panel
+## The Active work panel
 
 The right-hand column, always on. What it can show depends on what it can read.
 
 **Everything GitHub knows works on the deployed page**, with no sidecar and no
 install: your own PRs grouped by ticket (a ticket with a PR in two repos is one
-card), the *tu turno / esperando / en pausa / frío / mergeado* state on each,
-state-then-recency ordering, the `abierto` / `draft` filter, and the CI / review /
-size badges. All of it is the same code in `classify.js`, which is pure and has no
+card), the *your move / active / in review / ci running / paused / cold / merged*
+state on each, state-then-recency ordering, the `open` / `draft` filter, and the
+CI / review / diff badges. All of it is the same code in `classify.js`, which is pure and has no
 idea whether a sidecar answered.
 
 **Everything about your filesystem needs the sidecar** below, because it reads your
@@ -64,13 +64,13 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   replaced an earlier invariant ("someone who never runs the sidecar sees no change
   at all"), on purpose: the PR-derived half of the panel is better than the flat
   list it used to fall back to, and it costs a teammate nothing to receive.
-- **`render.js`'s flat "Mis PRs" list is now the crash fallback only.** If a panel
+- **`render.js`'s flat "My PRs" list is now the crash fallback only.** If a panel
   render throws, `unmountPanel()` hands the column back to it rather than leaving it
   blank. It is not reachable any other way.
-- **`con PR` / `sin PR` hides itself when it cannot partition.** Every row on the
-  deployed page has a PR, so "sin PR" would always be 0 and "con PR" always
+- **`with PR` / `without PR` hides itself when it cannot partition.** Every row on the
+  deployed page has a PR, so "without PR" would always be 0 and "with PR" always
   everything — two chips that can't change the list read as broken, not as
-  inapplicable. They go away and `abierto` / `draft` is promoted to stand alone
+  inapplicable. They go away and `open` / `draft` is promoted to stand alone
   (see `prSplitIsMeaningful`). With a sidecar whose every worktree happens to have
   a PR, the same thing correctly happens.
 - **No Claude Code? Still works.** You get worktrees and PRs, with no session rows,
@@ -83,31 +83,36 @@ live elsewhere: `PRQ_WORKSPACE=~/code node serve.js`.
   these in would merge every repo's base checkout into a single `main` row.
 - **Detached worktrees never attach to a PR.** With no branch there is no join key, so
   they appear as branchless rows rather than being dropped.
-- **State means turns, not age — and there are four of them.** *Tu turno* is unanswered
-  review comments, failed CI, conflicts or your own recent work. *Esperando* is an
-  unreviewed PR or CI in flight — not your move, however old. *En pausa* is neither:
-  typically no PR yet, just a worktree that was set down — calling it "esperando" would
-  claim someone is blocking work when no one is. *Frío* is nothing from anyone in 14 days.
-- **`con PR` / `sin PR` is a filter with an off state** (when it is shown at all —
+- **State means who the row waits on, not how old it is — and there are seven.**
+  *Your move* is unanswered review comments, failed CI or conflicts: something demands
+  an action from you. *Active* is your own work in the last 48h with nothing demanding —
+  split out of *your move* so the red badge keeps meaning "act now" on a machine
+  carrying dozens of worktrees. *In review* is an open, non-draft PR nobody has looked
+  at; drafts are excluded, because nobody is expected to review a draft and calling one
+  "in review" claims a reviewer is blocking work that is still yours. *CI running* is
+  the nearest gate when CI has not answered yet, and wins over *in review* while it
+  holds. *Paused* is none of those and recent; *cold* is nothing from anyone in 14 days;
+  *merged* is work that landed, where the only thing left is the worktree to clean up.
+- **`with PR` / `without PR` is a filter with an off state** (when it is shown at all —
   see above). Neither chip selected means
-  *todos*; clicking the lit chip turns it off, clicking the other one replaces it. The
+  *all*; clicking the lit chip turns it off, clicking the other one replaces it. The
   chips stay **disabled until GitHub's PR data lands** — until then every card looks
-  "sin PR", so either chip would hide real work; their counts are blanked rather than
+  "without PR", so either chip would hide real work; their counts are blanked rather than
   printed as zeros, same rule the meta line follows. That line keeps reporting totals
   over *every* process, filter or not, and says separately how many are on screen. The
-  "Sesiones sin worktree" row only appears with the filter off: it isn't a process and
+  "Sessions with no worktree" row only appears with the filter off: it isn't a process and
   has no PR to file it under. In a background tab the chips can stay disabled for a
   while: `loadOwnPRs` skips hidden tabs, so PR data only lands once you look at it.
-- **`abierto` / `draft` is a second row, subordinate to `con PR` only while that
+- **`open` / `draft` is a second row, subordinate to `with PR` only while that
   chip exists.** Asking which PR status to keep has no answer for a row with no PR,
-  so while the `con PR` row is on screen this one appears when `con PR` lights up and
+  so while the `with PR` row is on screen this one appears when `with PR` lights up and
   its selection is dropped when that chip goes off — a hidden row never keeps
-  filtering from behind. When the `con PR` split is hidden as degenerate (the
+  filtering from behind. When the `with PR` split is hidden as degenerate (the
   deployed page: every row has a PR), this row is unindented, shown unconditionally,
-  and its selection is the only filter there is. `abierto` means open **and not a
+  and its selection is the only filter there is. `open` means open **and not a
   draft**: draft is the
   distinction being drawn, so the two are a split, not a superset. Their counts can sum
-  to less than `con PR` (a *mergeado* row is neither) and can overlap (a multi-repo
+  to less than `with PR` (a *merged* row is neither) and can overlap (a multi-repo
   process with a draft in one repo and a ready PR in another is both) — the numbers on
   the chips are what make that legible.
 - **Session liveness is not activity.** An open terminal only means a terminal was left

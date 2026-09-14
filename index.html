@@ -581,22 +581,14 @@ html, body {
    incidentally helps tell "this is a PR title" from "this is still local,
    here's what a session was doing" apart at a glance. */
 .proc-ai-title { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
-/* PR-backed vs local-only: a subtle left accent built from the existing
-   --accent token (already used for .pr-repo/links/badge-blue), not a new
-   palette or a loud badge — the state badge (TU TURNO, etc.) already carries
-   the loud signal. Local-only cards keep the plain card border. */
-#work-list .pr-card.proc-has-pr {
-  border-left: 3px solid var(--accent);
-  padding-left: 13px;
-}
 .proc-meta-line { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
-/* "con PR / sin PR" chips. Same visual language as the config .repo-chip
+/* "with PR / without PR" chips. Same visual language as the config .repo-chip
    pills, a size down and fully rounded — these live inside the narrower
    own-column, right above the cards. Only one can be on; neither on means
-   todos. They render disabled while GitHub's PR data hasn't landed, because
-   until it does every card looks "sin PR" (see prPending in local.js) and
+   all. They render disabled while GitHub's PR data hasn't landed, because
+   until it does every card looks "without PR" (see prPending in local.js) and
    either chip would be filtering on data the panel doesn't have yet.
-   The second row (abierto / draft) only exists while "con PR" is on — asking
+   The second row (open / draft) only exists while "with PR" is on — asking
    which PR status to keep has no answer for a row with no PR — and is indented
    to read as subordinate to the chip that opened it. */
 .proc-filter { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
@@ -631,10 +623,10 @@ html, body {
   background: rgba(127,127,127,.06); font-size: 12px; }
 .proc-state { font-size: 10px; font-weight: 600; text-transform: uppercase;
   letter-spacing: .04em; padding: 2px 6px; border-radius: 4px; text-align: center; }
-.proc-state.turno     { background: #d73a49; color: #fff; }
-.proc-state.esperando { background: #dbab09; color: #1b1f23; }
-.proc-state.pausa     { background: rgba(127,127,127,.45); }
-.proc-state.frio      { background: rgba(127,127,127,.25); }
+.proc-state.move      { background: #d73a49; color: #fff; }
+.proc-state.review    { background: #dbab09; color: #1b1f23; }
+.proc-state.paused    { background: rgba(127,127,127,.45); }
+.proc-state.cold      { background: rgba(127,127,127,.25); }
 .proc-key { font-weight: 600; }
 .proc-detail { opacity: .7; font-size: 11px; }
 .proc-detail code { font-size: 10px; opacity: .8; }
@@ -845,8 +837,8 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
     </div>
     <p class="auth-hint">
       Needs <code style="font-family:var(--mono);background:var(--bg);padding:1px 5px;border-radius:3px;font-size:11px;">repo</code> scope ·
-      <a href="https://github.com/settings/tokens/new?scopes=repo&description=PR+Review+Queue" target="_blank" rel="noopener">Crear token →</a> ·
-      se guarda en localStorage
+      <a href="https://github.com/settings/tokens/new?scopes=repo&description=PR+Review+Queue" target="_blank" rel="noopener">Create token →</a> ·
+      stored in localStorage
     </p>
   </div>
 
@@ -857,7 +849,7 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
       <input type="text" id="cfg-org" class="input" value="HumandDev" />
     </div>
     <div class="config-field" style="grid-column:span 2;">
-      <label>Tribu</label>
+      <label>Tribe</label>
       <input type="hidden" id="cfg-label" />
       <div class="tribe-picker" id="tribe-picker"></div>
     </div>
@@ -873,7 +865,7 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
     <div class="config-field" style="grid-column:1; display:flex; align-items:center;">
       <label class="toggle-label">
         <input type="checkbox" id="cfg-fx-toggle" checked />
-        Efectos y sonidos
+        Effects & sounds
       </label>
     </div>
     <div class="config-field" style="grid-column:span 2; display:flex; justify-content:flex-end;">
@@ -885,8 +877,8 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
 
   <!-- Sidecar hint (shown only when /api/local fails) -->
   <div id="sidecar-hint" class="hidden">
-    <span>Además de esta cola: corriendo el sidecar local ves tus worktrees, sesiones de Claude y PRs propios agrupados por ticket. Nada sale de tu máquina.</span>
-    <a href="https://github.com/sfavaron-hu/pr-queue#the-sidecar-local-only" target="_blank" rel="noopener noreferrer">ver cómo</a>
+    <span>Beyond this queue: run the local sidecar to see your worktrees, Claude sessions and own PRs grouped by ticket. Nothing leaves your machine.</span>
+    <a href="https://github.com/sfavaron-hu/pr-queue#the-sidecar-local-only" target="_blank" rel="noopener noreferrer">see how</a>
     <button id="sidecar-hint-dismiss" type="button">ok, ✕</button>
   </div>
 
@@ -926,7 +918,7 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
 
   <!-- Empty -->
   <div id="empty" class="empty hidden">
-    No hay PRs con label <code id="empty-label" style="font-family:var(--mono);font-size:11px;background:var(--surface);padding:1px 5px;border-radius:3px;"></code> abiertos en este momento.
+    No open PRs with label <code id="empty-label" style="font-family:var(--mono);font-size:11px;background:var(--surface);padding:1px 5px;border-radius:3px;"></code> right now.
   </div>
 
   </div><!-- /tribe-column -->
@@ -934,17 +926,17 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
   <!-- Own PRs -->
   <div class="own-column" id="own-column" style="display:none">
     <div class="own-column-header">
-      <span id="own-column-title">Mis PRs</span> <span class="count-badge" id="own-count"></span>
+      <span id="own-column-title">My PRs</span> <span class="count-badge" id="own-count"></span>
     </div>
     <div class="proc-meta-line hidden" id="proc-meta-line"></div>
     <div class="proc-filter hidden" id="proc-filter">
       <div class="proc-filter-row" id="proc-filter-main">
-        <button type="button" class="proc-chip" data-pr-filter="con">con PR<span class="proc-chip-count"></span></button>
-        <button type="button" class="proc-chip" data-pr-filter="sin">sin PR<span class="proc-chip-count"></span></button>
+        <button type="button" class="proc-chip" data-pr-filter="with">with PR<span class="proc-chip-count"></span></button>
+        <button type="button" class="proc-chip" data-pr-filter="without">without PR<span class="proc-chip-count"></span></button>
         <button class="proc-chip" data-mc-filter="off" type="button">mc</button>
       </div>
       <div class="proc-filter-row proc-filter-sub hidden" id="proc-filter-status">
-        <button type="button" class="proc-chip" data-pr-status="abierto">abierto<span class="proc-chip-count"></span></button>
+        <button type="button" class="proc-chip" data-pr-status="open">open<span class="proc-chip-count"></span></button>
         <button type="button" class="proc-chip" data-pr-status="draft">draft<span class="proc-chip-count"></span></button>
       </div>
     </div>
@@ -953,7 +945,7 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
       <div class="spinner"></div>
     </div>
     <div id="own-pr-list"></div>
-    <div id="own-empty" class="empty hidden" style="padding:20px;font-size:12px;">Sin PRs abiertos.</div>
+    <div id="own-empty" class="empty hidden" style="padding:20px;font-size:12px;">No open PRs.</div>
   </div>
 
   </div><!-- /main-layout -->

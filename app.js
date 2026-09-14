@@ -40,7 +40,7 @@ function buildTribePicker() {
   custom.type = 'text';
   custom.id = 'tribe-custom-input';
   custom.className = 'tribe-chip';
-  custom.placeholder = 'otra…';
+  custom.placeholder = 'other…';
   custom.addEventListener('input', () => {
     el.cfgLabel.value = custom.value.trim();
     document.querySelectorAll('.tribe-chip[data-label]').forEach(c => c.classList.remove('selected'));

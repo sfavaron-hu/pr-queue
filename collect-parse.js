@@ -41,7 +41,7 @@ function parseWorktrees(stdout) {
 
 // Untracked tooling artifacts are not the owner's uncommitted work. Counting them
 // as "dirty" both hides a merged worktree from autonomous cleanup and emits a
-// spurious "¿commiteo?" question — and the question is worse than useless, since
+// spurious "commit these?" question — and the question is worse than useless, since
 // there is no answer to "commit node_modules?" that is right.
 //
 // git reports the SHALLOWEST untracked directory, which is why `.claude/` has to

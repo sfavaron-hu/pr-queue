@@ -3,8 +3,8 @@ const assert = require('node:assert');
 const { PR_FILTER_ALL, rowHasPR, rowHasOpenPR, rowHasDraftPR, nextChipFilter,
         filterRowsByPR, filterRowsByPRStatus } = require('../classify.js');
 
-const MODES = ['con', 'sin'];
-const STATUS = ['abierto', 'draft'];
+const MODES = ['with', 'without'];
+const STATUS = ['open', 'draft'];
 
 // A row is what attachOwnPRs/synthesizeProcesses produce: { proc, prs }.
 const row = (key, prs) => ({ proc: { key: key, prs: undefined }, prs: prs });
@@ -25,29 +25,29 @@ test('rowHasPR survives a row with no prs array at all', () => {
 });
 
 test('a merged PR still counts as having a PR', () => {
-  // A mergeado card is PR-backed — "con PR" must not silently mean "con PR
-  // abierto", or merged work would show up under "sin PR".
+  // A merged card is PR-backed — "with PR" must not silently mean "with PR
+  // open", or merged work would show up under "without PR".
   assert.equal(rowHasPR(row('a', [{ number: 1, merged: true }])), true);
 });
 
 test('nextChipFilter turns a chip on from the off state', () => {
-  assert.equal(nextChipFilter(PR_FILTER_ALL, 'con', MODES), 'con');
-  assert.equal(nextChipFilter(PR_FILTER_ALL, 'sin', MODES), 'sin');
+  assert.equal(nextChipFilter(PR_FILTER_ALL, 'with', MODES), 'with');
+  assert.equal(nextChipFilter(PR_FILTER_ALL, 'without', MODES), 'without');
 });
 
 test('nextChipFilter turns the selected chip off — back to todos', () => {
-  assert.equal(nextChipFilter('con', 'con', MODES), PR_FILTER_ALL);
-  assert.equal(nextChipFilter('sin', 'sin', MODES), PR_FILTER_ALL);
+  assert.equal(nextChipFilter('with', 'with', MODES), PR_FILTER_ALL);
+  assert.equal(nextChipFilter('without', 'without', MODES), PR_FILTER_ALL);
 });
 
 test('nextChipFilter switching chips turns the previous one off', () => {
-  assert.equal(nextChipFilter('con', 'sin', MODES), 'sin');
-  assert.equal(nextChipFilter('sin', 'con', MODES), 'con');
+  assert.equal(nextChipFilter('with', 'without', MODES), 'without');
+  assert.equal(nextChipFilter('without', 'with', MODES), 'with');
 });
 
 test('nextChipFilter ignores an unknown mode instead of clearing the selection', () => {
-  assert.equal(nextChipFilter('con', 'todos', MODES), 'con');
-  assert.equal(nextChipFilter('con', null, MODES), 'con');
+  assert.equal(nextChipFilter('with', 'todos', MODES), 'with');
+  assert.equal(nextChipFilter('with', null, MODES), 'with');
   assert.equal(nextChipFilter(PR_FILTER_ALL, undefined, MODES), PR_FILTER_ALL);
 });
 
@@ -59,11 +59,11 @@ const rows = [
 ];
 
 test('filterRowsByPR keeps only PR-backed rows for "con"', () => {
-  assert.deepEqual(filterRowsByPR(rows, 'con').map(r => r.proc.key), ['SQSH-1', 'SQSH-2']);
+  assert.deepEqual(filterRowsByPR(rows, 'with').map(r => r.proc.key), ['SQSH-1', 'SQSH-2']);
 });
 
 test('filterRowsByPR keeps only local-only rows for "sin"', () => {
-  assert.deepEqual(filterRowsByPR(rows, 'sin').map(r => r.proc.key),
+  assert.deepEqual(filterRowsByPR(rows, 'without').map(r => r.proc.key),
                    ['chore/no-ticket', 'fix/local-only']);
 });
 
@@ -88,18 +88,18 @@ test('filterRowsByPR never returns the caller array', () => {
 });
 
 test('filterRowsByPR tolerates a missing rows list', () => {
-  assert.deepEqual(filterRowsByPR(null, 'con'), []);
+  assert.deepEqual(filterRowsByPR(null, 'with'), []);
   assert.deepEqual(filterRowsByPR(undefined, PR_FILTER_ALL), []);
 });
 
 test('the two chips partition the list — no row is lost or double-counted', () => {
-  const con = filterRowsByPR(rows, 'con');
-  const sin = filterRowsByPR(rows, 'sin');
-  assert.equal(con.length + sin.length, rows.length);
-  assert.equal(con.filter(r => sin.includes(r)).length, 0);
+  const withPR = filterRowsByPR(rows, 'with');
+  const withoutPR = filterRowsByPR(rows, 'without');
+  assert.equal(withPR.length + withoutPR.length, rows.length);
+  assert.equal(withPR.filter(r => withoutPR.includes(r)).length, 0);
 });
 
-// ── second row: abierto / draft ──
+// ── second row: open / draft ──
 
 test('rowHasOpenPR is true for an open PR that is not a draft', () => {
   assert.equal(rowHasOpenPR(row('a', [{ number: 1 }])), true);
@@ -131,14 +131,14 @@ test('a multi-repo row with a draft and a ready PR is both', () => {
 });
 
 const prRows = [
-  row('SQSH-1', [{ number: 1 }]),                                // abierto
+  row('SQSH-1', [{ number: 1 }]),                                // open
   row('SQSH-2', [{ number: 2, draft: true }]),                    // draft
-  row('SQSH-3', [{ number: 3, merged: true }]),                   // mergeado
+  row('SQSH-3', [{ number: 3, merged: true }]),                   // merged
   row('SQSH-4', [{ number: 4, draft: true }, { number: 5 }]),     // ambos
 ];
 
-test('filterRowsByPRStatus keeps rows with a ready PR for "abierto"', () => {
-  assert.deepEqual(filterRowsByPRStatus(prRows, 'abierto').map(r => r.proc.key),
+test('filterRowsByPRStatus keeps rows with a ready PR for "open"', () => {
+  assert.deepEqual(filterRowsByPRStatus(prRows, 'open').map(r => r.proc.key),
                    ['SQSH-1', 'SQSH-4']);
 });
 
@@ -147,10 +147,10 @@ test('filterRowsByPRStatus keeps rows with a draft for "draft"', () => {
                    ['SQSH-2', 'SQSH-4']);
 });
 
-test('a mergeado row is neither abierto nor draft', () => {
-  // Which is why the two counts can sum to less than the "con PR" total —
+test('a merged row is neither open nor draft', () => {
+  // Which is why the two counts can sum to less than the "with PR" total —
   // documented behaviour, not a lost row.
-  assert.equal(filterRowsByPRStatus(prRows, 'abierto').some(r => r.proc.key === 'SQSH-3'), false);
+  assert.equal(filterRowsByPRStatus(prRows, 'open').some(r => r.proc.key === 'SQSH-3'), false);
   assert.equal(filterRowsByPRStatus(prRows, 'draft').some(r => r.proc.key === 'SQSH-3'), false);
 });
 
@@ -163,17 +163,17 @@ test('filterRowsByPRStatus with no chip selected returns every row', () => {
 
 test('nextChipFilter drives the second row with the same semantics', () => {
   assert.equal(nextChipFilter(PR_FILTER_ALL, 'draft', STATUS), 'draft');
-  assert.equal(nextChipFilter('draft', 'abierto', STATUS), 'abierto');
-  assert.equal(nextChipFilter('abierto', 'abierto', STATUS), PR_FILTER_ALL);
+  assert.equal(nextChipFilter('draft', 'open', STATUS), 'open');
+  assert.equal(nextChipFilter('open', 'open', STATUS), PR_FILTER_ALL);
   // The rows can't leak into each other: a first-row mode is unknown here.
-  assert.equal(nextChipFilter('draft', 'con', STATUS), 'draft');
-  assert.equal(nextChipFilter('con', 'draft', MODES), 'con');
+  assert.equal(nextChipFilter('draft', 'with', STATUS), 'draft');
+  assert.equal(nextChipFilter('with', 'draft', MODES), 'with');
 });
 
 // GitHub keeps `isDraft: true` on a draft that was closed. Testing only `draft`
 // files abandoned drafts under the "draft" chip as if they still awaited work —
 // real case: react-workflows#6.
-test('a closed draft counts under neither the abierto nor the draft chip', () => {
+test('a closed draft counts under neither the open nor the draft chip', () => {
   const row = { prs: [{ merged: false, closed: true, draft: true }] };
   assert.equal(rowHasOpenPR(row), false);
   assert.equal(rowHasDraftPR(row), false);

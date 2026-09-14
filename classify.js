@@ -130,6 +130,16 @@ function lastActivity(proc, prs) {
   return best;
 }
 
+// The seven states, in the order classify() decides them. Each answers a
+// different question, and splitting them is what keeps the badge honest:
+//
+//   move    something demands an action from you right now
+//   merged  the work landed; only leftover local state remains
+//   active  you were in this worktree in the last 48h, nothing demanding
+//   review  an open, non-draft PR nobody has reviewed yet
+//   ci      an open PR whose CI is still running
+//   paused  quiet, but recent enough to pick back up
+//   cold    quiet for longer than COLD_DAYS, or dropped on purpose
 function classify(proc, prs, now) {
   var list = prs || [];
 
@@ -141,38 +151,44 @@ function classify(proc, prs, now) {
       || p.ci === 'failed'
       || p.conflicts === true;
   });
-  if (yourMove) return 'turno';
+  if (yourMove) return 'move';
 
-  var local = typeof proc.lastLocalActivity === 'number' ? proc.lastLocalActivity : null;
-  if (local !== null && now - local <= TURN_WINDOW_MS) return 'turno';
-
-  // Must be checked before the waiting branch below: a merged PR typically
-  // carries humanReviews === 0 (nobody needs to review it anymore), and
-  // "esperando"'s own rule ("PR open with no human review yet") would
-  // otherwise misclassify finished work as waiting on someone. Requires no
-  // open PR on the process — an open PR alongside a merged one still means
-  // there's live work, and the open PR should decide instead.
+  // Checked before local recency: work that landed is finished, and saying
+  // "you were here an hour ago" about it hides the one thing a merged row is
+  // for — offering to clean up the worktree it left behind. Requires no open
+  // PR on the process: an open PR alongside a merged one still means there's
+  // live work, and the open PR should decide instead.
   var hasMerged = list.some(function (p) { return p.merged === true; });
   var hasOpen = list.some(prIsOpen);
-  if (hasMerged && !hasOpen) return 'mergeado';
+  if (hasMerged && !hasOpen) return 'merged';
+
+  var local = typeof proc.lastLocalActivity === 'number' ? proc.lastLocalActivity : null;
+  if (local !== null && now - local <= TURN_WINDOW_MS) return 'active';
 
   // Every PR on the process was closed without merging: the work was dropped on
-  // purpose. Falling through would land on 'esperando' (a closed PR has
-  // humanReviews === 0), which reads as "someone owes you a review" for a PR
-  // nobody will ever look at again. 'frio' is the honest state — it is dormant
-  // work, and the gate offers to archive it rather than to chase a review.
-  if (list.length > 0 && !hasMerged && !hasOpen) return 'frio';
+  // purpose. It is dormant work, and the gate offers to archive it rather than
+  // to chase a review.
+  if (list.length > 0 && !hasMerged && !hasOpen) return 'cold';
 
-  var waiting = list.some(function (p) {
-    return p.ci === 'pending' || (p.humanReviews || 0) === 0;
+  // The nearest gate first. While CI is running that is the concrete thing
+  // holding the PR up; once it is green and nobody has looked, the review is.
+  // Both read `prIsOpen` directly rather than relying on the branches above:
+  // a merged or closed PR carries humanReviews === 0 and would otherwise read
+  // as "someone owes you a review" on a row that also has open work.
+  if (list.some(function (p) { return prIsOpen(p) && p.ci === 'pending'; })) return 'ci';
+
+  // Drafts are excluded: nobody is expected to review a draft, so an unreviewed
+  // one is not waiting on a person — it is waiting on you, and falls through to
+  // active/paused/cold like any other unfinished work.
+  var inReview = list.some(function (p) {
+    return prIsOpen(p) && p.draft !== true && (p.humanReviews || 0) === 0;
   });
-  if (waiting) return 'esperando';
+  if (inReview) return 'review';
 
   var last = lastActivity(proc, list);
-  if (last === null) return 'frio';
-  // Not your move and nobody is blocking it: set down, not dead. Calling this
-  // "esperando" would claim someone is blocking a process with no PR.
-  return (now - last > COLD_MS) ? 'frio' : 'pausa';
+  if (last === null) return 'cold';
+  // Not your move and nobody is blocking it: set down, not dead.
+  return (now - last > COLD_MS) ? 'cold' : 'paused';
 }
 
 // Allowlists a URL's scheme to http/https, rejecting everything else —
@@ -198,9 +214,11 @@ function safeHttpUrl(value) {
   }
 }
 
-// mergeado sorts last: finished work, and this panel answers "what should I
-// work on" — not "what did I already finish".
-var STATE_ORDER = { turno: 0, esperando: 1, pausa: 2, frio: 3, mergeado: 4 };
+// `merged` sorts last: finished work, and this panel answers "what should I
+// work on" — not "what did I already finish". `review` outranks `ci` because a
+// PR waiting on a person waits for days and a PR waiting on a machine waits for
+// minutes, even though `ci` is the state that wins when a PR is both.
+var STATE_ORDER = { move: 0, active: 1, review: 2, ci: 3, paused: 4, cold: 5, merged: 6 };
 
 function sortProcesses(rows, now) {
   return rows.slice().sort(function (a, b) {
@@ -218,18 +236,17 @@ function sortProcesses(rows, now) {
   });
 }
 
-// ── The "con PR / sin PR" chips ──
+// ── The "with PR / without PR" chips ──
 //
-// Two chips, three states. No chip selected means *todos*: the filter is
+// Two chips, three states. No chip selected means *all*: the filter is
 // opt-in and its off state is the whole list, so a fresh load can never be
 // hiding work you don't know about.
 var PR_FILTER_ALL = null;
 
 // Whether a row's work exists as a PR. Deliberately the very same test
-// procCardHTML already uses for the blue `proc-has-pr` left edge and the
-// "sin PR" badge (`prs.length > 0`) — the chips have to partition the list
-// exactly the way the cards already look, or a card wearing the blue edge
-// could survive a "sin PR" filter.
+// procCardHTML already uses for the "no PR" badge (`prs.length > 0`) — the
+// chips have to partition the list exactly the way the cards already read, or
+// a card the panel calls PR-backed could survive a "without PR" filter.
 function rowHasPR(row) {
   return !!(row && row.prs && row.prs.length > 0);
 }
@@ -241,10 +258,10 @@ function rowHasPR(row) {
 // under either chip rather than being forced into one.
 //
 // A merged PR is neither: it isn't open, and `draft` on a merged PR is a
-// contradiction the GitHub API doesn't produce. So a mergeado row disappears
+// contradiction the GitHub API doesn't produce. So a merged row disappears
 // under either of these chips — which is why they carry counts that can sum to
-// less than the "con PR" total, and why nothing here silently reinterprets
-// "abierto" as "open including drafts". Draft is the distinction being drawn.
+// less than the "with PR" total, and why nothing here silently reinterprets
+// "open" as "open including drafts". Draft is the distinction being drawn.
 //
 // A closed-unmerged PR is excluded on the same grounds, via prIsOpen. GitHub
 // keeps `isDraft: true` on a draft that was closed, so testing only `draft`
@@ -273,18 +290,18 @@ function nextChipFilter(current, clicked, allowed) {
 }
 
 // Anything that isn't one of the two known modes — `null` included — means
-// *todos* and returns every row. Always a copy, never the caller's array.
+// *all* and returns every row. Always a copy, never the caller's array.
 function filterRowsByPR(rows, mode) {
   var list = rows || [];
-  if (mode !== 'con' && mode !== 'sin') return list.slice();
-  var want = mode === 'con';
+  if (mode !== 'with' && mode !== 'without') return list.slice();
+  var want = mode === 'with';
   return list.filter(function (r) { return rowHasPR(r) === want; });
 }
 
 // The second row's filter: which PR *status* to keep. Only ever applied to
-// rows that already passed `con PR` (see local.js) — asking "abierto o draft"
+// rows that already passed `with PR` (see local.js) — asking "open or draft"
 // of a row with no PR at all has no answer.
-var PR_STATUS_TESTS = { abierto: rowHasOpenPR, draft: rowHasDraftPR };
+var PR_STATUS_TESTS = { open: rowHasOpenPR, draft: rowHasDraftPR };
 
 function filterRowsByPRStatus(rows, mode) {
   var list = rows || [];
@@ -292,26 +309,25 @@ function filterRowsByPRStatus(rows, mode) {
   return test ? list.filter(test) : list.slice();
 }
 
-// Whether the "con PR / sin PR" split can partition anything at all. It can
+// Whether the "with PR / without PR" split can partition anything at all. It can
 // only when at least one row has no PR — i.e. only when the payload brought
 // local work (a worktree or a session) that GitHub knows nothing about.
 //
 // The static deploy has no sidecar, so every row is synthesized from a PR:
-// "sin PR" is always 0 and "con PR" is always everything, and two chips that
-// cannot change the list are worse than no chips — they read as a filter that
-// is broken. Also true (correctly) of a sidecar whose every worktree already
-// has a PR. Callers hide the first chip row when this is false and show the
-// abierto/draft row on its own instead, since *that* split still partitions.
+// "without PR" is always 0 and "with PR" is always everything, and two chips
+// that cannot change the list are worse than no chips — they read as a filter
+// that is broken. Also true (correctly) of a sidecar whose every worktree
+// already has a PR. Callers hide the first chip row when this is false and show
+// the open/draft row on its own instead, since *that* split still partitions.
 function prSplitIsMeaningful(rows) {
   return (rows || []).some(function (r) { return !rowHasPR(r); });
 }
 
-// The `+N −M` / size-badge stats a PR card shows, for a row that has exactly
-// one PR carrying them. Deliberately NOT summed across a multi-PR row: the
-// size badge is a bucket (XS/S/M/L/XL) and bucketing the sum of two repos'
-// diffs describes neither of them — a 40-line copy tweak next to a 900-line
-// refactor would read as one L. `null` means "don't show it", which is the
-// honest answer for a row that has no single diff to size.
+// The `+N −M` diff stat a PR card shows, for a row that has exactly one PR
+// carrying it. Deliberately NOT summed across a multi-PR row: the card links to
+// one diff, and a pair of numbers covering two repos describes neither of them.
+// `null` means "don't show it", which is the honest answer for a row that has
+// no single diff to size.
 //
 // A PR that predates the fields (an older cache) or a merged PR out of
 // loadOwnPRs's second query (which never fetches additions/deletions) carries
@@ -344,7 +360,7 @@ function rowNewActivity(row) {
 // Built from the union of worktree repos and PR repos rather than one or the
 // other, because either alone loses something real. Worktrees alone (what the
 // panel used to print) drop the PR number — which is exactly what render.js's
-// flat "Mis PRs" list showed in this slot, and the only thing distinguishing
+// flat "My PRs" list showed in this slot, and the only thing distinguishing
 // two PRs in the same repo. PRs alone drop a repo that has a worktree but no
 // PR yet, which is a multi-repo process's whole point: `humand-web #9884 ·
 // material-hu` says the second repo is still local, and dropping it would
@@ -417,14 +433,14 @@ function attachOwnPRs(processes, ownPRs) {
 // One synthetic process per distinct ticket (or, lacking a ticket, per
 // branch) among PRs that attachOwnPRs() matched nowhere — a PR pushed
 // straight to GitHub with no local worktree still gets a card instead of
-// vanishing along with the "Mis PRs" column it used to live in.
+// vanishing along with the flat "My PRs" column it falls back to.
 // `worktrees`/`sessions` stay empty and `lastLocalActivity` stays null, which
 // is what keeps this out of the 48h own-activity window: classify() falls
-// straight through turno's local-activity check to the PR-driven
-// esperando/pausa/frío branches, so no classifier change is needed. `ticket`
-// mirrors a real process's shape (non-null only when one was found) so
-// downstream code (the "sin ticket" badge) treats it identically. `synthetic`
-// is the marker procCardHTML uses to print "sin worktree local" in place of
+// straight through the `active` check to the PR-driven review/ci/paused/cold
+// branches, so no classifier change is needed. `ticket` mirrors a real
+// process's shape (non-null only when one was found) so downstream code (the
+// "no ticket" badge) treats it identically. `synthetic` is the marker
+// procCardHTML uses to print "no local worktree" in place of
 // the (necessarily empty) repo list. Two PRs that resolve to the same key
 // share one process, both attached to it.
 function synthesizeProcesses(unmatchedPRs) {

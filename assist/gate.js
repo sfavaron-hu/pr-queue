@@ -44,8 +44,8 @@ function buildActions(ledger) {
           cmd: `git -C ${repoPath(root, w.repo)} worktree prune`,
           argv: ['git', '-C', repoPath(root, w.repo), 'worktree', 'prune'],
           reversibility: 'reversible-metadata',
-          why: 'El worktree ya no existe en disco',
-          evidence: `${w.repo}: directorio ausente`,
+          why: 'The worktree no longer exists on disk',
+          evidence: `${w.repo}: directory absent`,
         });
         continue;
       }
@@ -58,8 +58,8 @@ function buildActions(ledger) {
           cmd: `git -C ${w.path} push -u origin ${w.branch}`,
           argv: ['git', '-C', w.path, 'push', '-u', 'origin', w.branch],
           reversibility: 'reversible-unconsumed',
-          why: 'La rama no está en origin y ningún PR la referencia',
-          evidence: `${w.repo}/${w.branch}: onOrigin=false, sin PR que la consuma`,
+          why: 'The branch is not on origin and no PR references it',
+          evidence: `${w.repo}/${w.branch}: onOrigin=false, no PR consuming it`,
         });
         continue;
       }
@@ -84,8 +84,8 @@ function buildActions(ledger) {
           cmd: `git -C ${w.path} switch ${w.baseBranch}`,
           argv: ['git', '-C', w.path, 'switch', w.baseBranch],
           reversibility: 'reversible-local',
-          why: 'El checkout principal quedó parado en trabajo ya mergeado; no se puede remover, se vuelve a la base',
-          evidence: `${w.repo}/${w.branch}: checkout principal, PR mergeado, limpio → ${w.baseBranch}`,
+          why: 'The main checkout is parked on work that already merged; it cannot be removed, so it goes back to base',
+          evidence: `${w.repo}/${w.branch}: main checkout, PR merged, clean → ${w.baseBranch}`,
         });
         continue;
       }
@@ -103,8 +103,8 @@ function buildActions(ledger) {
           cmd: `git -C ${repoPath(root, w.repo)} worktree remove ${w.path}`,
           argv: ['git', '-C', repoPath(root, w.repo), 'worktree', 'remove', w.path],
           reversibility: 'reversible-local',
-          why: 'Todos los PRs del proceso están mergeados; el worktree es estado local sobrante',
-          evidence: `${w.repo}/${w.branch}: PRs mergeados, worktree limpio, sin trabajo local sin pushear`,
+          why: 'Every PR on the process merged; the worktree is leftover local state',
+          evidence: `${w.repo}/${w.branch}: PRs merged, worktree clean, no unpushed local work`,
         });
         continue;
       }
@@ -125,7 +125,7 @@ function buildActions(ledger) {
           cmd: `gh pr create --draft --fill -R ${w.githubRepo} --head ${w.branch} --base ${w.baseBranch}`,
           argv: ['gh', 'pr', 'create', '--draft', '--fill', '-R', w.githubRepo, '--head', w.branch, '--base', w.baseBranch],
           reversibility: 'reversible-draft',
-          why: 'Rama en origin con commits sobre base y sin PR',
+          why: 'Branch on origin with commits above base and no PR',
           evidence: `${w.repo}/${w.branch}: ${w.unpushed} commit(s) sobre ${w.baseBranch}`,
         });
       }
@@ -150,8 +150,8 @@ function buildActions(ledger) {
 const QUESTION_BUDGET = 4;
 
 // A process key is a branch name, and a branch name does not say which repo it
-// is in, where on disk, or how stale. Asked "<branch> no se toca hace 14 días,
-// ¿qué hago?" the honest answer is "that name tells me nothing" — so every
+// is in, where on disk, or how stale. Asked "<branch> hasn't been touched in 14
+// days, what do I do?" the honest answer is "that name tells me nothing" — so every
 // question below carries the evidence needed to decide without going to look.
 function repoAndPath(w) {
   if (!w) return '';
@@ -184,7 +184,7 @@ function dirtySummary(w) {
   if (files.length === 0) return '';
   const shown = files.map(f => `${f.code} ${f.path}`).join(', ');
   const rest = (w.dirty || 0) - files.length;
-  return rest > 0 ? `${shown}, +${rest} más` : shown;
+  return rest > 0 ? `${shown}, +${rest} more` : shown;
 }
 
 // At most one question per process. Dirty beats cold: uncommitted changes are a
@@ -337,7 +337,7 @@ function readBabysitNotifications(babysitDir, io) {
   const conflicts = countLines(`${babysitDir}/pending-conflicts.txt`);
   if (conflicts > 0) {
     notify.push({ type: 'notify', key: 'babysit:conflicts',
-      message: `pr-babysit: ${conflicts} conflicto(s) sin resolver`, source: 'pr-babysit' });
+      message: `pr-babysit: ${conflicts} unresolved conflict(s)`, source: 'pr-babysit' });
   }
 
   let files = [];
@@ -347,7 +347,7 @@ function readBabysitNotifications(babysitDir, io) {
     const repo = m ? m[1] : f;
     const pr = m ? m[2] : '';
     notify.push({ type: 'notify', key: `babysit:needs-human:${f}`,
-      message: `pr-babysit: ${repo}#${pr} necesita intervención humana`, source: 'pr-babysit' });
+      message: `pr-babysit: ${repo}#${pr} needs human intervention`, source: 'pr-babysit' });
   });
 
   return notify;
