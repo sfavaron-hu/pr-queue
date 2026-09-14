@@ -283,3 +283,49 @@ test('a dirty question with no file sample still reads correctly', () => {
   assert.match(q.question, /2 uncommitted file\(s\)\. What do I do\?/);
   renderable(q);
 });
+
+// The founding rule of this stack: blind is never reported as clean. A branch
+// whose gh lookup failed must not be told to the owner as "no PR", and must not
+// be handed an option that removes the worktree on the strength of it.
+test('a cold unverified branch says gh did not answer and offers no Archive', () => {
+  const q = questionFor(proc({
+    key: 'feat/staging-evidence', ticket: null,
+    worktrees: [wt({ repo: 'hu-ai-agent-plugin', branch: 'feat/staging-evidence',
+      path: '/w/plugin', unpushed: 3, prUnverified: true })],
+    prs: [], flags: flags({ cold: true, prUnverified: true }) }), ledger([]));
+  renderable(q);
+  assert.match(q.question, /gh did not answer/);
+  const labels = q.options.map(o => o.label);
+  assert.deepEqual(labels, ['Resume', 'Leave it']);
+  assert.ok(!labels.includes('Archive') && !labels.includes('Discard') && !labels.includes('Park on base'),
+    'no option may destroy local state on the strength of a lookup that failed');
+  assert.match(q.options[0].description, /could not be checked/);
+  assert.ok(!/PR: no PR/.test(q.options[0].description), 'an unanswered lookup is not an answer of "none"');
+});
+
+test('a verified cold branch keeps its Archive option', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ path: '/w/r', unpushed: 3 })], prs: [], flags: flags({ cold: true }) }), ledger([]));
+  assert.deepEqual(q.options.map(o => o.label), ['Resume', 'Leave it', 'Archive']);
+  assert.match(q.options[0].description, /PR: no PR/);
+});
+
+test('a dirty unverified branch reports the PR state as unchecked', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ dirty: 2, prUnverified: true })], prs: [],
+    flags: flags({ dirty: true, prUnverified: true }) }), ledger([]));
+  renderable(q);
+  assert.match(q.options.find(o => o.label === 'Commit').description, /could not be checked/);
+});
+
+// The orphan question's premise is "the PR is done", and both of its acting
+// options throw away local work on that basis. A blind process cannot establish
+// it, so it falls through to the question whose options touch local state only.
+test('an unverified process is never asked the orphan question', () => {
+  const q = questionFor(proc({
+    worktrees: [wt({ path: '/w/r', unpushedLocal: 2, prUnverified: true })],
+    prs: [{ headRef: 'feat/x', merged: true }],
+    flags: flags({ cold: true, prUnverified: true }) }), ledger([]));
+  assert.notEqual(q.header, 'Orphan');
+  assert.ok(!q.options.some(o => o.label === 'Discard'));
+});

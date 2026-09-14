@@ -303,3 +303,37 @@ test('the drain persists every emitted question, not just the asked ones', async
   assert.equal(res.output.questions.deferred, 2, 'two persisted but not asked');
   for (const item of all) assert.ok(io.exists(`${paths.items}/${itemId(item)}.json`));
 });
+
+// `degraded` alone says the pass is not to be trusted; it does not say what
+// about. mission-control shows a blind branch read-only instead of dropping it,
+// and it needs the names to do that.
+const blindBranch = { processKey: 'p3', repo: 'r3', branch: 'b3', githubRepo: 'Org/r3' };
+
+test('--dry-run names the branches whose PR state went unchecked', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const res = await runCli(['--dry-run'], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ unverified: [blindBranch] }), warnings: [] }),
+  }));
+  assert.equal(res.output.degraded, true);
+  assert.deepEqual(res.output.unverified, [blindBranch]);
+});
+
+// The gate carries the blind branches; a caller that hands over the gate without
+// the warnings that produced it must still get a degraded pass, not a drain.
+test('a gate with an unverified branch degrades the drain on its own', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const res = await runCli([], deps(io, exec, {
+    loadGate: async () => ({ gate: gate({ unverified: [blindBranch] }), warnings: [] }),
+  }));
+  assert.equal(res.exit, 4);
+  assert.equal(res.output.degraded, true);
+  assert.deepEqual(res.output.unverified, [blindBranch]);
+  assert.equal(exec.calls.length, 0);
+});
+
+test('a pass that checked every branch reports nothing unverified', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const res = await runCli(['--dry-run'], deps(io, exec));
+  assert.equal(res.output.degraded, false);
+  assert.deepEqual(res.output.unverified, []);
+});

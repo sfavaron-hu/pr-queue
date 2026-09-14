@@ -114,8 +114,13 @@ function skipReport(skipped) {
 // True when the ledger's PR half is untrustworthy — a gh step failed, so any
 // action that keys off "has no PR" (open-draft-pr) could fire against a branch
 // that actually has one. On a degraded pass the drain touches no worktree.
-function isDegraded(warnings) {
-  return (warnings || []).some(w => w.step && String(w.step).startsWith('gh'));
+//
+// The gate's `unverified` list counts too: it names the branches gh went silent
+// on, and a caller can build a gate without carrying the warnings that produced
+// it. Either one on its own is enough to hold the drain back.
+function isDegraded(warnings, gate) {
+  return (warnings || []).some(w => w.step && String(w.step).startsWith('gh'))
+    || ((gate && gate.unverified) || []).length > 0;
 }
 
 // Parse the tiny flag set the CLI needs. --value/--other/--resolution take a
@@ -213,19 +218,23 @@ async function runCli(argv, deps) {
   // Default: DRAIN (unattended).
   const mechanical = actions.filter(a => !isDraft(a));
   const draftsPending = actions.filter(isDraft).map(draftPending);
-  const degraded = isDegraded(warnings);
+  // Named, not counted. `degraded` says the pass as a whole is not to be
+  // trusted; `unverified` says which branches the untrustworthy part is about,
+  // which is what lets a caller show them read-only instead of dropping them.
+  const unverified = gate.unverified || [];
+  const degraded = isDegraded(warnings, gate);
   // The dry run carries the questions too. A caller that wants the whole
   // picture — mission-control does — otherwise runs `ask` and `--dry-run` back
   // to back, and each one builds its own gate and pays its own `gh` round trip
   // for the same minute of state. `ask` stays, because answering does not need
   // the action list.
   if (args.dryRun) {
-    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), leasedSkipped, draftsPending, degraded } };
+    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), leasedSkipped, draftsPending, degraded, unverified } };
   }
   if (degraded) {
     const declinedPruned = pruneDeclined(io, paths);
     const donePruned = pruneDone(io, paths, 30);
-    return { exit: 4, output: { degraded: true, actions: { ran: 0, leasedSkipped }, questions: { synced: 0 }, prune: { declinedPruned, donePruned } } };
+    return { exit: 4, output: { degraded: true, unverified, actions: { ran: 0, leasedSkipped }, questions: { synced: 0 }, prune: { declinedPruned, donePruned } } };
   }
 
   const drained = drainActions(exec, mechanical);

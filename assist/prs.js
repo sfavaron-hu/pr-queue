@@ -117,11 +117,18 @@ const LIST_FIELDS = `number,title,url,state,${VIEW_FIELDS}`;
 //
 // Cost is one `gh pr list` (~0.5s) per branch, so callers must pass only the
 // branches they could not resolve from the broad search — see assist/ledger.js.
-// A per-branch failure is a warning, never fatal: the pass degrades to what the
-// broad search knew, and `isDegraded` keeps the drain off worktrees.
+// A per-branch failure is never fatal: the pass degrades to what the broad
+// search knew, the branch comes back in `unverified`, and `isDegraded` keeps the
+// drain off worktrees.
 async function fetchPRsForBranches({ run, branches }) {
   const warnings = [];
   const prs = [];
+  // The branches the lookup never answered for. An empty `prs` slice for a
+  // branch means "asked, and the answer is none"; a branch listed here means the
+  // question went unanswered, and the two must not arrive looking alike — "has
+  // no PR" is the fact that licenses opening a draft and removing a worktree.
+  // The warning alone cannot carry this: it names the pass, not the branch.
+  const unverified = [];
   for (const { githubRepo, branch } of (branches || [])) {
     if (!githubRepo || !branch) continue;
     try {
@@ -135,11 +142,12 @@ async function fetchPRsForBranches({ run, branches }) {
         prs.push(buildPR({ ...p, repository: { nameWithOwner: `${owner}/${repo}` } }, p));
       }
     } catch (e) {
+      unverified.push({ githubRepo, branch });
       warnings.push({ repo: githubRepo, step: 'gh-pr-list',
         message: `gh pr list --head ${branch} failed: ${e.message}` });
     }
   }
-  return { prs, warnings };
+  return { prs, warnings, unverified };
 }
 
 module.exports = { ciFromRollup, buildPR, fetchOwnPRs, fetchPRsForBranches, normState };

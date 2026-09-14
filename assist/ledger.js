@@ -6,11 +6,29 @@ const { deriveFlags } = require('./flags.js');
 
 const LEDGER_VERSION = 1;
 
+// A branch whose PR lookup went unanswered is stamped on the worktree itself,
+// because the worktree is the unit every consumer reasons about: the ledger's
+// global `warnings` says the pass was degraded, but it cannot say WHICH branch
+// went unanswered, and an action or a question keys off one branch at a time.
+// The input is copied, never mutated — the collector's payload is shared.
+function stampUnverified(processes, unverified) {
+  const key = (githubRepo, branch) => `${githubRepo}\u0000${branch}`;
+  const blind = new Set((unverified || []).map(u => key(u.githubRepo, u.branch)));
+  if (blind.size === 0) return processes || [];
+  return (processes || []).map(proc => Object.assign({}, proc, {
+    worktrees: (proc.worktrees || []).map(w => blind.has(key(w.githubRepo, w.branch))
+      ? Object.assign({}, w, { prUnverified: true })
+      : w),
+  }));
+}
+
 // Pure: fold PRs into processes, add synthetic processes for orphan PRs, and
 // attach a `state` per process. `extraWarnings` are collector-external (e.g.
-// gh failures) merged with the payload's own.
-function buildLedger(localPayload, prs, now, extraWarnings) {
-  const { rows, unmatched } = attachOwnPRs(localPayload.processes, prs || []);
+// gh failures) merged with the payload's own; `unverified` are the (repo,
+// branch) pairs whose PR lookup failed, stamped onto their worktrees.
+function buildLedger(localPayload, prs, now, extraWarnings, unverified) {
+  const processes0 = stampUnverified(localPayload.processes, unverified);
+  const { rows, unmatched } = attachOwnPRs(processes0, prs || []);
   const synthetic = synthesizeProcesses(unmatched);
   const allRows = rows.concat(synthetic);
 
@@ -74,6 +92,7 @@ async function ledger(opts) {
 
   let allPrs = prs;
   let allWarnings = warnings;
+  let unverified = [];
   if (typeof fetchPRsForBranches === 'function') {
     const branches = branchesNeedingLookup(local, prs);
     if (branches.length > 0) {
@@ -84,10 +103,11 @@ async function ledger(opts) {
       const have = new Set(prs.map(p => `${p.owner}/${p.repo}#${p.number}`));
       allPrs = prs.concat((extra.prs || []).filter(p => !have.has(`${p.owner}/${p.repo}#${p.number}`)));
       allWarnings = (warnings || []).concat(extra.warnings || []);
+      unverified = extra.unverified || [];
     }
   }
 
-  return buildLedger(local, allPrs, now(), allWarnings);
+  return buildLedger(local, allPrs, now(), allWarnings, unverified);
 }
 
-module.exports = { buildLedger, ledger, branchesNeedingLookup, LEDGER_VERSION };
+module.exports = { buildLedger, ledger, branchesNeedingLookup, stampUnverified, LEDGER_VERSION };

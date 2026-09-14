@@ -84,3 +84,33 @@ test('the bin module exposes main and babysitStateDir, and does not run on requi
   assert.match(mod.babysitStateDir({ }, '/home/x'), /\/home\/x\/\.claude\/skills\/pr-babysit\/state$/);
   assert.match(mod.babysitStateDir({ CLAUDE_CONFIG_DIR: '/cfg' }, '/home/x'), /^\/cfg\/skills\/pr-babysit\/state$/);
 });
+
+// A blind branch produces no action, and a process that is neither dirty nor
+// cold produces no question either — so the gate names it in a list of its own.
+// Without it, a failed lookup leaves the pass looking like silence.
+test('buildGate names the branches gh did not answer for', () => {
+  const g = buildGate(ledger([
+    proc({ key: 'blind', worktrees: [{ repo: 'r', path: '/w/r', branch: 'feat/blind',
+      githubRepo: 'o/r', onOrigin: true, dirty: 0, unpushed: 2, baseBranch: 'main', prUnverified: true }] }),
+  ]), 1000, {});
+  assert.deepEqual(g.unverified, [{ processKey: 'blind', repo: 'r', branch: 'feat/blind', githubRepo: 'o/r' }]);
+  assert.equal(g.actions.length, 0, 'a blind branch must not be handed an open-draft-pr');
+  const n = g.notify.find(x => x.key === 'gate:pr-unverified');
+  assert.ok(n, 'the blind branches are reported, never left silent');
+  assert.match(n.message, /r\/feat\/blind/);
+});
+
+test('buildGate reports nothing unverified on a clean pass', () => {
+  const g = buildGate(ledger([proc({})]), 1000, {});
+  assert.deepEqual(g.unverified, []);
+  assert.equal(g.notify.length, 0);
+});
+
+// A caller holding only the gate must not be able to read a clean exit code out
+// of a pass that went blind on a branch.
+test('gateExitCode: 4 from the gate alone when a branch went unchecked', () => {
+  const g = buildGate(ledger([
+    proc({ key: 'blind', worktrees: [{ repo: 'r', path: '/w/r', branch: 'b', prUnverified: true }] }),
+  ]), 0, {});
+  assert.equal(gateExitCode(g, []), 4);
+});

@@ -174,3 +174,31 @@ test('a branch whose only PR was closed unmerged gets no draft action', () => {
     prs: [{ number: 6, merged: false, closed: true, headRef: 'feat/SQSH-1' }] })]));
   assert.deepEqual(kinds(acts), []);
 });
+
+// `prs: []` on a branch gh never answered for is ignorance, not an empty answer.
+// Every action below the branch check reads PR state, so none of them may fire.
+test('an unverified branch gets no open-draft-pr', () => {
+  const acts = buildActions(ledger([proc({ worktrees: [wt({ unpushed: 3, prUnverified: true })], prs: [] })]));
+  assert.deepEqual(acts, []);
+});
+
+test('an unverified branch gets no remove-merged-worktree', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ prUnverified: true, unpushedLocal: 0 })],
+    prs: [{ headRef: 'feat/SQSH-1', merged: true }] })]));
+  assert.deepEqual(acts, []);
+});
+
+test('an unverified branch gets no switch-primary-to-base', () => {
+  const acts = buildActions(ledger([proc({
+    worktrees: [wt({ prUnverified: true, isPrimary: true })],
+    prs: [{ headRef: 'feat/SQSH-1', merged: true }] })]));
+  assert.deepEqual(acts, []);
+});
+
+// A missing directory is a local fact; gh has nothing to say about it, so the
+// prune still fires and the blind pass does not leak into unrelated cleanup.
+test('prune-worktree still fires for a prunable worktree on a blind pass', () => {
+  const acts = buildActions(ledger([proc({ worktrees: [wt({ prunable: true, prUnverified: true })] })]));
+  assert.deepEqual(kinds(acts), ['prune-worktree']);
+});
