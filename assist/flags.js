@@ -20,6 +20,11 @@ function deriveFlags(proc, prs, state) {
     hasOpenPR:   rowHasOpenPR({ prs: list }),
     hasDraftPR:  rowHasDraftPR({ prs: list }),
     hasMergedPR: list.some(p => p.merged === true),
+    // `gh` never answered for one of these branches, so `prs` is empty for a
+    // reason that is not "there is no PR". Every reader that keys off an empty
+    // `prs` — open a draft, remove the worktree, tell the owner "no PR" — has to
+    // check this first, or it turns a failed lookup into a stated fact.
+    prUnverified: wts.some(w => w.prUnverified === true),
     // Merged work whose worktree is still on disk — the remove-merged-worktree
     // candidate. A prunable worktree's directory is already gone, so it isn't "live".
     mergedWithLiveWorktree: state === 'merged' && wts.some(w => w.path && !w.prunable),

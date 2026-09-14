@@ -152,3 +152,38 @@ test('ledger keeps both PRs on one branch and dedupes by PR identity', async () 
   });
   assert.equal(doc.processes[0].prs.length, 1);
 });
+
+// The ledger's global `warnings` says the pass was degraded; it cannot say which
+// branch went unanswered. The stamp puts that on the worktree, where the gate
+// reads it one branch at a time.
+test('stampUnverified marks only the matching worktree and copies the input', () => {
+  const { stampUnverified } = require('../assist/ledger.js');
+  const input = [{ key: 'p', worktrees: [
+    { repo: 'r', githubRepo: 'o/r', branch: 'blind' },
+    { repo: 'r', githubRepo: 'o/r', branch: 'answered' },
+  ]}];
+  const out = stampUnverified(input, [{ githubRepo: 'o/r', branch: 'blind' }]);
+  assert.equal(out[0].worktrees[0].prUnverified, true);
+  assert.equal(out[0].worktrees[1].prUnverified, undefined);
+  assert.equal(input[0].worktrees[0].prUnverified, undefined, 'the collector payload is shared; never mutate it');
+});
+
+test('ledger() carries a failed per-branch lookup onto the worktree and into the flags', async () => {
+  const local = {
+    generatedAt: 1000, workspaceRoot: '/w', warnings: [], looseSessions: [],
+    processes: [{ key: 'chore/blind', ticket: null, branches: ['chore/blind'], sessions: [],
+      lastLocalActivity: null,
+      worktrees: [{ repo: 'r', githubRepo: 'o/r', branch: 'chore/blind', path: '/w/r--blind', onOrigin: true }] }],
+  };
+  const doc = await ledger({
+    collect: async () => local,
+    fetchOwnPRs: async () => ({ prs: [], warnings: [] }),
+    fetchPRsForBranches: async () => ({ prs: [], unverified: [{ githubRepo: 'o/r', branch: 'chore/blind' }],
+      warnings: [{ repo: 'o/r', step: 'gh-pr-list', message: 'boom' }] }),
+    ioForCollect: {}, run: async () => '', now: () => 2000,
+  });
+  const p = doc.processes.find(x => x.key === 'chore/blind');
+  assert.equal(p.prs.length, 0);
+  assert.equal(p.worktrees[0].prUnverified, true);
+  assert.equal(p.flags.prUnverified, true, 'an empty prs list alone cannot tell the gate why it is empty');
+});

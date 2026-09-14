@@ -179,3 +179,27 @@ test('fetchPRsForBranches skips entries missing a slug or branch', async () => {
   ]});
   assert.equal(calls, 0);
 });
+
+// An empty `prs` slice for a branch and a branch whose lookup threw arrive at
+// the caller as the same thing unless the failure is named. It is the second one
+// that licenses `gh pr create` and `git worktree remove`.
+test('fetchPRsForBranches names the branch it could not check', async () => {
+  const { fetchPRsForBranches } = require('../assist/prs.js');
+  const run = async (cmd, args) => {
+    if (args.join(' ').includes('--head blind')) throw new Error('HTTP 502');
+    return JSON.stringify([]);
+  };
+  const { prs, unverified } = await fetchPRsForBranches({ run, branches: [
+    { githubRepo: 'o/r', branch: 'blind' },
+    { githubRepo: 'o/r', branch: 'answered' },
+  ]});
+  assert.equal(prs.length, 0);
+  assert.deepEqual(unverified, [{ githubRepo: 'o/r', branch: 'blind' }]);
+});
+
+test('fetchPRsForBranches reports nothing unverified when every lookup answers', async () => {
+  const { fetchPRsForBranches } = require('../assist/prs.js');
+  const run = async () => JSON.stringify([]);
+  const { unverified } = await fetchPRsForBranches({ run, branches: [{ githubRepo: 'o/r', branch: 'b' }] });
+  assert.deepEqual(unverified, []);
+});

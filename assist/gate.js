@@ -50,6 +50,12 @@ function buildActions(ledger) {
         continue;
       }
       if (w.detached || !w.branch || !w.path) continue;
+      // Every action from here down reads PR state, and for this branch `gh`
+      // never answered: `prs` is empty because the lookup failed, not because
+      // the branch has none. Opening a draft over a live PR and removing a
+      // worktree whose PR is still open are both irreversible from here, so an
+      // unverified branch gets no action at all.
+      if (w.prUnverified === true) continue;
 
       if (w.onOrigin === false && !consumed(w.branch)) {
         actions.push({
@@ -168,13 +174,25 @@ function daysSince(ts, now) {
 // The single most decision-changing fact about a stale branch: does it already
 // have a PR, and in what state. A merged or closed PR usually means the answer is
 // "nothing to resume" — which is invisible from the branch name alone.
-function prSummary(prs) {
+function prSummary(prs, unverified) {
+  // An unanswered lookup and an answer of "none" both arrive as an empty list,
+  // so the caller states which one this is. Saying "no PR" for the first turns a
+  // gh outage into a fact the owner then acts on.
+  if (unverified) return 'could not be checked — gh did not answer';
   const list = prs || [];
   if (list.length === 0) return 'no PR';
   return list.map(p => {
     const state = p.merged === true ? 'merged' : p.closed === true ? 'closed without merging' : 'open';
     return `#${p.number} ${state}`;
   }).join(', ');
+}
+
+// True when `gh` went unanswered for any of this process's branches. The flag
+// lives on the worktree (assist/ledger.js stamps it); a process is blind when
+// any of its worktrees is, because one unknown PR is enough to make "there is no
+// PR" unsayable for the process.
+function prUnverified(proc) {
+  return ((proc && proc.worktrees) || []).some(w => w.prUnverified === true);
 }
 
 // `M src/x.ts, ?? scratch.md` — the codes matter as much as the paths (modified
@@ -197,6 +215,10 @@ function questionFor(proc, ledger) {
   const f = proc.flags || {};
   const wts = proc.worktrees || [];
   const now = ledger && ledger.generatedAt;
+  // Blind, not clean. Every question below either states PR state or offers an
+  // option that destroys local work on the strength of it, so each one says so
+  // in its text and withholds the options that cannot be taken back.
+  const blind = prUnverified(proc);
 
   // Orphan: the PR already landed or was closed, yet the worktree still holds
   // work that exists only locally (unpushed commits and/or uncommitted changes)
@@ -207,7 +229,11 @@ function questionFor(proc, ledger) {
   // dirty/cold cases: "the PR is done but there's stray local work" is a more
   // specific question than either.
   const oprs = proc.prs || [];
-  const consumed = oprs.some(pr => pr.merged === true || pr.closed === true) && !oprs.some(prIsOpen);
+  // "The PR is done" is the entire premise of the orphan question, and both of
+  // its acting options (a fresh PR, or `worktree remove --force` plus a branch
+  // delete) rest on it. A blind process cannot establish it, so it falls through
+  // to the dirty/cold questions, whose options act on local state alone.
+  const consumed = !blind && oprs.some(pr => pr.merged === true || pr.closed === true) && !oprs.some(prIsOpen);
   const orphanWt = consumed
     ? wts.find(x => x.isPrimary !== true && ((x.unpushedLocal || 0) > 0 || (x.dirty || 0) > 0))
     : null;
@@ -240,7 +266,7 @@ function questionFor(proc, ledger) {
       header: 'Uncommitted',
       options: [
         { label: 'Commit',
-          description: `I write a commit in ${repoAndPath(w)} with those changes and move on. PR state: ${prSummary(proc.prs)}.` },
+          description: `I write a commit in ${repoAndPath(w)} with those changes and move on. PR state: ${prSummary(proc.prs, blind)}.` },
         { label: 'Leave it', description: `I leave it as it is in ${w.path}; no question about it for 30 days.` },
       ],
     };
@@ -275,16 +301,22 @@ function questionFor(proc, ledger) {
           : { label: 'Archive',
               description: `git worktree remove ${w.path} — the branch stays on origin.` };
 
+    // Archive, Discard and Park on base all throw away local state on the
+    // strength of the PR being settled. A blind process is offered Resume and
+    // Leave it only — both leave the branch exactly where it is, so the worst a
+    // failed lookup costs is a question asked again next pass.
+    const options = [
+      { label: 'Resume',
+        description: `${commits} commit${commits === 1 ? '' : 's'} over ${w && w.baseBranch ? w.baseBranch : 'base'}${onOrigin ? ', branch on origin' : ', branch local only'}. PR: ${prSummary(proc.prs, blind)}.${age}${subject}` },
+      { label: 'Leave it', description: 'I leave it asleep; no question about it for 30 days.' },
+    ];
+    if (!blind) options.push(archive);
+
     return {
       type: 'question', key: `cold:${proc.key}`, processKey: proc.key,
-      question: `${w ? `${w.repo}/${w.branch}` : proc.key} has not been touched in more than ${days} days. What do I do?`,
+      question: `${w ? `${w.repo}/${w.branch}` : proc.key} has not been touched in more than ${days} days${blind ? ', and gh did not answer when asked whether it has a PR' : ''}. What do I do?`,
       header: 'Cold',
-      options: [
-        { label: 'Resume',
-          description: `${commits} commit${commits === 1 ? '' : 's'} over ${w && w.baseBranch ? w.baseBranch : 'base'}${onOrigin ? ', branch on origin' : ', branch local only'}. PR: ${prSummary(proc.prs)}.${age}${subject}` },
-        { label: 'Leave it', description: 'I leave it asleep; no question about it for 30 days.' },
-        archive,
-      ],
+      options,
     };
   }
 
@@ -353,18 +385,50 @@ function readBabysitNotifications(babysitDir, io) {
   return notify;
 }
 
+// The branches `gh` never answered for. They are the one thing in this gate that
+// has to be reported from a list of its own: they produce no action, and a
+// process that is neither dirty nor cold produces no question either — so
+// without this, a failed lookup leaves the pass looking like silence.
+function unverifiedBranches(ledger) {
+  const out = [];
+  const seen = new Set();
+  for (const p of (ledger.processes || [])) {
+    for (const w of (p.worktrees || [])) {
+      if (w.prUnverified !== true) continue;
+      const name = `${w.repo}/${w.branch}`;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push({ processKey: p.key, repo: w.repo, branch: w.branch, githubRepo: w.githubRepo || null });
+    }
+  }
+  return out;
+}
+
+// One notify for the whole set, not one per branch: a gh outage takes out every
+// branch at once, and N identical lines say nothing the count does not.
+const UNVERIFIED_SHOWN = 5;
+function unverifiedNotify(unverified) {
+  if (unverified.length === 0) return [];
+  const names = unverified.map(u => `${u.repo}/${u.branch}`);
+  const rest = names.length - UNVERIFIED_SHOWN;
+  const shown = names.slice(0, UNVERIFIED_SHOWN).join(', ') + (rest > 0 ? `, +${rest} more` : '');
+  return [{ type: 'notify', key: 'gate:pr-unverified', source: 'gate',
+    message: `gh did not answer for ${names.length} branch(es); their PR state is unknown: ${shown}` }];
+}
+
 // The whole gate for one pass. `opts` carries the pr-babysit dir and the
 // injected io; both optional (absent dir → no notify). Actions are computed once
 // and passed to buildItems so a question's unblock score is real.
 function buildGate(ledger, now, opts) {
   const o = opts || {};
   const babysit = readBabysitNotifications(o.babysitDir, o.io);
+  const unverified = unverifiedBranches(ledger);
   const actions = buildActions(ledger);
-  const { questions, ask, notify } = buildItems(ledger, actions, babysit);
+  const { questions, ask, notify } = buildItems(ledger, actions, babysit.concat(unverifiedNotify(unverified)));
   // `questions` is the full set (what the queue must persist); `ask` is the
   // budgeted slice (what the owner is shown). See QUESTION_BUDGET for why
   // collapsing the two silently destroyed answered decisions.
-  return { version: 1, generatedAt: now, actions, questions, ask, notify };
+  return { version: 1, generatedAt: now, actions, questions, ask, notify, unverified };
 }
 
 // The heartbeat's exit contract. A gh failure makes the whole PR half
@@ -373,7 +437,11 @@ function buildGate(ledger, now, opts) {
 // anything surfaced, 0 if genuinely nothing. `3` (could not check) and `5`
 // (lock) are the bin wrapper's / shell gate's concerns, not this pure function.
 function gateExitCode(gate, ledgerWarnings) {
-  const degraded = (ledgerWarnings || []).some(w => w.step && String(w.step).startsWith('gh'));
+  // Read from the gate as well as from the warnings, so a caller that hands over
+  // only the gate cannot get a clean-looking code out of a pass that went blind
+  // on a branch.
+  const degraded = (ledgerWarnings || []).some(w => w.step && String(w.step).startsWith('gh'))
+    || (gate.unverified || []).length > 0;
   if (degraded) return 4;
   const hasWork = gate.actions.length > 0 || gate.questions.length > 0 || gate.notify.length > 0;
   return hasWork ? 10 : 0;
