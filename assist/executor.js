@@ -11,7 +11,7 @@
 
 const {
   decline, isDeclined, markDone, syncItems, writeAnswer, readItem, readAnswer, writeAtomic,
-  listOpenItems, pruneDeclined, pruneDone, itemId,
+  listOpenItems, pruneDeclined, pruneDone, itemId, DECLINE_LABEL, DECLINE_TTL_DAYS,
 } = require('./queue.js');
 
 // The exec contract: exec(argv: string[]) => { code, stdout, stderr }.
@@ -32,12 +32,6 @@ function drainActions(exec, actions) {
   const results = (actions || []).map(a => runAction(exec, a));
   return { results, ran: results.length, failed: results.filter(r => !r.ok).length };
 }
-
-// The value the gate uses for "leave it" in every question it emits
-// (assist/gate.js questionFor). The only answer the executor resolves without a
-// model — a declined item must stop being re-asked, and that is pure bookkeeping.
-const DECLINE_LABEL = 'Leave it';
-const DECLINE_TTL_DAYS = 30;
 
 // The exact batch to put in front of the owner: the gate's budgeted slice
 // (`gate.ask`), already ordered most-unblocking first, paired with the queue id
@@ -63,9 +57,15 @@ function askBatch(io, paths, gate) {
 }
 
 // Resolve one open queue entry (the shape listOpenItems returns). Returns the
-// disposition; only "Leave it" is acted on here (decline + markDone). Everything
-// else — a value that needs judgment or a worktree mutation, or free text —
-// is reported needs-model and left in the queue for the on-demand skill.
+// disposition; only the decline label is acted on here (decline + markDone) —
+// the only answer the executor resolves without a model, because it is pure
+// bookkeeping. Everything else — a value that needs judgment or a worktree
+// mutation, or free text — is reported needs-model and left in the queue for the
+// on-demand skill.
+//
+// The decline here repeats one the queue already wrote when the answer arrived:
+// it covers an answer file that reached answers/ by another route, and refreshes
+// the window for an item the owner declined 30 days ago and is declining again.
 function applyAnswer(io, paths, entry) {
   const answer = entry && entry.answer;
   if (!answer) return { id: entry && entry.id, done: false, status: 'unanswered' };

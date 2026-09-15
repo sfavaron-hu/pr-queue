@@ -130,3 +130,16 @@ test('an item the gate stopped emitting is removed, but not one with a pending a
   assert.deepEqual(res.kept, [itemId(answered)]);
   assert.ok(io.exists(`${paths.items}/${itemId(answered)}.json`));
 });
+
+// A declined item with a pending answer still owes the drain a done/ record —
+// the drain resolves it from items/. Sweeping it out here strands answers/<id>.json
+// with nothing left to read it, and the digest of unattended work loses the entry.
+test('a declined item with a pending answer is kept for the drain to resolve', () => {
+  const io = memIo(1000); const paths = queuePaths('/s');
+  const item = q('cold:a', { options: [{ label: 'Leave it' }] }); const id = itemId(item);
+  syncItems(io, paths, [item]);
+  writeAnswer(io, paths, id, { value: 'Leave it' }, {});     // declines on arrival
+  const res = syncItems(io, paths, [item]);
+  assert.deepEqual(res.kept, [id]);
+  assert.equal(io.exists(`${paths.items}/${id}.json`), true);
+});

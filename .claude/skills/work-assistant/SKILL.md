@@ -62,7 +62,7 @@ A rejected write tells you why; handle each differently rather than retrying:
 
 Then resolve by the value:
 
-- **Leave it** → nothing by hand; the next drain records the 30-day decline.
+- **Leave it** → nothing by hand. The 30-day decline is recorded by the `answer` write itself, so the question stays suppressed whether or not a drain runs before `done`.
 - **Resume** (or an "Other" meaning "continue this"): read the idle session's transcript to see where it stopped (`processKey` maps to the ledger). **Start the work in a subagent** via the Task tool. **Never** `claude --resume` my interactive session: it can't be audited or parallelised. Then `run.js done <id> --resolution "retomado en subagente: <1-line>"`.
 - **Archive** → `git -C <repo> worktree remove <path>`; the branch stays on origin. First confirm `git -C <path> status --porcelain` is empty. If the only untracked entry is a `node_modules` **symlink** into another checkout, delete the symlink (`rm <path>/node_modules` — this never touches the target) and remove cleanly. **Never reach for `--force`.** If there is real uncommitted work, do not remove: tell me and leave the item open.
 - **Park on base** → the process is the repo's **main working tree**, which cannot be removed (`git worktree remove` on it exits 128). `git -C <path> switch <baseBranch>` instead. Two traps: the repo may not have the branch you assume (check `git branch -a` — several here have only `main`, no `develop`), and `git branch -d` refuses an unmerged branch. Delete the local branch only after confirming `git rev-list --count origin/<base>..<branch>` is `0`, or that its commits are on origin. Say which you did.

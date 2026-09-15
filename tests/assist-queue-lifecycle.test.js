@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { queuePaths, itemId, syncItems, writeAnswer, markDone, listOpenItems, pruneDone } = require('../assist/queue.js');
+const { queuePaths, itemId, syncItems, writeAnswer, markDone, listOpenItems, pruneDone,
+        isDeclined, readAnswer, DECLINE_LABEL } = require('../assist/queue.js');
 
 function memIo(nowMs) {
   const files = new Map(); let clock = nowMs || 0;
@@ -60,4 +61,47 @@ test('the bin module exposes main, fsIo and stateRoot, and does not run on requi
   // fsIo is the real-fs adapter with the injected-io shape
   ['read', 'write', 'rename', 'remove', 'exists', 'list', 'mkdirp', 'now'].forEach(k =>
     assert.equal(typeof mod.fsIo[k], 'function', `fsIo.${k}`));
+});
+
+// The invariant: once the owner has answered "Leave it", no later call can make
+// the queue ask that question again inside the decline window. The id is content-
+// addressed, so an unchanged situation regenerates it exactly — the suppression
+// has to live in declined/, which outlives both items/ and answers/.
+test('once the owner answers "Leave it", no later call asks that question again', () => {
+  const io = memIo(1000); const paths = queuePaths('/s');
+  const it = item('cold:a'); const id = itemId(it);
+  syncItems(io, paths, [it]);
+  writeAnswer(io, paths, id, { value: DECLINE_LABEL }, {});
+  markDone(io, paths, id, { resolution: 'done-by-skill', item: it, answer: readAnswer(io, paths, id) });
+
+  const res = syncItems(io, paths, [it]);            // the situation persists, the gate re-emits it
+  assert.deepEqual(res.written, []);
+  assert.deepEqual(res.skipped, [id]);
+  assert.equal(io.exists(`${paths.items}/${id}.json`), false);
+  assert.equal(isDeclined(io, paths, id), true);
+});
+
+// An answer file can reach answers/ by a route that predates the decline record.
+// markDone is the last reader of that file, so it is also the last chance to turn
+// a decline into the suppression that enforces it.
+test('markDone turns a pending "Leave it" into a decline before clearing it', () => {
+  const io = memIo(1000); const paths = queuePaths('/s');
+  const it = item('cold:a'); const id = itemId(it);
+  syncItems(io, paths, [it]);
+  io.write(`${paths.answers}/${id}.json`, JSON.stringify({ value: DECLINE_LABEL }));
+  markDone(io, paths, id, { resolution: 'done-by-skill', item: it });
+  assert.equal(isDeclined(io, paths, id), true);
+  assert.deepEqual(syncItems(io, paths, [it]).written, []);
+});
+
+// The decline is a 30-day silence and nothing longer: the answer resolves the
+// question, it does not retire it.
+test('a question answered "Leave it" comes back once the decline expires', () => {
+  const io = memIo(1000); const paths = queuePaths('/s');
+  const it = item('cold:a'); const id = itemId(it);
+  syncItems(io, paths, [it]);
+  writeAnswer(io, paths, id, { value: DECLINE_LABEL }, {});
+  markDone(io, paths, id, { resolution: 'done-by-skill', item: it });
+  io._setNow(1000 + 31 * DAY);
+  assert.deepEqual(syncItems(io, paths, [it]).written, [id]);
 });
