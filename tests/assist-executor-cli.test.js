@@ -337,3 +337,40 @@ test('a pass that checked every branch reports nothing unverified', async () => 
   assert.equal(res.output.degraded, false);
   assert.deepEqual(res.output.unverified, []);
 });
+
+// --- a decision outlives the item it was made on -----------------------------
+// `mc answer` then `mc done` is the ordinary skill sequence, and the drain may
+// not have run in between. The id is content-addressed, so the next gate pass
+// rebuilds the identical question: the suppression is what has to already be on
+// disk by the time markDone clears answers/<id>.json.
+test('a question answered "Leave it" and closed with done is not asked again by the next drain', async () => {
+  const io = memIo(1000); const paths = queuePaths('/s');
+  const id = itemId(coldItem);
+  await runCli([], deps(io, fakeExec()));                                        // pass 1 queues it
+  await runCli(['answer', id, '--value', 'Leave it'], deps(io, fakeExec()));
+  await runCli(['done', id, '--resolution', 'done-by-skill'], deps(io, fakeExec()));
+
+  const res = await runCli([], deps(io, fakeExec()));                            // pass 2, same situation
+  assert.equal(io.exists(`${paths.items}/${id}.json`), false);
+  assert.equal(res.output.questions.open, 0);
+  assert.equal(res.output.notify, false);
+  const ask = await runCli(['ask'], deps(io, fakeExec(), {
+    loadGate: async () => ({ gate: gate({ ask: [coldItem] }), warnings: [] }),
+  }));
+  assert.deepEqual(ask.output, []);
+});
+
+// The other order: nobody runs `done`, and the drain resolves the item itself.
+// It has to reach applyAnswer, or the answer sits in answers/ with no done/ record.
+test('a question answered "Leave it" and left to the drain still lands in done/', async () => {
+  const io = memIo(1000); const paths = queuePaths('/s');
+  const id = itemId(coldItem);
+  await runCli([], deps(io, fakeExec()));
+  await runCli(['answer', id, '--value', 'Leave it'], deps(io, fakeExec()));
+
+  const res = await runCli([], deps(io, fakeExec()));
+  assert.equal(res.output.questions.declined, 1);
+  assert.equal(io.exists(`${paths.done}/${id}.json`), true);
+  assert.equal(io.exists(`${paths.answers}/${id}.json`), false);
+  assert.equal(io.exists(`${paths.items}/${id}.json`), false);
+});

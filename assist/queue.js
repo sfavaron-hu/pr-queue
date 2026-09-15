@@ -41,6 +41,12 @@ function writeAtomic(io, paths, finalPath, obj) {
 
 const DAY_MS = 86400000;
 
+// The label every question's decline option carries (assist/gate.js questionFor)
+// and the silence it buys. Matched by value, so the gate and the queue spell it
+// the same way — tests/assist-executor-answers.test.js pins the two together.
+const DECLINE_LABEL = 'Leave it';
+const DECLINE_TTL_DAYS = 30;
+
 function declinedPath(paths, id) { return `${paths.declined}/${id}.json`; }
 function itemPath(paths, id) { return `${paths.items}/${id}.json`; }
 function answerPath(paths, id) { return `${paths.answers}/${id}.json`; }
@@ -73,6 +79,16 @@ function pruneDeclined(io, paths) {
   return removed;
 }
 
+// "Leave it" is the one answer that has to outlive the answer file: answers/ is
+// transient (markDone clears it) while the id is content-addressed, so an
+// unchanged situation regenerates the identical question and syncItems asks it
+// again unless declined/<id>.json is already there. Every path that stores or
+// clears an answer routes through here, so the decision cannot exist in one file
+// without the other.
+function suppressIfDeclined(io, paths, id, answer) {
+  if (answer && answer.value === DECLINE_LABEL) decline(io, paths, id, DECLINE_TTL_DAYS);
+}
+
 function readItem(io, paths, id) {
   const p = itemPath(paths, id);
   if (!io.exists(p)) return null;
@@ -82,7 +98,8 @@ function readItem(io, paths, id) {
 // Reconcile a gate pass into items/. Write every incoming item (idempotent — the
 // id is content-addressed) unless it is currently declined. Then remove any
 // items/ file the gate no longer emits, EXCEPT one with a pending answer (the
-// executor still owes it an action).
+// executor still owes it an action) — the same exception a declined item gets,
+// for the same reason.
 //
 // CONTRACT: `items` must be the gate's FULL question set (`gate.questions`),
 // never the budgeted slice (`gate.ask`). Absence from this list is read as "the
@@ -96,18 +113,26 @@ function readItem(io, paths, id) {
 // removal only because an answer is pending, which is worth seeing.
 function syncItems(io, paths, items) {
   io.mkdirp(paths.items);
-  const written = [], skipped = [];
+  const written = [], skipped = [], kept = [];
   const present = new Set();
 
   for (const item of items) {
     const id = itemId(item);
     present.add(id);
-    if (isDeclined(io, paths, id)) { io.remove(itemPath(paths, id)); skipped.push(id); continue; }
+    if (isDeclined(io, paths, id)) {
+      // A pending answer still owes the drain a done/ record, and the drain reads
+      // items/. Sweeping the file out here strands answers/<id>.json with nothing
+      // left to read it, and the digest of unattended work loses the entry.
+      if (io.exists(answerPath(paths, id))) { kept.push(id); continue; }
+      io.remove(itemPath(paths, id));
+      skipped.push(id);
+      continue;
+    }
     writeAtomic(io, paths, itemPath(paths, id), item);
     written.push(id);
   }
 
-  const removed = [], kept = [];
+  const removed = [];
   for (const name of io.list(paths.items)) {
     if (!name.endsWith('.json')) continue;
     const id = name.slice(0, -5);
@@ -145,6 +170,7 @@ function writeAnswer(io, paths, id, answer, opts) {
     const labels = (item.options || []).map(o => o.label);
     if (labels.indexOf(answer.value) === -1) return { ok: false, reason: 'bad-value' };
     writeAtomic(io, paths, answerPath(paths, id), { value: answer.value });
+    suppressIfDeclined(io, paths, id, answer);
     return { ok: true };
   }
 
@@ -169,7 +195,14 @@ function donePath(paths, id) { return `${paths.done}/${id}.json`; }
 // The item is handled: record what happened (retained in done/ as the digest of
 // unattended work) and clear it out of items/ and answers/. The caller supplies
 // `record` — typically the item, the answer, and what the executor did.
+//
+// done/ suppresses nothing: syncItems reconciles against declined/ alone, so
+// clearing a decline out of answers/ without its suppression in place hands the
+// next gate pass the same question under the same content-addressed id. Being
+// the last reader of answers/<id>.json, this is also the last place that decline
+// can be honoured, whatever route wrote it.
 function markDone(io, paths, id, record) {
+  suppressIfDeclined(io, paths, id, readAnswer(io, paths, id));
   writeAtomic(io, paths, donePath(paths, id), Object.assign({ doneAt: io.now() }, record));
   io.remove(itemPath(paths, id));
   io.remove(answerPath(paths, id));
@@ -204,6 +237,6 @@ function pruneDone(io, paths, retentionDays) {
   return removed;
 }
 
-module.exports = { queuePaths, itemId, writeAtomic,
+module.exports = { queuePaths, itemId, writeAtomic, DECLINE_LABEL, DECLINE_TTL_DAYS,
                    decline, isDeclined, pruneDeclined, readItem, syncItems,
                    writeAnswer, readAnswer, markDone, listOpenItems, pruneDone };
