@@ -130,6 +130,8 @@ test('a gh-degraded drain skips actions and syncing, prunes only, exits 4', asyn
   }));
   assert.equal(res.exit, 4);
   assert.equal(exec.calls.length, 0);   // NOTHING executed while PR half is untrustworthy
+  // What gh answered travels with the verdict, or every reader can only say "gh failed".
+  assert.deepEqual(res.output.warnings, [{ step: 'gh:fetchOwnPRs', repo: null, message: 'boom' }]);
   assert.equal(io.exists(`${queuePaths('/s').items}/${itemId(coldItem)}.json`), false);
 });
 
@@ -373,4 +375,16 @@ test('a question answered "Leave it" and left to the drain still lands in done/'
   assert.equal(io.exists(`${paths.done}/${id}.json`), true);
   assert.equal(io.exists(`${paths.answers}/${id}.json`), false);
   assert.equal(io.exists(`${paths.items}/${id}.json`), false);
+});
+
+test('--dry-run on a degraded pass names what gh answered', async () => {
+  const io = memIo(1000); const exec = fakeExec();
+  const res = await runCli(['--dry-run'], deps(io, exec, {
+    loadGate: async () => ({ gate: gate(), warnings: [
+      { repo: null, step: 'gh-search', message: 'gh search prs failed: spawn gh ENOENT' },
+      { repo: 'r', step: 'git-log', message: 'not a gh step' },
+    ] }),
+  }));
+  assert.equal(res.output.degraded, true);
+  assert.deepEqual(res.output.warnings, [{ step: 'gh-search', repo: null, message: 'gh search prs failed: spawn gh ENOENT' }]);
 });
