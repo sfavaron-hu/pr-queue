@@ -123,6 +123,16 @@ function isDegraded(warnings, gate) {
     || ((gate && gate.unverified) || []).length > 0;
 }
 
+// What `gh` actually answered, for the passes that went degraded. Without it
+// the output says only `degraded: true`, and every reader downstream — the
+// heartbeat's last-output, mission-control's `work` source — can repeat
+// nothing but "gh failed". The message already carries gh's stderr or the
+// spawn error (`spawn gh ENOENT` is a PATH problem, not a GitHub one).
+function ghWarnings(warnings) {
+  return (warnings || []).filter(w => w.step && String(w.step).startsWith('gh'))
+    .map(w => ({ step: w.step, repo: w.repo || null, message: w.message || w.error || null }));
+}
+
 // Parse the tiny flag set the CLI needs. --value/--other/--resolution take a
 // value; --dry-run is boolean; --skip-branch takes a value and repeats, one
 // flag per branch, because a branch name can contain anything a shell would
@@ -229,12 +239,12 @@ async function runCli(argv, deps) {
   // for the same minute of state. `ask` stays, because answering does not need
   // the action list.
   if (args.dryRun) {
-    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), leasedSkipped, draftsPending, degraded, unverified } };
+    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), leasedSkipped, draftsPending, degraded, unverified, warnings: ghWarnings(warnings) } };
   }
   if (degraded) {
     const declinedPruned = pruneDeclined(io, paths);
     const donePruned = pruneDone(io, paths, 30);
-    return { exit: 4, output: { degraded: true, unverified, actions: { ran: 0, leasedSkipped }, questions: { synced: 0 }, prune: { declinedPruned, donePruned } } };
+    return { exit: 4, output: { degraded: true, unverified, warnings: ghWarnings(warnings), actions: { ran: 0, leasedSkipped }, questions: { synced: 0 }, prune: { declinedPruned, donePruned } } };
   }
 
   const drained = drainActions(exec, mechanical);
