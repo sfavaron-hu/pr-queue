@@ -1059,6 +1059,14 @@ input.tribe-chip:focus, input.tribe-chip.selected { border-color: var(--accent);
       </form>
       <div id="where-result"></div>
     </div>
+    <div class="where-box">
+      <form id="where-form" autocomplete="off">
+        <input type="text" id="where-key" class="input" placeholder="SQSH-1234" />
+        <input type="text" id="where-parent" class="input hidden" placeholder="clave del padre" />
+        <button type="submit" class="btn btn-primary" id="where-btn">¿Dónde está?</button>
+      </form>
+      <div id="where-result"></div>
+    </div>
     <div class="proc-meta-line hidden" id="proc-meta-line"></div>
     <div class="proc-filter hidden" id="proc-filter">
       <div class="proc-filter-row" id="proc-filter-main">
