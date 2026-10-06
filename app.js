@@ -278,3 +278,33 @@ if (state.token) {
     }).catch(() => { loadPRs(); });
   }
 }
+
+// ── /where: buscador de ticket ──────────────────────────────────
+var whereForm = document.getElementById('where-form');
+if (whereForm) {
+  var WHERE_KEY_RE = /^[A-Z][A-Z0-9]+-\d+$/;
+  whereForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.getElementById('error-msg').classList.add('hidden');
+    var key = document.getElementById('where-key').value.trim().toUpperCase();
+    if (!key) {
+      showError('Escribí la clave del ticket que querés buscar, por ejemplo SQSH-4232.');
+      return;
+    }
+    if (!WHERE_KEY_RE.test(key)) {
+      showError('"' + key + '" no parece una clave de ticket. Van con letras, guión y número, por ejemplo SQSH-4232.');
+      return;
+    }
+    var parentKey = document.getElementById('where-parent').value.trim().toUpperCase() || null;
+    if (parentKey && !WHERE_KEY_RE.test(parentKey)) {
+      showError('"' + parentKey + '" no parece una clave de ticket. La del padre va en el mismo formato, por ejemplo SQSH-4230.');
+      return;
+    }
+    runWhere(key, parentKey);
+  });
+}
+document.addEventListener('click', function (e) {
+  if (e.target.classList && e.target.classList.contains('where-cmd')) {
+    navigator.clipboard.writeText(e.target.textContent);
+  }
+});

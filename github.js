@@ -148,3 +148,259 @@ async function enrichOwnPR(pr) {
       humanReviews: humanRevs.length };
   } catch { return null; }
 }
+
+// ── /where: ¿en que entorno esta este ticket? ────────────────────
+
+// Cada fetcher devuelve un error en banda en vez de tirar: un entorno que no
+// se pudo leer tiene que llegar a where.js como DESCONOCIDO, no romper la consulta.
+async function whereSearchPRs(key) {
+  const q = encodeURIComponent(searchQuery(key, state.config.org));
+  const data = await apiFetch(`${API}/search/issues?q=${q}&per_page=50`);
+  return (data.items || []).map(it => ({
+    repoUrl: it.repository_url, pullsUrl: it.pull_request && it.pull_request.url,
+    number: it.number, title: it.title, url: it.html_url, matchedKey: key,
+  }));
+}
+
+async function wherePullDetail(item) {
+  const d = await apiFetch(item.pullsUrl);
+  return {
+    repo: d.base.repo.name, number: d.number, url: d.html_url, title: d.title,
+    merged: !!d.merged_at, mergeCommitSha: d.merge_commit_sha,
+    baseRef: d.base.ref, headRef: d.head.ref, matchedKey: item.matchedKey,
+  };
+}
+
+async function whereRepoVariable(repo, name) {
+  try {
+    const d = await apiFetch(`${API}/repos/${state.config.org}/${repo}/actions/variables/${name}`);
+    return { ref: d.value };
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return { error: String(e.message || e) };
+  }
+}
+
+// Un rate limit no puede degradarse a PARCIAL en silencio: si la API dejo de
+// contestar, el reporte entero es sospechoso y tiene que gritar. Cualquier otro
+// fallo si es local a este destino.
+//
+// GitHub tambien devuelve 403 para "Resource not accessible by personal
+// access token" y para denegaciones SAML/org-access — mas probable en
+// actions/variables con un PAT angosto. Esos son fallos LOCALES a ese
+// destino, no del rate limit global, asi que el mensaje tiene que nombrar el
+// rate limit explicitamente. GitHub lo hace con dos frases: "API rate limit
+// exceeded" y "You have exceeded a secondary rate limit" — ambas matchean.
+function whereIsRateLimit(e) {
+  var msg = String(e && e.message || e);
+  return /^GitHub 403/.test(msg) && /rate limit/i.test(msg);
+}
+
+async function whereCompare(repo, base, head) {
+  try {
+    const d = await apiFetch(
+      `${API}/repos/${state.config.org}/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
+    return d.status;
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return null;
+  }
+}
+
+// Solo fetchea y empareja: cual de los matches es "el actual" es un juicio y
+// vive en where.js (latestTag). El fetch de tags vive en whereRepoData, una
+// vez por repo, no una vez por target (5 targets = 5 GETs identicos si esto
+// tambien fetcheara).
+function whereMatchTag(tags, env, region) {
+  const names = (tags || []).map(t => t.name);
+  const hit = latestTag(names, env, region);
+  return hit ? { ref: hit } : { error: `sin tag ${env}${region ? '-' + region : ''}` };
+}
+
+// Dos llamadas distintas, dos catches distintos: si la segunda (leer el
+// release del tag) falla, eso no es lo mismo que "no hay run de CD" — la
+// primera llamada si establecio que el run existe. Confundirlas le hace
+// decir a prodCross una razon que nunca midio (ver where.js#prodCross).
+async function whereReleaseRun(repo) {
+  let run;
+  try {
+    const d = await apiFetch(
+      `${API}/repos/${state.config.org}/${repo}/actions/runs?event=release&status=success&per_page=1`);
+    run = (d.workflow_runs || [])[0];
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return null;
+  }
+  if (!run) return null;
+  try {
+    const rel = await apiFetch(
+      `${API}/repos/${state.config.org}/${repo}/releases/tags/${encodeURIComponent(run.head_branch)}`);
+    return { tag: run.head_branch, createdAt: run.created_at, targetCommitish: rel.target_commitish };
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return { error: String(e.message || e), tag: run.head_branch, createdAt: run.created_at };
+  }
+}
+
+// main-api: stg y prd solo tienen sentido leyendo TODOS los runs del
+// workflow y filtrando conclusion/status en JS. `?status=success` en el
+// endpoint por-workflow devolvio corridas de julio mientras la consulta sin
+// filtrar devolvia corridas de hoy — trampa medida en vivo el 26/08/2026,
+// repos/HumandDev/humand-main-api/actions/workflows/stg.yml/runs. No
+// reagregar ese filtro de query.
+async function whereBackendWorkflowRun(repo, workflowFile, predicate) {
+  try {
+    const d = await apiFetch(
+      `${API}/repos/${state.config.org}/${repo}/actions/workflows/${workflowFile}/runs?per_page=50`);
+    return (d.workflow_runs || []).find(predicate) || null;
+  } catch (e) {
+    if (whereIsRateLimit(e)) throw e;
+    return { error: String(e.message || e) };
+  }
+}
+
+function whereBackendRunOk(r) {
+  return r.status === 'completed' && r.conclusion === 'success';
+}
+
+// stg es siempre workflow_dispatch: no hay rama de destino, solo el nombre
+// del run trae lo que la persona tipeo (ver parseStgRunName en where.js).
+// `head_branch` de estos runs es de donde se DISPARO el dispatch (casi
+// siempre develop) — nunca lo que se desplego, usarlo produciria un
+// veredicto confiadamente equivocado.
+async function whereBackendStgRef(repo) {
+  const run = await whereBackendWorkflowRun(repo, 'stg.yml', whereBackendRunOk);
+  if (!run) return { error: 'sin run de stg exitoso' };
+  if (run.error) return run;
+  const ref = parseStgRunName(run.display_title);
+  return ref ? { ref } : { error: 'run de stg sin ref parseable en el nombre: ' + JSON.stringify(run.display_title || '') };
+}
+
+// prd dispara por `release: [released]`: a diferencia de stg, GitHub resuelve
+// `head_branch` al tag mismo para ese evento (medido: "release-2026.08.20.01"),
+// asi que no hace falta parsear nada — pero si filtrar por event==='release'
+// en JS, porque el workflow tambien acepta workflow_dispatch manual y esos
+// runs no deberian contar como "lo que llego a prod".
+async function whereBackendPrdRef(repo) {
+  const run = await whereBackendWorkflowRun(repo, 'prd.yml',
+    r => r.event === 'release' && whereBackendRunOk(r));
+  if (!run) return { error: 'sin run de prd con event=release exitoso' };
+  if (run.error) return run;
+  return { ref: run.head_branch };
+}
+
+async function whereRepoData(repo) {
+  const model = envModel(repo);
+  if (model.kind === 'unknown') return { refs: {}, compares: {} };
+
+  if (model.kind === 'fixed') {
+    return { refs: { dev: { ref: model.dev }, stg: { ref: model.stg }, prd: { ref: model.prd } },
+             compares: {} };
+  }
+  if (model.kind === 'tags') {
+    const refs = {};
+    try {
+      const tags = await apiFetch(`${API}/repos/${state.config.org}/${repo}/tags?per_page=100`);
+      for (const t of envTargets(repo)) refs[t.id] = whereMatchTag(tags, t.env, t.region);
+    } catch (e) {
+      if (whereIsRateLimit(e)) throw e;
+      const msg = String(e.message || e);
+      for (const t of envTargets(repo)) refs[t.id] = { error: msg };
+    }
+    return { refs, compares: {} };
+  }
+  if (model.kind === 'backend') {
+    const [stg, prd] = await Promise.all([
+      whereBackendStgRef(repo),
+      whereBackendPrdRef(repo),
+    ]);
+    return { refs: { dev: { ref: model.dev }, stg, prd }, compares: {} };
+  }
+  // prd se mide contra el tag desplegado (releaseRun.tag = head_branch del
+  // ultimo run de CD event=release exitoso), nunca contra la variable — esa
+  // solo nombra la rama DESIGNADA prod el dia que se corta. `prd.ref` sale de
+  // `releaseRun` incluso si su lookup de `releases/tags/<tag>` fallo (el tag
+  // ya se supo por la primera llamada, dentro de whereReleaseRun); sin ningun
+  // run exitoso no hay tag y prd queda sin ref, DESCONOCIDO en where.js.
+  const [stg, prodVar, releaseRun] = await Promise.all([
+    whereRepoVariable(repo, 'REACT_STAGING_BRANCH'),
+    whereRepoVariable(repo, 'REACT_PRODUCTION_BRANCH'),
+    whereReleaseRun(repo),
+  ]);
+  const prd = releaseRun
+    ? { ref: releaseRun.tag }
+    : { error: 'sin run de CD con event=release y conclusion=success' };
+  return { refs: { dev: { ref: model.dev }, stg, prd }, compares: {},
+           prodVar, releaseRun };
+}
+
+// Un PR ilegible no invalida el resto, pero tampoco desaparece sin dejar
+// rastro: se cuenta, y esa cuenta viaja en el payload para que where.js
+// pueda degradar el veredicto en vez de dibujar un reporte que parece
+// completo con un repo faltante.
+async function wherePullDetails(items) {
+  const pulls = [];
+  let failed = 0;
+  for (const it of items.filter(i => i.pullsUrl)) {
+    try { pulls.push(await wherePullDetail(it)); }
+    catch (e) {
+      if (whereIsRateLimit(e)) throw e;
+      failed++;
+    }
+  }
+  return { pulls, failed };
+}
+
+// El representante de cada repo se elige por `representativeByRepo` (where.js)
+// — la misma funcion que usara buildWhereReport — para que fila mostrada y
+// estado de compare vengan siempre del mismo PR. `pulls` se ordena por numero
+// antes de elegir para que dos recomputos de la misma consulta acuerden el
+// mismo sha: `search/issues` no devuelve orden estable.
+//
+// El fallback a la clave del padre dispara cuando la clave propia no aporto
+// ningun PR "contributing" (mergeado al tronco) — no cuando la busqueda no
+// trajo hits. Un PR abierto, un backport/* o un deps/* de clave propia hacen
+// que la busqueda por clave propia no este vacia, pero no prueban nada:
+// sin este chequeo el fallback nunca dispara y el panel NO_RESUELTO le pide
+// al usuario tipear el valor que ya esta en la caja.
+async function whereFetchAll(key, parentKey) {
+  const items = await whereSearchPRs(key);
+  let { pulls, failed: failedPulls } = await wherePullDetails(items);
+
+  if (parentKey && resolvePRs(pulls, key).contributing.length === 0) {
+    const parentItems = await whereSearchPRs(parentKey);
+    const parentResult = await wherePullDetails(parentItems);
+    pulls = pulls.concat(parentResult.pulls);
+    failedPulls += parentResult.failed;
+  }
+  pulls.sort((a, b) => a.number - b.number);
+
+  const byRepo = representativeByRepo(pulls, key);
+
+  const perRepo = {};
+  for (const repo of Object.keys(byRepo)) {
+    const data = await whereRepoData(repo);
+    const pr = byRepo[repo];
+    for (const t of envTargets(repo)) {
+      const info = data.refs[t.id];
+      data.compares[t.id] = info && info.ref
+        ? await whereCompare(repo, pr.mergeCommitSha, info.ref)
+        : null;
+    }
+    // La rama designada (REACT_PRODUCTION_BRANCH) solo hace falta como
+    // segunda lectura cuando el tag ya dijo NO — es el "juicio" de where.js
+    // (prdVerdict) el que decide si el commit esta en el tren; aca solo se
+    // evita el fetch cuando el tag ya cerro el caso (SÍ, o ni siquiera se
+    // pudo leer/comparar) para no gastar una llamada que where.js no va a usar.
+    if (envModel(repo).kind === 'react') {
+      const prdRef = data.refs.prd;
+      const prdStatus = data.compares.prd;
+      const tagSaysNo = prdRef && prdRef.ref && prdStatus != null && !CONTAINED.includes(prdStatus);
+      if (tagSaysNo && data.prodVar && data.prodVar.ref) {
+        data.branchCompare = await whereCompare(repo, pr.mergeCommitSha, data.prodVar.ref);
+      }
+    }
+    perRepo[repo] = data;
+  }
+  return { key, org: state.config.org, pulls, perRepo, failedPulls };
+}
