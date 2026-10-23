@@ -11,7 +11,7 @@ const { classifyMissionRead } = require('../mission.js');
 const DEFAULT_TTL_MS = 60000;
 const EXEC_TIMEOUT_MS = 20000;
 // mc's own disk cache lasts 5 minutes (300000ms) and nothing else warms it
-// (the heartbeat's `work` check runs the drain, not `mc status`). Equalling
+// (nothing runs `mc status` on a schedule). Equalling
 // that 300000 exactly would mean the reader's own 60s sampling (DEFAULT_TTL_MS)
 // and mc's cache expiry cross the line in the SAME poll: the first read that
 // notices "stale" is the same one whose underlying mc cache has just gone
