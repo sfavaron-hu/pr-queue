@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildItems, questionFor } = require('../assist/gate.js');
+const { buildItems, questionFor, coldList } = require('../assist/gate.js');
 
 const flags = (over) => Object.assign(
   { notOnOrigin: false, dirty: false, prunable: false, cold: false, noTicket: false,
@@ -28,7 +28,7 @@ test('a dirty worktree produces a renderable question, not an action', () => {
 test('a cold process produces the worked-example question', () => {
   const q = questionFor(proc({
     key: 'fix/no-ticket-tiptap-v3', ticket: null,
-    worktrees: [wt({ branch: 'fix/no-ticket-tiptap-v3', unpushed: 9 })],
+    worktrees: [wt({ onOrigin: false, branch: 'fix/no-ticket-tiptap-v3', unpushed: 9 })],
     flags: flags({ cold: true }) }), ledger([]));
   renderable(q);
   assert.equal(q.header, 'Cold');
@@ -75,7 +75,7 @@ test('questions order by unblock score, then recency', () => {
 test('every emitted question is AskUserQuestion-renderable', () => {
   const procs = [
     proc({ key: 'd', worktrees: [wt({ dirty: 2 })], flags: flags({ dirty: true }) }),
-    proc({ key: 'c', ticket: null, worktrees: [wt({ unpushed: 4 })], flags: flags({ cold: true }) }),
+    proc({ key: 'c', ticket: null, worktrees: [wt({ unpushed: 4, onOrigin: false })], flags: flags({ cold: true }) }),
   ];
   const { questions } = buildItems(ledger(procs), [], []);
   assert.equal(questions.length, 2);
@@ -141,19 +141,34 @@ test('cold offers Discard (not Archive) when the worktree holds only-local work'
   assert.match(q.options.find(o => o.label === 'Discard').description, /worktree remove --force/);
 });
 
-test('cold keeps plain Archive when the worktree is clean and fully pushed', () => {
-  const q = questionFor(proc({
-    worktrees: [wt({ unpushed: 0, unpushedLocal: 0, isPrimary: false })],
-    prs: [], flags: flags({ cold: true }) }), ledger([]));
-  const labels = q.options.map(o => o.label);
-  assert.ok(labels.includes('Archive'));
-  assert.ok(!labels.includes('Discard'));
+test('a cold branch already on GitHub raises no question and lands in the cold list', () => {
+  const p = proc({ key: 'feat/x', worktrees: [wt({ unpushed: 2, unpushedLocal: 0, isPrimary: false, lastCommit: 1 })],
+    prs: [], flags: flags({ cold: true }) });
+  assert.equal(questionFor(p, ledger([])), null);
+  const list = coldList(ledger([p]), 86400000 * 30);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].localOnly, false);
+  assert.equal(list[0].days, 29);
+  assert.match(list[0].pr, /no PR/);
+});
+
+test('a cold branch with commits GitHub lacks still asks, and is marked localOnly', () => {
+  const p = proc({ worktrees: [wt({ unpushed: 2, unpushedLocal: 2 })], flags: flags({ cold: true }) });
+  assert.equal(questionFor(p, ledger([])).header, 'Cold');
+  assert.equal(coldList(ledger([p]), 1)[0].localOnly, true);
+});
+
+test('the cold list puts the most recently touched first', () => {
+  const day = 86400000;
+  const mk = (key, ago) => proc({ key, worktrees: [wt({ branch: key, lastCommit: 100 * day - ago * day })], flags: flags({ cold: true }) });
+  const list = coldList(ledger([mk('old', 60), mk('new', 15), mk('mid', 30)]), 100 * day);
+  assert.deepEqual(list.map(c => c.branch), ['new', 'mid', 'old']);
 });
 
 test('cold question pluralizes commits correctly (1 commit, 2 commits)', () => {
   const { questionFor } = require('../assist/gate.js');
   const proc = (unpushed) => ({ key: 'p1', flags: { cold: true },
-    worktrees: [{ repo: 'r', branch: 'b', unpushed, onOrigin: true }], prs: [] });
+    worktrees: [{ repo: 'r', branch: 'b', unpushed, onOrigin: false }], prs: [] });
   const q1 = questionFor(proc(1), { _coldDays: 14 });
   const q2 = questionFor(proc(2), { _coldDays: 14 });
   assert.match(q1.options[0].description, /\b1 commit\b/);   // singular, no trailing s
@@ -201,7 +216,7 @@ test('the skill documents what went wrong on the first real run', () => {
 test('a cold question names the repo, not just the branch', () => {
   const q = questionFor(proc({
     key: 'worktree-agent-af19fc7f', ticket: null,
-    worktrees: [wt({ repo: 'hu-ai-agent-plugin', branch: 'worktree-agent-af19fc7f', unpushed: 38 })],
+    worktrees: [wt({ onOrigin: false, repo: 'hu-ai-agent-plugin', branch: 'worktree-agent-af19fc7f', unpushed: 38 })],
     flags: flags({ cold: true }) }), ledger([]));
   assert.match(q.question, /hu-ai-agent-plugin\/worktree-agent-af19fc7f/);
   renderable(q);
@@ -209,24 +224,24 @@ test('a cold question names the repo, not just the branch', () => {
 
 test('a cold question states the PR state, since that usually decides it', () => {
   const merged = questionFor(proc({
-    worktrees: [wt({ unpushed: 6 })], prs: [{ number: 22, merged: true, closed: false }],
+    worktrees: [wt({ onOrigin: false, unpushed: 6 })], prs: [{ number: 22, merged: true, closed: false }],
     flags: flags({ cold: true }) }), ledger([]));
   assert.match(merged.options.find(o => o.label === 'Resume').description, /#22 merged/);
 
   const closed = questionFor(proc({
-    worktrees: [wt({ unpushed: 1 })], prs: [{ number: 6, merged: false, closed: true }],
+    worktrees: [wt({ onOrigin: false, unpushed: 1 })], prs: [{ number: 6, merged: false, closed: true }],
     flags: flags({ cold: true }) }), ledger([]));
   assert.match(closed.options.find(o => o.label === 'Resume').description, /#6 closed without merging/);
 
   const none = questionFor(proc({
-    worktrees: [wt({ unpushed: 2 })], prs: [], flags: flags({ cold: true }) }), ledger([]));
+    worktrees: [wt({ onOrigin: false, unpushed: 2 })], prs: [], flags: flags({ cold: true }) }), ledger([]));
   assert.match(none.options.find(o => o.label === 'Resume').description, /no PR/);
 });
 
 test('a cold question reports how stale the branch actually is', () => {
   const now = 1785959522535;
   const q = questionFor(
-    proc({ worktrees: [wt({ unpushed: 3, lastCommit: now - 21 * 86400000, lastCommitSubject: 'wire the resolver' })],
+    proc({ worktrees: [wt({ onOrigin: false, unpushed: 3, lastCommit: now - 21 * 86400000, lastCommitSubject: 'wire the resolver' })],
            flags: flags({ cold: true }) }),
     { processes: [], workspaceRoot: '/w', generatedAt: now });
   const resume = q.options.find(o => o.label === 'Resume').description;
@@ -238,7 +253,7 @@ test('a cold question reports how stale the branch actually is', () => {
 // work: `git worktree remove` on it exits 128. The equivalent is parking it on base.
 test('a cold primary checkout is offered its base branch, never worktree remove', () => {
   const q = questionFor(proc({
-    worktrees: [wt({ repo: 'hu-translations', isPrimary: true, baseBranch: 'develop', unpushed: 1 })],
+    worktrees: [wt({ onOrigin: false, repo: 'hu-translations', isPrimary: true, baseBranch: 'develop', unpushed: 1 })],
     prs: [{ number: 2258, merged: true, closed: false }],
     flags: flags({ cold: true }) }), ledger([]));
   const labels = q.options.map(o => o.label);
@@ -252,7 +267,7 @@ test('a cold primary checkout is offered its base branch, never worktree remove'
 
 test('a cold non-primary worktree still gets Archive, with its path', () => {
   const q = questionFor(proc({
-    worktrees: [wt({ path: '/w/r/.worktrees/feat-x', isPrimary: false, unpushed: 1 })],
+    worktrees: [wt({ onOrigin: false, path: '/w/r/.worktrees/feat-x', isPrimary: false, unpushed: 1 })],
     flags: flags({ cold: true }) }), ledger([]));
   const archive = q.options.find(o => o.label === 'Archive');
   assert.match(archive.description, /\/w\/r\/\.worktrees\/feat-x/);
@@ -290,7 +305,7 @@ test('a dirty question with no file sample still reads correctly', () => {
 test('a cold unverified branch says gh did not answer and offers no Archive', () => {
   const q = questionFor(proc({
     key: 'feat/staging-evidence', ticket: null,
-    worktrees: [wt({ repo: 'hu-ai-agent-plugin', branch: 'feat/staging-evidence',
+    worktrees: [wt({ onOrigin: false, repo: 'hu-ai-agent-plugin', branch: 'feat/staging-evidence',
       path: '/w/plugin', unpushed: 3, prUnverified: true })],
     prs: [], flags: flags({ cold: true, prUnverified: true }) }), ledger([]));
   renderable(q);
@@ -305,7 +320,7 @@ test('a cold unverified branch says gh did not answer and offers no Archive', ()
 
 test('a verified cold branch keeps its Archive option', () => {
   const q = questionFor(proc({
-    worktrees: [wt({ path: '/w/r', unpushed: 3 })], prs: [], flags: flags({ cold: true }) }), ledger([]));
+    worktrees: [wt({ onOrigin: false, path: '/w/r', unpushed: 3 })], prs: [], flags: flags({ cold: true }) }), ledger([]));
   assert.deepEqual(q.options.map(o => o.label), ['Resume', 'Leave it', 'Archive']);
   assert.match(q.options[0].description, /PR: no PR/);
 });

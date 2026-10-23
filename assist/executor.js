@@ -239,7 +239,7 @@ async function runCli(argv, deps) {
   // for the same minute of state. `ask` stays, because answering does not need
   // the action list.
   if (args.dryRun) {
-    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), leasedSkipped, draftsPending, degraded, unverified, warnings: ghWarnings(warnings) } };
+    return { exit: 0, output: { dryRun: true, questions: askBatch(io, paths, gate), wouldRun: mechanical.map(a => a.argv), leasedSkipped, draftsPending, degraded, unverified, cold: gate.cold || [], warnings: ghWarnings(warnings) } };
   }
   if (degraded) {
     const declinedPruned = pruneDeclined(io, paths);

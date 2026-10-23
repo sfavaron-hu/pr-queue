@@ -274,6 +274,13 @@ function questionFor(proc, ledger) {
 
   if (f.cold) {
     const w = wts[0];
+    // Asked only when the cold branch holds work that exists nowhere else: commits
+    // GitHub does not have. Cold work already on GitHub goes to `coldList`
+    // instead. Trying many things and leaving most of them asleep is the normal way
+    // of working, and reviving one is picked from that list, not asked per branch.
+    // Uncommitted changes never reach here: the dirty question above takes them.
+    const localOnly = w && (w.onOrigin === false || (w.unpushedLocal || 0) > 0);
+    if (!localOnly) return null;
     const commits = w ? (w.unpushed || 0) : 0;
     const onOrigin = w ? w.onOrigin !== false : false;
     const days = (ledger && ledger._coldDays) || 14;
@@ -416,6 +423,25 @@ function unverifiedNotify(unverified) {
     message: `gh did not answer for ${names.length} branch(es); their PR state is unknown: ${shown}` }];
 }
 
+// Every cold branch, most recently touched first: the list a revival is picked
+// from. `localOnly` marks the ones that also raise a question.
+function coldList(ledger, now) {
+  const out = [];
+  for (const p of (ledger && ledger.processes) || []) {
+    if (!p.flags || !p.flags.cold) continue;
+    const w = (p.worktrees || [])[0];
+    if (!w) continue;
+    out.push({
+      processKey: p.key, repo: w.repo, branch: w.branch, path: w.path || null,
+      days: daysSince(w.lastCommit, now),
+      subject: w.lastCommitSubject || null,
+      pr: prSummary(p.prs, (p.worktrees || []).some(x => x.prUnverified === true)),
+      localOnly: w.onOrigin === false || (w.unpushedLocal || 0) > 0,
+    });
+  }
+  return out.sort((a, b) => (a.days === null) - (b.days === null) || (a.days || 0) - (b.days || 0));
+}
+
 // The whole gate for one pass. `opts` carries the pr-babysit dir and the
 // injected io; both optional (absent dir → no notify). Actions are computed once
 // and passed to buildItems so a question's unblock score is real.
@@ -428,7 +454,7 @@ function buildGate(ledger, now, opts) {
   // `questions` is the full set (what the queue must persist); `ask` is the
   // budgeted slice (what the owner is shown). See QUESTION_BUDGET for why
   // collapsing the two silently destroyed answered decisions.
-  return { version: 1, generatedAt: now, actions, questions, ask, notify, unverified };
+  return { version: 1, generatedAt: now, actions, questions, ask, notify, unverified, cold: coldList(ledger, now) };
 }
 
 // The heartbeat's exit contract. A gh failure makes the whole PR half
@@ -448,4 +474,4 @@ function gateExitCode(gate, ledgerWarnings) {
 }
 
 module.exports = { buildActions, actionId, repoPath, questionFor, buildItems, QUESTION_BUDGET,
-                   readBabysitNotifications, buildGate, gateExitCode };
+                   readBabysitNotifications, buildGate, gateExitCode, coldList };
