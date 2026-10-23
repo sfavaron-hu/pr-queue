@@ -81,7 +81,7 @@ test('applyAnswer: an { other } free-text answer is needs-model', () => {
 // hardcoded 'Leave it' literals silently drifting apart.
 test('DECLINE_LABEL matches the label the gate emits for a cold question', () => {
   const coldProc = { key: 'p1', flags: { cold: true },
-    worktrees: [{ repo: 'r', branch: 'b', unpushed: 9, onOrigin: true }], prs: [] };
+    worktrees: [{ repo: 'r', branch: 'b', unpushed: 9, onOrigin: false }], prs: [] };
   const q = questionFor(coldProc, { _coldDays: 14 });
   assert.ok(q.options.some(o => o.label === DECLINE_LABEL));
 });
